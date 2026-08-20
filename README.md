@@ -137,7 +137,7 @@
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
 node test/quickblock.cjs          # B站批量事务、菜单复用、弹幕撤销与 XHR 共 11 项回归
-node test/adapters.cjs            # 五个平台身份、作者归属和集合边界共 11 项结构回归
+node test/adapters.cjs            # 五个平台身份、作者归属和集合边界共 14 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
 node test/real-bilibili-probe.cjs --verify-local # 隔离真实 B站页严格只读探针
 node test/real-platform-probe.cjs <platform>      # 其余平台隔离真实页只读探针
