@@ -105,6 +105,37 @@ const SEGMENT = Buffer.concat([
   dmElem('0a6216d9', 'uid mapped danmaku', 11000),
 ]);
 
+// 人工合成：PAKKU 先于 OmniBlock 安装时的公开 pakku_open/pakku_send 回调契约。
+const PAKKU_BEFORE = `
+(() => {
+  const segmentBytes = ${JSON.stringify(Array.from(SEGMENT))};
+  const proto = XMLHttpRequest.prototype;
+  proto.pakku_open = proto.open;
+  proto.open = function (method, url, ...args) {
+    this.pakku_url = String(url || '');
+    return this.pakku_open(method, url, ...args);
+  };
+  proto.pakku_send = proto.send;
+  proto.send = function (...args) {
+    if (!/\\/dm\\/(?:wbi\\/)?web\\/seg\\.so/.test(this.pakku_url || '')) return this.pakku_send(...args);
+    const xhr = this;
+    xhr.pakku_load_callback = xhr.pakku_load_callback || [];
+    if (xhr.onreadystatechange) xhr.pakku_load_callback.push(['readystatechange', xhr.onreadystatechange]);
+    if (xhr.onload) xhr.pakku_load_callback.push(['load', xhr.onload]);
+    if (xhr.onloadend) xhr.pakku_load_callback.push(['loadend', xhr.onloadend]);
+    setTimeout(() => {
+      const response = new Uint8Array(segmentBytes).buffer;
+      for (const [key, value] of [['response', response], ['readyState', 4], ['status', 200], ['statusText', 'OK']]) {
+        Object.defineProperty(xhr, key, { configurable: true, writable: true, value });
+      }
+      for (const [type, callback] of xhr.pakku_load_callback) callback.call(xhr, new Event(type));
+    }, 0);
+  };
+  const pakkuFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) { return pakkuFetch(input, init); };
+})();
+`;
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
@@ -129,6 +160,130 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await page.goto('https://www.bilibili.com/video/BV1test', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await wait(1500);
+
+    const emptyDmTool = await page.evaluate(() => {
+      const tool = document.getElementById('ob-dm-tool');
+      if (!tool) return { exists: false };
+      const visible = getComputedStyle(tool).display !== 'none';
+      tool.click();
+      const panel = document.getElementById('ob-dm-manager');
+      const empty = panel && panel.querySelector('.ob-dm-empty');
+      const retry = panel && panel.querySelector('.ob-dm-retry');
+      const close = panel && panel.querySelector('.ob-dm-close');
+      if (close) close.click();
+      return {
+        exists: true,
+        visible,
+        text: tool.textContent,
+        empty: !!empty && !!empty.textContent.trim(),
+        retry: !!retry && getComputedStyle(retry).display !== 'none',
+      };
+    });
+    if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('(0)') && emptyDmTool.empty && emptyDmTool.retry)
+      report.pass.push('QB-R 尚未取得弹幕段时，视频页仍显示弹幕屏蔽(0)、空状态和重新读取入口');
+    else report.fail.push('QB-R 弹幕工具零数据入口错误：' + JSON.stringify(emptyDmTool));
+
+    // 人工合成：按 PAKKU 公开 xhr_hook.ts 的 pakku_load_callback 契约伪造响应。
+    const pakkuIntercept = await page.evaluate(async (segmentBytes) => {
+      const proto = XMLHttpRequest.prototype;
+      const omniblockOpen = proto.open;
+      const omniblockSend = proto.send;
+      const previousPakkuOpen = proto.pakku_open;
+      const previousPakkuSend = proto.pakku_send;
+      let intercepted = 0;
+      proto.pakku_open = omniblockOpen;
+      proto.open = function (method, url, ...args) {
+        this.pakku_url = String(url || '');
+        return this.pakku_open(method, url, ...args);
+      };
+      proto.pakku_send = omniblockSend;
+      proto.send = function (...args) {
+        const url = String(this.__obDanmakuUrl || '');
+        if (!/\/dm\/(?:wbi\/)?web\/seg\.so/.test(url)) return this.pakku_send(...args);
+        intercepted++;
+        const xhr = this;
+        xhr.pakku_load_callback = xhr.pakku_load_callback || [];
+        if (xhr.onreadystatechange) xhr.pakku_load_callback.push(['readystatechange', xhr.onreadystatechange]);
+        if (xhr.onload) xhr.pakku_load_callback.push(['load', xhr.onload]);
+        if (xhr.onloadend) xhr.pakku_load_callback.push(['loadend', xhr.onloadend]);
+        setTimeout(() => {
+          const response = new Uint8Array(segmentBytes).buffer;
+          for (const [key, value] of [['response', response], ['readyState', 4], ['status', 200], ['statusText', 'OK']]) {
+            Object.defineProperty(xhr, key, { configurable: true, writable: true, value });
+          }
+          for (const [type, callback] of xhr.pakku_load_callback) callback.call(xhr, new Event(type));
+        }, 0);
+      };
+      window.OB.Store.addIdentities(['bili:dmhash:678f8529'], 'PAKKU filter fixture');
+      let responseText = '';
+      try {
+        const response = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&pid=2&segment_index=1');
+          xhr.responseType = 'arraybuffer';
+          xhr.onload = () => resolve(xhr.response);
+          xhr.onerror = () => reject(new Error('PAKKU-equivalent seg.so XHR failed'));
+          xhr.send();
+        });
+        responseText = new TextDecoder().decode(response);
+      } finally {
+        window.OB.Store.removeIdentity('bili:dmhash:678f8529');
+        proto.open = omniblockOpen;
+        proto.send = omniblockSend;
+        if (previousPakkuOpen === undefined) delete proto.pakku_open;
+        else proto.pakku_open = previousPakkuOpen;
+        if (previousPakkuSend === undefined) delete proto.pakku_send;
+        else proto.pakku_send = previousPakkuSend;
+      }
+      return {
+        intercepted,
+        blockedRemoved: !responseText.includes('hello danmaku'),
+        unblockedKept: responseText.includes('keep danmaku'),
+      };
+    }, Array.from(SEGMENT));
+    await page.waitForFunction(() => {
+      const tool = document.getElementById('ob-dm-tool');
+      return !!tool && getComputedStyle(tool).display !== 'none' && /弹幕屏蔽\([1-9]\d*\)/.test(tool.textContent || '');
+    }, null, { timeout: 2500, polling: 100 }).catch(() => {});
+    const pakkuFallback = await page.evaluate(() => {
+      const tool = document.getElementById('ob-dm-tool');
+      if (!tool) return { exists: false };
+      const visible = getComputedStyle(tool).display !== 'none';
+      tool.click();
+      const panel = document.getElementById('ob-dm-manager');
+      const rows = panel ? panel.querySelectorAll('.ob-dm-sender').length : 0;
+      const close = panel && panel.querySelector('.ob-dm-close');
+      if (close) close.click();
+      return { exists: true, visible, text: tool.textContent, rows };
+    });
+    if (pakkuIntercept.intercepted === 1 && pakkuIntercept.blockedRemoved && pakkuIntercept.unblockedKept && pakkuFallback.exists && pakkuFallback.visible && pakkuFallback.rows === 3)
+      report.pass.push('QB-P PAKKU 等价包装器截走首段 XHR 后，工具仍主动读取且伪造响应先应用本地屏蔽');
+    else report.fail.push('QB-P PAKKU/首段时序兼容失败：' + JSON.stringify({ pakkuIntercept, pakkuFallback }));
+
+    const allDmBlocked = await page.evaluate(() => {
+      const keys = ['bili:dmhash:678f8529', 'bili:dmhash:a9900557', 'bili:dmhash:0a6216d9'];
+      window.OB.Store.addIdentityGroups(keys.map((key) => ({ keys: [key], label: 'all blocked fixture' })));
+      try {
+        const tool = document.getElementById('ob-dm-tool');
+        tool.click();
+        const panel = document.getElementById('ob-dm-manager');
+        const empty = panel && panel.querySelector('.ob-dm-empty');
+        const retry = panel && panel.querySelector('.ob-dm-retry');
+        const result = {
+          toolText: tool.textContent,
+          emptyText: empty && empty.textContent,
+          retryHidden: !!retry && getComputedStyle(retry).display === 'none',
+        };
+        const close = panel && panel.querySelector('.ob-dm-close');
+        if (close) close.click();
+        return result;
+      } finally {
+        window.OB.Store.removeIdentities(keys);
+      }
+    });
+    if (allDmBlocked.toolText.includes('(0)') && /均已屏蔽/.test(allDmBlocked.emptyText || '') && allDmBlocked.retryHidden)
+      report.pass.push('QB-S 已加载发送者全部屏蔽后，常驻工具显示正确空状态且不提供无效重试');
+    else report.fail.push('QB-S 弹幕全屏蔽空状态错误：' + JSON.stringify(allDmBlocked));
 
     const count = await page.evaluate(() => {
       const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
@@ -462,6 +617,48 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     if (!uidFiltered) report.pass.push('QB-K UID 33 的前导零 CRC32 mid_hash 也会被 XHR 过滤');
     else report.fail.push('QB-K UID -> 前导零 mid_hash 映射失败');
+
+    const pakkuBeforePage = await browser.newPage();
+    pakkuBeforePage.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') report.console.push('[pakku-before ' + m.type() + '] ' + m.text()); });
+    pakkuBeforePage.on('pageerror', (e) => report.pageErrors.push('[pakku-before] ' + String(e)));
+    await pakkuBeforePage.route('**/*', (route) => {
+      if (/\/dm\/(?:wbi\/)?web\/seg\.so/.test(route.request().url())) {
+        return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: SEGMENT });
+      }
+      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
+    });
+    await pakkuBeforePage.addInitScript({ content: SHIM + '\n' + PAKKU_BEFORE + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-pakku-before.js' });
+    await pakkuBeforePage.goto('https://www.bilibili.com/video/BV1test', { waitUntil: 'domcontentloaded' });
+    await pakkuBeforePage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    const pakkuBefore = await pakkuBeforePage.evaluate(async () => {
+      window.OB.Store.addIdentities(['bili:dmhash:678f8529'], 'PAKKU before fixture');
+      try {
+        const response = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&pid=2&segment_index=1');
+          xhr.responseType = 'arraybuffer';
+          xhr.onload = () => resolve(xhr.response);
+          xhr.onerror = () => reject(new Error('PAKKU-before seg.so XHR failed'));
+          xhr.send();
+        });
+        const text = new TextDecoder().decode(response);
+        return { blockedRemoved: !text.includes('hello danmaku'), unblockedKept: text.includes('keep danmaku') };
+      } finally {
+        window.OB.Store.removeIdentity('bili:dmhash:678f8529');
+      }
+    });
+    await pakkuBeforePage.waitForFunction(() => {
+      const tool = document.getElementById('ob-dm-tool');
+      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(3)');
+    }, null, { timeout: 2500, polling: 100 }).catch(() => {});
+    const pakkuBeforeTool = await pakkuBeforePage.evaluate(() => {
+      const tool = document.getElementById('ob-dm-tool');
+      return { visible: !!tool && getComputedStyle(tool).display !== 'none', text: tool && tool.textContent };
+    });
+    await pakkuBeforePage.close();
+    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(3)'))
+      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 3 位发送者');
+    else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
   } catch (error) {
     report.fail.push('FATAL: ' + (error && error.message || error));
   }

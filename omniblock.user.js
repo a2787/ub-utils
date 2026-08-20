@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.12.0
+// @version       0.12.1
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -37,7 +37,7 @@
  *  - 评论/弹幕固定零占位隐藏；其他内容可折叠或完全消失；抖音推荐流可自动跳过。
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
- *  - B站弹幕：MAIN world 拦截 seg.so（当前播放器走 XHR，保留 fetch 兼容），手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
+ *  - B站弹幕：拦截并主动读取 seg.so，兼容 PAKKU 的伪造 XHR 回调，手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
  *  - 名单与浏览数据只在本机保存，不上传；仅用户主动检查更新时请求脚本更新地址。
  */
 (function () {
@@ -524,9 +524,19 @@
       flex: 1 1 220px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
       border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
     }
+    #ob-dm-manager .ob-dm-retry {
+      flex: 0 0 auto; min-height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px;
+      background: #fff; color: #333; cursor: pointer; font-size: 12px;
+    }
+    #ob-dm-manager .ob-dm-retry:hover:not(:disabled) { background: #f4f4f4; }
+    #ob-dm-manager .ob-dm-retry:disabled { color: #aaa; cursor: default; }
     #ob-dm-manager .ob-dm-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
     #ob-dm-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
     #ob-dm-manager .ob-dm-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+    #ob-dm-manager .ob-dm-empty {
+      box-sizing: border-box; min-height: 120px; display: flex; align-items: center; justify-content: center;
+      padding: 20px; color: #777; text-align: center;
+    }
     #ob-dm-manager .ob-dm-sender {
       box-sizing: border-box; min-height: 52px; display: grid; grid-template-columns: auto minmax(0, 1fr) 34px;
       align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #f0f0f0;
@@ -1669,6 +1679,9 @@
   function setupBilibiliDanmaku() {
     if (!/(^|\.)bilibili\.com$/.test(location.hostname)) return;
     if (typeof window.fetch !== 'function' && typeof XMLHttpRequest === 'undefined') return;
+    // 保留安装时可用的 fetch。PAKKU 等扩展后续替换 window.fetch 时，主动兜底仍有独立读取路径；
+    // 若 PAKKU 已先安装，这里捕获到的是它的包装器，也仍会得到合法的 protobuf 响应。
+    const dmFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
 
     // CRC32 表
     const crcTable = (function () {
@@ -1690,6 +1703,13 @@
       const hash = String(value == null ? '' : value).trim().replace(/^0x/i, '').toLowerCase();
       return /^[0-9a-f]{1,8}$/.test(hash) ? hash.padStart(8, '0') : '';
     }
+
+    const isDanmakuUrl = (url) => /\/dm\/(?:wbi\/)?web\/seg\.so(?:[/?]|$)|\/dm\/list\.so(?:[/?]|$)/.test(String(url || ''));
+    const isVideoPage = () => /^\/video\/[^/?]+/i.test(location.pathname);
+    const numericCid = (value) => {
+      const cid = String(value == null ? '' : value).trim();
+      return /^\d+$/.test(cid) && cid !== '0' ? cid : '';
+    };
 
     function blockedHashes() {
       const set = new Set();
@@ -1764,6 +1784,7 @@
     const dmByContent = new Map();
     const dmByProgress = new Map();
     const dmSenders = new Map();
+    const dmSeenElements = new Set();
     const selectedDmHashes = new Set();
     const DM_PAGE_SIZE = 100;
     const DM_SENDER_LIMIT = 5000;
@@ -1773,18 +1794,38 @@
     let dmSearch = '';
     let dmPage = 0;
     let dmVideoKey = '';
+    let dmObservedCid = '';
+    let dmBootstrapStatus = 'idle';
+    let dmBootstrapAttempts = 0;
+    let dmBootstrapRetryAt = 0;
+    let dmBootstrapPromise = null;
+    let dmBootstrapTimer = 0;
     function cleanDmText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
     function currentVideoKey() {
       const match = location.pathname.match(/^\/video\/([^/?]+)/);
-      return match ? match[1] : location.pathname;
+      if (!match) return location.pathname;
+      let part = '1';
+      try { part = new URLSearchParams(location.search).get('p') || '1'; } catch (e) {}
+      return match[1] + ':p=' + part;
+    }
+    function resetDmBootstrap() {
+      if (dmBootstrapTimer) clearTimeout(dmBootstrapTimer);
+      dmBootstrapTimer = 0;
+      dmObservedCid = '';
+      dmBootstrapStatus = 'idle';
+      dmBootstrapAttempts = 0;
+      dmBootstrapRetryAt = 0;
+      // 已发出的只读请求无法保证可取消；完成时会用 video key 丢弃跨视频结果。
+      dmBootstrapPromise = null;
     }
     function resetDmSessionIfNeeded() {
       const key = currentVideoKey();
       if (!dmVideoKey) { dmVideoKey = key; return false; }
       if (key === dmVideoKey) return false;
       dmVideoKey = key;
-      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); selectedDmHashes.clear();
+      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmSeenElements.clear(); selectedDmHashes.clear();
       dmSearch = ''; dmPage = 0;
+      resetDmBootstrap();
       if (dmManager) closeDmManager();
       return true;
     }
@@ -1793,6 +1834,10 @@
       const content = cleanDmText(elem.content);
       if (!content) return;
       resetDmSessionIfNeeded();
+      const fingerprint = elem.hash + '\x1f' + String(elem.progress) + '\x1f' + content;
+      if (dmSeenElements.has(fingerprint)) return;
+      if (dmSeenElements.size >= 20000) dmSeenElements.delete(dmSeenElements.values().next().value);
+      dmSeenElements.add(fingerprint);
       const hashes = dmByContent.get(content) || new Set();
       hashes.add(elem.hash); dmByContent.set(content, hashes);
       if (elem.progress >= 0) {
@@ -1847,8 +1892,152 @@
         copyRange(out, buf, start, next);
         p = next;
       }
+      if (dmSenders.size) {
+        dmBootstrapStatus = 'ready';
+        dmBootstrapRetryAt = 0;
+      }
       scanDmPanels(); refreshDmTool();
       return changed ? new Uint8Array(out) : buf;
+    }
+
+    function currentPageNumber() {
+      try {
+        const page = Number(new URLSearchParams(location.search).get('p') || 1);
+        return Number.isInteger(page) && page > 0 ? page : 1;
+      } catch (e) {
+        return 1;
+      }
+    }
+
+    function cidFromPageState() {
+      try {
+        const manifest = window.player && typeof window.player.getManifest === 'function'
+          ? window.player.getManifest()
+          : null;
+        const cid = numericCid(manifest && manifest.cid);
+        if (cid) return cid;
+      } catch (e) {}
+
+      try {
+        const state = window.__INITIAL_STATE__;
+        if (!state || typeof state !== 'object') return '';
+        const video = state.videoData && typeof state.videoData === 'object' ? state.videoData : null;
+        const pages = (video && Array.isArray(video.pages) && video.pages)
+          || (Array.isArray(state.pages) && state.pages)
+          || [];
+        const pageCid = numericCid(pages[currentPageNumber() - 1] && pages[currentPageNumber() - 1].cid);
+        if (pageCid) return pageCid;
+        for (const value of [video && video.cid, state.cid, state.epInfo && state.epInfo.cid]) {
+          const cid = numericCid(value);
+          if (cid) return cid;
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    function cidFromDanmakuUrl(url) {
+      if (!isDanmakuUrl(url)) return '';
+      try { return numericCid(new URL(String(url), location.href).searchParams.get('oid')); }
+      catch (e) { return ''; }
+    }
+
+    function noteDanmakuUrl(url) {
+      const cid = cidFromDanmakuUrl(url);
+      if (!cid) return;
+      resetDmSessionIfNeeded();
+      const pageCid = cidFromPageState();
+      if (pageCid && pageCid !== cid) return;
+      dmObservedCid = cid;
+      scheduleDmBootstrap(350);
+    }
+
+    function installPakkuResponseFilter(xhr) {
+      if (!xhr || xhr.__obPakkuFilterInstalled) return;
+      const proto = typeof XMLHttpRequest !== 'undefined' && XMLHttpRequest.prototype;
+      if (!proto || typeof proto.pakku_send !== 'function') return;
+      xhr.__obPakkuFilterInstalled = true;
+      const callback = function () {
+        if (!Store.getSetting('enabled') || !isDanmakuUrl(xhr.__obDanmakuUrl || xhr.pakku_url)) return;
+        if (xhr.__obDanmakuVideoKey && xhr.__obDanmakuVideoKey !== currentVideoKey()) return;
+        try {
+          const raw = xhr.response;
+          if (!(raw instanceof ArrayBuffer)) return;
+          const filtered = asArrayBuffer(filterSeg(raw));
+          if (filtered !== raw) xhr.response = filtered;
+        } catch (e) {}
+      };
+      xhr.pakku_load_callback = Array.isArray(xhr.pakku_load_callback) ? xhr.pakku_load_callback : [];
+      xhr.pakku_load_callback.unshift(['readystatechange', callback]);
+    }
+
+    async function cidFromVideoMetadata(requestKey) {
+      if (!dmFetch) return '';
+      const match = location.pathname.match(/^\/video\/(BV[0-9A-Za-z]+|av\d+)/i);
+      if (!match) return '';
+      const token = match[1];
+      const query = /^BV/i.test(token) ? 'bvid=' + encodeURIComponent(token) : 'aid=' + encodeURIComponent(token.slice(2));
+      const response = await dmFetch('https://api.bilibili.com/x/web-interface/view?' + query, { credentials: 'include' });
+      if (!response || !response.ok) throw new Error('video metadata HTTP ' + (response && response.status));
+      const payload = await response.json();
+      if (currentVideoKey() !== requestKey || !payload || payload.code !== 0 || !payload.data) return '';
+      const data = payload.data;
+      const pages = Array.isArray(data.pages) ? data.pages : [];
+      return numericCid(pages[currentPageNumber() - 1] && pages[currentPageNumber() - 1].cid) || numericCid(data.cid);
+    }
+
+    function scheduleDmBootstrap(delay) {
+      if (!isVideoPage() || dmSenders.size || dmBootstrapPromise) return;
+      if (dmBootstrapTimer) clearTimeout(dmBootstrapTimer);
+      dmBootstrapTimer = setTimeout(() => {
+        dmBootstrapTimer = 0;
+        ensureDmBootstrap(false);
+      }, Math.max(0, Number(delay) || 0));
+    }
+
+    function ensureDmBootstrap(force) {
+      resetDmSessionIfNeeded();
+      if (!isVideoPage() || !Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      if (dmSenders.size) {
+        dmBootstrapStatus = 'ready';
+        refreshDmTool();
+        return;
+      }
+      if (!dmFetch) {
+        dmBootstrapStatus = 'error';
+        refreshDmTool();
+        return;
+      }
+      if (dmBootstrapPromise) return;
+      if (force) { dmBootstrapAttempts = 0; dmBootstrapRetryAt = 0; }
+      if (!force && (Date.now() < dmBootstrapRetryAt || dmBootstrapAttempts >= 3)) return;
+
+      const requestKey = currentVideoKey();
+      dmBootstrapAttempts++;
+      dmBootstrapStatus = 'loading';
+      const run = (async () => {
+        let cid = cidFromPageState() || dmObservedCid;
+        if (!cid) cid = await cidFromVideoMetadata(requestKey);
+        if (!cid) throw new Error('current cid unavailable');
+        if (currentVideoKey() !== requestKey) return;
+        const url = 'https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=' + encodeURIComponent(cid) + '&segment_index=1';
+        const response = await dmFetch(url, { credentials: 'include' });
+        if (!response || !response.ok) throw new Error('danmaku segment HTTP ' + (response && response.status));
+        const bytes = await response.arrayBuffer();
+        if (currentVideoKey() !== requestKey) return;
+        filterSeg(bytes);
+        if (currentVideoKey() !== requestKey) return;
+        dmBootstrapStatus = dmSenders.size ? 'ready' : 'empty';
+        dmBootstrapRetryAt = dmSenders.size ? 0 : Date.now() + 5000;
+      })().catch(() => {
+        if (currentVideoKey() !== requestKey) return;
+        dmBootstrapStatus = 'error';
+        dmBootstrapRetryAt = Date.now() + Math.min(15000, 1000 * Math.pow(2, dmBootstrapAttempts));
+      }).finally(() => {
+        if (dmBootstrapPromise === run) dmBootstrapPromise = null;
+        if (currentVideoKey() === requestKey) refreshDmTool();
+      });
+      dmBootstrapPromise = run;
+      refreshDmTool();
     }
 
     function hashFromData(data) {
@@ -1934,6 +2123,18 @@
       const list = dmManager.querySelector('.ob-dm-list');
       list.textContent = '';
 
+      if (!pageItems.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ob-dm-empty';
+        if (term && available.length) empty.textContent = '没有匹配的已加载弹幕';
+        else if (dmSenders.size && !available.length) empty.textContent = '当前已加载发送者均已屏蔽';
+        else if (dmBootstrapStatus === 'loading') empty.textContent = '正在读取当前视频弹幕...';
+        else if (dmBootstrapStatus === 'error') empty.textContent = '暂时无法读取弹幕，请稍后重试';
+        else if (dmBootstrapStatus === 'empty') empty.textContent = '当前视频没有可读取的弹幕';
+        else empty.textContent = '正在等待当前视频信息...';
+        list.appendChild(empty);
+      }
+
       for (const sender of pageItems) {
         const row = document.createElement('label');
         row.className = 'ob-dm-sender';
@@ -1997,6 +2198,9 @@
       };
 
       dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 位发送者 · ' + (dmPage + 1) + '/' + pageCount;
+      const retry = dmManager.querySelector('.ob-dm-retry');
+      retry.style.display = !dmSenders.size && dmBootstrapStatus !== 'loading' ? '' : 'none';
+      retry.disabled = dmBootstrapStatus === 'loading';
       const previous = dmManager.querySelector('[data-ob-page="previous"]');
       const next = dmManager.querySelector('[data-ob-page="next"]');
       previous.disabled = dmPage <= 0;
@@ -2013,6 +2217,7 @@
           <div class="ob-dm-toolbar">
             <input class="ob-dm-search" type="search" placeholder="搜索已加载弹幕" aria-label="搜索已加载弹幕">
             <label class="ob-dm-checkall"><input type="checkbox">全选当前页</label>
+            <button class="ob-dm-retry" type="button">重新读取</button>
           </div>
           <div class="ob-dm-list"></div>
           <div class="ob-dm-footer">
@@ -2026,6 +2231,7 @@
       const search = dmManager.querySelector('.ob-dm-search');
       search.value = dmSearch;
       search.oninput = () => { dmSearch = search.value; dmPage = 0; renderDmManager(); };
+      dmManager.querySelector('.ob-dm-retry').onclick = () => ensureDmBootstrap(true);
       dmManager.querySelector('[data-ob-page="previous"]').onclick = () => { dmPage--; renderDmManager(); };
       dmManager.querySelector('[data-ob-page="next"]').onclick = () => { dmPage++; renderDmManager(); };
       dmManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDmManager(); };
@@ -2046,6 +2252,7 @@
       dmTool.onclick = openDmManager;
       dmTool.style.display = 'none';
       document.body.appendChild(dmTool);
+      setTimeout(refreshDmTool, 0);
     }
 
     function refreshDmTool() {
@@ -2053,7 +2260,7 @@
       mountDmTool();
       if (!dmTool) return;
       const count = availableDmSenders().length;
-      const visible = Store.getSetting('enabled') && Store.getSetting('showQuickBlock') && count > 0;
+      const visible = Store.getSetting('enabled') && Store.getSetting('showQuickBlock') && isVideoPage();
       dmTool.textContent = '🚫 弹幕屏蔽(' + count + ')';
       dmTool.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
       if (!visible && dmManager) closeDmManager();
@@ -2109,7 +2316,6 @@
     }
 
     // view 是元数据 protobuf，不能按弹幕 Elem 过滤；只处理实际段/列表响应。
-    const isDanmakuUrl = (url) => /\/dm\/(?:wbi\/)?web\/seg\.so(?:[/?]|$)|\/dm\/list\.so(?:[/?]|$)/.test(String(url || ''));
     const asArrayBuffer = (bytes) => {
       if (bytes instanceof ArrayBuffer) return bytes;
       if (ArrayBuffer.isView(bytes)) return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -2132,6 +2338,7 @@
             get() {
               const raw = responseDescriptor.get.call(xhr);
               if (!isDanmakuUrl(xhr.__obDanmakuUrl) || !Store.getSetting('enabled') || xhr.readyState !== 4 || !(raw instanceof ArrayBuffer)) return raw;
+              if (xhr.__obDanmakuVideoKey && xhr.__obDanmakuVideoKey !== currentVideoKey()) return raw;
               if (raw === lastRaw) return lastFiltered;
               try {
                 lastRaw = raw;
@@ -2148,6 +2355,11 @@
       }
       XMLHttpRequest.prototype.open = function (method, url, ...args) {
         this.__obDanmakuUrl = String(url || '');
+        this.__obDanmakuVideoKey = currentVideoKey();
+        if (isDanmakuUrl(this.__obDanmakuUrl)) {
+          noteDanmakuUrl(this.__obDanmakuUrl);
+          installPakkuResponseFilter(this);
+        }
         return nativeXhrOpen.call(this, method, url, ...args);
       };
       XMLHttpRequest.prototype.send = function (...args) {
@@ -2162,9 +2374,13 @@
       window.fetch = function (input, init) {
         const url = (typeof input === 'string' || input instanceof URL) ? String(input) : (input && input.url) || '';
         if (!isDanmakuUrl(url) || !Store.getSetting('enabled')) return nativeFetch(input, init);
+        const requestKey = currentVideoKey();
+        noteDanmakuUrl(url);
         return nativeFetch(input, init).then(async (resp) => {
           try {
+            if (currentVideoKey() !== requestKey) return resp;
             const buf = await resp.clone().arrayBuffer();
+            if (currentVideoKey() !== requestKey) return resp;
             const filtered = filterSeg(buf);
             // 重建响应时丢掉内容编码相关头，否则浏览器会二次解压导致弹幕全失
             const hdr = new Headers();
@@ -2179,11 +2395,17 @@
         });
       };
     }
-    Store.onChange(() => { scanDmPanels(); refreshDmTool(); });
+    Store.onChange(() => {
+      scanDmPanels(); refreshDmTool();
+      if (Store.getSetting('enabled') && Store.getSetting('showQuickBlock')) scheduleDmBootstrap(0);
+    });
     mountDmTool();
+    refreshDmTool();
+    scheduleDmBootstrap(1200);
     setInterval(() => {
       scanDmPanels();
-      if (resetDmSessionIfNeeded()) refreshDmTool();
+      refreshDmTool();
+      ensureDmBootstrap(false);
     }, 900);
   }
 

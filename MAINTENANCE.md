@@ -336,3 +336,58 @@
   未暂存、未回退；生成的 `_shot_*.png` 诊断截图保持忽略。
 - 下一项最有价值的验证：安装 v0.12.0 后，在用户最初报告的视频上确认右下角弹幕工具
   能列出发送者，并复核刷新前后已缓存弹幕的消失时点。
+
+### 2026-08-21 - v0.12.1 - B站弹幕入口常驻与 PAKKU 兼容
+
+**范围与改动文件**
+
+- `omniblock.user.js`：B站视频页在尚未取得弹幕数据时也显示「弹幕屏蔽(0)」，管理面板
+  提供读取中、空数据、失败状态和「重新读取」。脚本从播放器公开状态、已观察到的
+  `seg.so` URL 或公开视频元数据解析当前 `cid`，主动只读获取首段；SPA 换视频/分 P 时
+  清空索引并丢弃过期异步结果，重复段按发送者、进度和内容去重。
+- `omniblock.user.js`：兼容 PAKKU 公开的 `pakku_open` / `pakku_send` /
+  `pakku_load_callback` 契约；PAKKU 伪造的 ArrayBuffer 在交给播放器回调前先应用本地
+  `mid_hash` 黑名单。身份仍保存为规范的 `bili:dmhash:<hash>`，没有新增身份前缀。
+- `test/quickblock.cjs`：新增零数据常驻入口，以及 PAKKU 先于/后于 OmniBlock 注入的人工
+  合成回归。夹具依据 `xmcp/pakku.js` 提交
+  `2cb6f52aba70d6b685aaff9a1c03aabec7f299b2` 的 `pakkujs/content_script/xhr_hook.ts`，
+  不标作真实扩展验证。
+- `README.md`：同步入口、主动读取、重试、PAKKU 兼容行为和证据边界。userscript 版本提高
+  为 `0.12.1`。
+
+**问题复现与 `structure regression`**
+
+- 修复前在聚焦夹具中让 PAKKU 等价包装器截走首个 `seg.so` XHR：v0.12.0 原有 15 项
+  通过，但新增断言单独失败；`#ob-dm-tool` 存在却为 `display:none`，文本为空且发送者为 0。
+- 修复后 `node test/quickblock.cjs` 为 19/19：零数据时入口、全屏蔽空状态与重试边界正确；PAKKU
+  后注入时主动读取 3 位发送者并过滤其伪造响应；PAKKU 先注入时同样先过滤黑名单，
+  单条、勾选批量、撤销、XHR 过滤和响应式布局继续通过。
+- PAKKU 的公开源码确认它在 `document_start` 的 MAIN world 同时改写 XHR 与 fetch，
+  并自行请求 `seg.so`；因此用户报告与其请求接管机制一致，但源码审阅本身不等于用户
+  浏览器中的真实共存验证。
+
+**`real-site verified`**
+
+- 2026-08-21，隔离未登录浏览器，
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.12.1 页面资源中同时观察到主动
+  `fetch` 的 `/x/v2/dm/web/seg.so` 和播放器 `XMLHttpRequest(arraybuffer)` 的
+  `/x/v2/dm/wbi/web/seg.so`；工具去重列出 7 位发送者。单条屏蔽、两人勾选批量、人物
+  独立存储和两次撤销均成功，未触发 B站官方拉黑或其他站内写操作。
+- 同轮严格探针继续识别 2 条根评论、4 条楼中楼和 6 位已加载评论作者；根评论本地拉黑
+  后完整线程高度从 417px 变为 0、无恢复条、下一线程补位 417px，撤销后恢复。
+
+**检查、限制与发布**
+
+- `node --check omniblock.user.js`、`node --check test/quickblock.cjs`、`git diff --check`：通过。
+- `node test/run.cjs`：11/11；`node test/state.cjs`：6/6；
+  `node test/quickblock.cjs`：19/19；`node test/adapters.cjs`：14/14，均通过。
+- `node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool`：通过，结果如上。
+- `blocked`：隔离真实站点探针没有安装 PAKKU 扩展，因此不能把真实扩展共存写成
+  `real-site verified`；目前证据为 PAKKU 当前公开源码对应的双顺序 `structure regression`。
+- 当前限制：主动兜底先读取当前视频首段，后续段仍随播放器请求累积；已经进入播放器缓存
+  的移动弹幕无法追溯移除，更新后需刷新页面。关闭设置中的「本地拉黑入口」仍会按设计
+  隐藏弹幕工具。
+- 版本/发布：源码为 `0.12.1`；本条与功能提交按仓库默认流程推送到 `origin/master`，
+  GitHub raw `master` 更新 URL 随后提供 v0.12.1。既有 `.workbuddy` 与三张测试截图不纳入提交。
+- 下一项最有价值的验证：用户在已安装 PAKKU 的原报告视频刷新后，确认右下角立即出现
+  「弹幕屏蔽(N)」，并观察屏蔽一位发送者后其后续移动弹幕不再出现。
