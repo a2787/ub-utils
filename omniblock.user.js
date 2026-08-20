@@ -19,8 +19,8 @@
 // @grant         GM_addValueChangeListener
 // @run-at        document-start
 // @sandbox       raw
-// @updateURL     https://cdn.jsdelivr.net/gh/a2787/ub-utils@master/omniblock.user.js
-// @downloadURL   https://cdn.jsdelivr.net/gh/a2787/ub-utils@master/omniblock.user.js
+// @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
+// @downloadURL   https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
 // @license       MIT
 // @author        vibeme (抖音/微博适配器行为脱胎自 Pynseq-Douyin / Pynseq-Weibo，MIT；其余适配器自建)
 // ==/UserScript==
