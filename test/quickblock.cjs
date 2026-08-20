@@ -1,11 +1,11 @@
-/* OmniBlock 快捷拉黑自测：模拟 B站 DOM，验证"锚定式快速拉黑"与"一键拉黑全部"
+/* OmniBlock B站回归测试。
+ * 覆盖真实页面已捕获的结构：bili-comment-renderer 的 __data.member.mid、
+ * bili-comment-menu Shadow DOM 的 <ul id="options"><li>，以及 seg.so protobuf。
  * 运行：node test/quickblock.cjs
  */
-const { chromium } = require('C:/Users/et4vr/.workbuddy/binaries/node/workspace/node_modules/playwright-core');
+const { launchChromium, ROOT } = require('./runtime.cjs');
 const fs = require('fs');
 const path = require('path');
-
-const ROOT = 'E:/pluginforchrome';
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 
@@ -14,7 +14,7 @@ window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, set
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
-window.GM_addStyle = () => {};
+window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
 window.GM_info = { script: { name:'本地内容过滤增强', version:'${LOCAL_VERSION}', namespace:'https://github.com/a2787/ub-utils' } };
@@ -23,181 +23,214 @@ window.GM_openInTab = () => {};
 `;
 fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-qb.js');
 
-const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站</title></head><body>
-<h3>评论区</h3>
-<div id="clist"></div>
-<h3>弹幕区</h3>
-<div id="dm"></div>
-<h3>空间页头部</h3>
-<div id="space"><button class="native-block">拉黑</button></div>
-<h3>点赞弹窗</h3>
-<div id="modalhost"></div>
+const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真实结构回归页</title></head><body>
+<div id="related"></div>
+<bili-comments id="comments"></bili-comments>
+<section class="bpx-player-dm-container" id="dm-panel">
+  <li class="bpx-player-dm-item" data-progress="5000"><span>00:05</span><span>hello danmaku</span></li>
+  <li class="bpx-player-dm-item" data-progress="9000"><span>00:09</span><span>keep danmaku</span></li>
+</section>
 <script>
-  function mkComment(uid, name, text){
-    const host = document.createElement('bili-comment-renderer');
-    const sr = host.attachShadow({mode:'open'});
-    const a = document.createElement('a'); a.className='user-name'; a.href='https://space.bilibili.com/'+uid; a.textContent=name;
-    const t = document.createElement('span'); t.className='text'; t.textContent=text;
-    const menu = document.createElement('div'); menu.className='more-menu';
-    const b1 = document.createElement('button'); b1.textContent='加入黑名单';
-    const b2 = document.createElement('button'); b2.textContent='举报';
-    menu.appendChild(b1); menu.appendChild(b2);
-    sr.appendChild(a); sr.appendChild(t); sr.appendChild(menu);
-    return host;
+  const related = document.getElementById('related');
+  for (let i = 0; i < 34; i++) {
+    const card = document.createElement('a');
+    card.className = 'bili-video-card'; card.href = '//www.bilibili.com/video/BVcard' + i;
+    card.__data = { member: { mid: String(9000 + i), uname: '推荐作者' + i } };
+    card.textContent = '推荐视频 ' + i; related.appendChild(card);
   }
-  const cl = document.getElementById('clist');
-  cl.appendChild(mkComment(111,'Alice','Alice 评论'));
-  cl.appendChild(mkComment(222,'Bob','Bob 评论'));
-  cl.appendChild(mkComment(333,'Carol','Carol 评论'));
-  (function(){
-    const dm = document.createElement('div'); dm.className='danmaku'; dm.setAttribute('data-mid','777');
-    const sr = dm.attachShadow({mode:'open'});
-    const menu = document.createElement('div'); menu.className='dm-menu';
-    const r = document.createElement('button'); r.textContent='举报';
-    menu.appendChild(r); sr.appendChild(menu); dm.appendChild(document.createTextNode('弹幕内容'));
-    document.getElementById('dm').appendChild(dm);
-  })();
+  const comments = document.getElementById('comments');
+  const commentsRoot = comments.attachShadow({mode:'open'});
+  function makeComment(mid, uname) {
+    const renderer = document.createElement('bili-comment-renderer');
+    renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
+    const root = renderer.attachShadow({mode:'open'});
+    const link = document.createElement('a'); link.className = 'user-name'; link.href = '//space.bilibili.com/' + mid; link.textContent = uname;
+    const menu = document.createElement('bili-comment-menu'); menu.__data = { member: { mid: String(mid), uname } };
+    const menuRoot = menu.attachShadow({mode:'open'});
+    const list = document.createElement('ul'); list.id = 'options';
+    for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
+    menuRoot.appendChild(list); root.append(link, menu);
+    return renderer;
+  }
+  commentsRoot.append(makeComment(111, 'Alice'), makeComment(222, 'Bob'), makeComment(333, 'Carol'));
 </script>
 </body></html>`;
 
-const MODAL_FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>空间</title></head><body>
-<div id="space"><button class="native-block">拉黑</button></div>
-<div id="modalhost"></div>
-<script>
-  function mkComment(uid, name){
-    const host = document.createElement('bili-comment-renderer');
-    const sr = host.attachShadow({mode:'open'});
-    const a = document.createElement('a'); a.className='user-name'; a.href='https://space.bilibili.com/'+uid; a.textContent=name;
-    sr.appendChild(a);
-    return host;
-  }
-  const modal = document.createElement('div'); modal.setAttribute('role','dialog'); modal.id='likers';
-  modal.appendChild(mkComment(901,'U901'));
-  modal.appendChild(mkComment(902,'U902'));
-  modal.appendChild(mkComment(903,'U903'));
-  document.getElementById('modalhost').appendChild(modal);
-</script>
-</body></html>`;
+function varint(value) {
+  const out = [];
+  let n = value >>> 0;
+  while (n > 127) { out.push((n & 127) | 128); n >>>= 7; }
+  out.push(n); return out;
+}
+function bytes(text) { return Array.from(Buffer.from(text, 'utf8')); }
+function fieldVarint(number, value) { return [...varint(number << 3), ...varint(value)]; }
+function fieldText(number, text) { const body = bytes(text); return [...varint((number << 3) | 2), ...varint(body.length), ...body]; }
+function dmElem(hash, content, progress) {
+  const body = [...fieldVarint(2, progress), ...fieldText(6, hash), ...fieldText(7, content)];
+  return Buffer.from([...varint(10), ...varint(body.length), ...body]);
+}
+// CRC32("33") = 0a6216d9，用于覆盖必须补齐前导零的 UID -> mid_hash 映射。
+const SEGMENT = Buffer.concat([
+  dmElem('678f8529', 'hello danmaku', 5000),
+  dmElem('a9900557', 'keep danmaku', 9000),
+  dmElem('0a6216d9', 'uid mapped danmaku', 11000),
+]);
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const isBlocked = (arr, key) => !!(arr && arr.Index && arr.Index.isBlocked(key));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
-  process.on('unhandledRejection', (e) => report.pageErrors.push('UNHANDLED:' + (e && e.message || e)));
-  const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true, args: ['--no-sandbox','--disable-setuid-sandbox','--disable-gpu'] });
+  const browser = await launchChromium({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+  });
   const page = await browser.newPage();
-  page.on('console', (m) => { if (m.type()==='error'||m.type()==='warning') report.console.push('['+m.type()+'] '+m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') report.console.push('[' + m.type() + '] ' + m.text()); });
   page.on('pageerror', (e) => report.pageErrors.push(String(e)));
-  const ev = async (code) => { try { return await page.evaluate(code); } catch (e) { report.fail.push('EVAL_ERR: ' + (e && e.message || e)); return null; } };
+
+  await page.route('**/*', (route) => {
+    if (/\/dm\/(?:wbi\/)?web\/seg\.so/.test(route.request().url())) {
+      return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: SEGMENT });
+    }
+    return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
+  });
+  await page.addInitScript({ path: path.join(ROOT, 'test', '_initqb.js') });
 
   try {
-    await page.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body: FIXTURE }));
-    await page.addInitScript({ path: path.join(ROOT, 'test', '_initqb.js') });
-    await page.goto('https://www.bilibili.com/video/av1', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 }).catch(() => {});
-    await sleep(1400);
+    await page.goto('https://www.bilibili.com/video/BV1test', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await wait(1500);
 
-    const obKeys = await ev(() => window.OB ? Object.keys(window.OB) : 'NO_OB');
-    report.pass.push('OB 导出键：' + JSON.stringify(obKeys));
-    if (!obKeys || obKeys === 'NO_OB' || obKeys.indexOf('Index') === -1) report.fail.push('window.OB 缺少 Index（初始化抛错）');
-
-    const qa = await ev(() => {
-      const hosts = Array.from(document.querySelectorAll('bili-comment-renderer'));
-      const alice = hosts.find(h => h.shadowRoot && h.shadowRoot.querySelector('a[href*="space.bilibili.com/111"]'));
-      if (!alice) return { missing:true };
-      const qb = alice.shadowRoot.querySelector('.ob-quick');
-      return { hasQuick: !!qb, text: qb ? qb.textContent : '' };
+    const count = await page.evaluate(() => {
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('本页评论用户'));
+      return { text: fab ? fab.textContent : '', users: window.OB.collectUsers(document).map((item) => item.keys[0]) };
     });
-    (qa && qa.hasQuick && qa.text && qa.text.includes('本地拉黑')) ? report.pass.push('QB-A 评论菜单注入"本地拉黑"') : report.fail.push('QB-A 失败：' + JSON.stringify(qa));
+    if (count.text.includes('(3)') && count.users.length === 3 && !count.users.some((key) => key.includes('9000')))
+      report.pass.push('QB-A 本页统计只计 3 位评论作者，不计 34 张推荐视频卡');
+    else report.fail.push('QB-A 评论统计错误：' + JSON.stringify(count));
 
-    const qb = await ev(`(async () => {
-      const hosts = Array.from(document.querySelectorAll('bili-comment-renderer'));
-      const alice = hosts.find(h => h.shadowRoot && h.shadowRoot.querySelector('a[href*="space.bilibili.com/111"]'));
-      const native = alice.shadowRoot.querySelector('.more-menu button');
-      let preInfo=null, preErr=null;
-      try { preInfo = window.OB.identifyFromAnchor(native); } catch(e){ preErr=e.message; }
-      const btn = alice.shadowRoot.querySelector('.ob-quick');
-      btn.click();
-      await new Promise(r=>setTimeout(r,150));
-      const conf = document.getElementById('ob-confirm');
-      if(!conf) return { preInfo, preErr, hasConfirm:false, blocked:false, hidden:false };
-      conf.querySelector('.ob-ok').click();
-      await new Promise(r=>setTimeout(r,400));
-      return { preInfo, preErr, hasConfirm:true, blocked: !!(window.OB && window.OB.Index && window.OB.Index.isBlocked(['bili:uid:111'])), hidden: alice.getAttribute('data-ob-blocked')==='1' };
-    })()`);
-    (qb && qb.hasConfirm && qb.blocked && qb.hidden) ? report.pass.push('QB-B 一键识别并拉黑评论用户(111)') : report.fail.push('QB-B 失败：' + JSON.stringify(qb));
-
-    const qc = await ev(`(async () => {
-      const dm = document.querySelector('.danmaku');
-      if(!dm) return { missing:true };
-      const native = dm.shadowRoot.querySelector('.dm-menu button');
-      let preInfo=null, preErr=null;
-      try { preInfo = window.OB.identifyFromAnchor(native); } catch(e){ preErr=e.message; }
-      const qb = dm.shadowRoot.querySelector('.ob-quick');
-      if(!qb) return { noQuick:true, preInfo, preErr };
-      qb.click();
-      await new Promise(r=>setTimeout(r,150));
-      const conf = document.getElementById('ob-confirm');
-      if(!conf) return { preInfo, preErr, hasConfirm:false };
-      conf.querySelector('.ob-ok').click();
-      await new Promise(r=>setTimeout(r,400));
-      return { preInfo, preErr, hasConfirm:true, blocked: !!(window.OB && window.OB.Index && window.OB.Index.isBlocked(['bili:uid:777'])) };
-    })()`);
-    (qc && qc.blocked) ? report.pass.push('QB-C 弹幕"举报"旁注入并拉黑发送者(777)') : report.fail.push('QB-C 失败：' + JSON.stringify(qc));
-
-    await page.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body: MODAL_FIXTURE }));
-    await page.goto('https://space.bilibili.com/888', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 }).catch(() => {});
-    await sleep(1600);
-
-    const qd = await ev(`(async () => {
-      const native = document.querySelector('#space .native-block');
-      const qb = native.parentNode.querySelector(':scope > .ob-quick');
-      if(!qb) return { noQuick:true };
-      qb.click();
-      await new Promise(r=>setTimeout(r,150));
-      const conf = document.getElementById('ob-confirm');
-      if(!conf) return { step:'no-confirm' };
-      conf.querySelector('.ob-ok').click();
-      await new Promise(r=>setTimeout(r,400));
-      return { blocked: !!(window.OB && window.OB.Index && window.OB.Index.isBlocked(['bili:uid:888'])) };
-    })()`);
-    (qd && qd.blocked) ? report.pass.push('QB-D 空间页头部"拉黑"旁注入并拉黑(888)') : report.fail.push('QB-D 失败：' + JSON.stringify(qd));
-
-    const qe = await ev(`(async () => {
-      const modal = document.getElementById('likers');
-      const bulk = modal.querySelector('.ob-bulk');
-      if(!bulk) return { noBulk:true, html: modal ? modal.innerHTML.slice(0,200) : 'no-modal' };
-      bulk.click();
-      await new Promise(r=>setTimeout(r,150));
-      const conf = document.getElementById('ob-confirm');
-      if(!conf) return { step:'no-confirm' };
-      conf.querySelector('.ob-ok').click();
-      await new Promise(r=>setTimeout(r,500));
-      const ok = ['901','902','903'].every(u => window.OB.Index.isBlocked(['bili:uid:'+u]));
-      return { bulkText: bulk.textContent, allBlocked: ok };
-    })()`);
-    (qe && qe.allBlocked) ? report.pass.push('QB-E 点赞弹窗"拉黑全部"批量入库(901/902/903)') : report.fail.push('QB-E 失败：' + JSON.stringify(qe));
-
-    const qf = await ev(() => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find(b => b.textContent.includes('拉黑本页用户'));
-      return { hasFab: !!fab, text: fab ? fab.textContent : '' };
+    const menu = await page.evaluate(() => {
+      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      const list = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('#options');
+      const button = list.querySelector('.ob-quick');
+      return { tag: button && button.tagName, text: button && button.textContent, count: list.querySelectorAll('.ob-quick').length };
     });
-    const m = qf && qf.text && qf.text.match(/\((\d+)\)/);
-    (qf && qf.hasFab && m && parseInt(m[1])>0) ? report.pass.push('QB-F 本页浮层"拉黑本页用户(N)"出现') : report.fail.push('QB-F 失败：' + JSON.stringify(qf));
-  } catch (e) {
-    report.fail.push('FATAL: ' + (e && e.message || e));
+    if (menu.tag === 'LI' && menu.text.includes('本地拉黑') && menu.count === 1)
+      report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个合法的 LI 本地拉黑项');
+    else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
+
+    const quickBlock = await page.evaluate(async () => {
+      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      const button = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { confirm: false };
+      const named = confirm.textContent.includes('Alice');
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      return { confirm: true, named, blocked: window.OB.Index.isBlocked('bili:uid:111') };
+    });
+    if (quickBlock.confirm && quickBlock.named && quickBlock.blocked) report.pass.push('QB-C 评论菜单可解析 __data.member.mid / uname 并拉黑正确 UID');
+    else report.fail.push('QB-C 评论菜单身份识别失败：' + JSON.stringify(quickBlock));
+
+    await page.evaluate(() => {
+      const dialog = document.createElement('div'); dialog.id = 'report-dialog'; dialog.setAttribute('role', 'dialog');
+      dialog.innerHTML = '<ul class="operation-list"><li class="operation-option">举报</li></ul>';
+      document.body.appendChild(dialog);
+    });
+    await wait(1300);
+    const dialogState = await page.evaluate(() => {
+      const dialog = document.getElementById('report-dialog');
+      const visibleFab = Array.from(document.querySelectorAll('.ob-bulk')).some((el) => getComputedStyle(el).display !== 'none');
+      return { quick: !!dialog.querySelector('.ob-quick'), bulk: !!dialog.querySelector('.ob-bulk'), visibleFab };
+    });
+    if (!dialogState.quick && !dialogState.bulk && !dialogState.visibleFab)
+      report.pass.push('QB-D 举报弹窗没有无效本地拉黑或“(0)”浮层');
+    else report.fail.push('QB-D 举报弹窗误注入：' + JSON.stringify(dialogState));
+    await page.evaluate(() => document.getElementById('report-dialog').remove());
+
+    await page.evaluate(() => {
+      const modal = document.createElement('div'); modal.id = 'likers'; modal.setAttribute('role', 'dialog');
+      modal.innerHTML = '<header>点赞用户</header><a href="//space.bilibili.com/901">U901</a><a href="//space.bilibili.com/902">U902</a><a href="//space.bilibili.com/903">U903</a>';
+      document.body.appendChild(modal);
+    });
+    await wait(1300);
+    const bulk = await page.evaluate(async () => {
+      const button = document.querySelector('#likers .ob-bulk');
+      if (!button) return { exists: false };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      return { exists: true, confirm: true, blocked: ['901', '902', '903'].every((id) => window.OB.Index.isBlocked('bili:uid:' + id)) };
+    });
+    if (bulk.exists && bulk.confirm && bulk.blocked) report.pass.push('QB-E 仅对实际用户列表弹窗显示并执行批量拉黑');
+    else report.fail.push('QB-E 批量拉黑失败：' + JSON.stringify(bulk));
+    await page.evaluate(() => document.getElementById('likers').remove());
+
+    await page.evaluate(async () => {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&segment_index=1');
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('seg.so XHR failed'));
+        xhr.send();
+      });
+    });
+    await page.waitForFunction(() => !!document.querySelector('#dm-panel .ob-dm-block'), null, { timeout: 5000 });
+    const dm = await page.evaluate(async () => {
+      const row = document.querySelector('#dm-panel .bpx-player-dm-item');
+      const button = row.querySelector('.ob-dm-block');
+      if (!button) return { exists: false };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      return { exists: true, confirm: true, blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'), hidden: row.getAttribute('data-ob-dm-blocked') === '1' };
+    });
+    if (dm.exists && dm.confirm && dm.blocked && dm.hidden) report.pass.push('QB-F 弹幕列表按 mid_hash 显示本地拉黑并存入独立身份键（XHR 段数据）');
+    else report.fail.push('QB-F 弹幕列表拉黑失败：' + JSON.stringify(dm));
+
+    const filtered = await page.evaluate(async () => {
+      const bytes = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&segment_index=1');
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('seg.so XHR failed'));
+        xhr.send();
+      });
+      const text = new TextDecoder().decode(bytes);
+      return { hasBlocked: text.includes('hello danmaku'), hasKept: text.includes('keep danmaku'), hasUidMapped: text.includes('uid mapped danmaku') };
+    });
+    if (!filtered.hasBlocked && filtered.hasKept && filtered.hasUidMapped) report.pass.push('QB-G XHR 返回的后续弹幕段会过滤已拉黑 mid_hash，其余保留');
+    else report.fail.push('QB-G 弹幕段过滤失败：' + JSON.stringify(filtered));
+
+    const uidFiltered = await page.evaluate(async () => {
+      window.OB.Store.addIdentities(['bili:uid:33'], 'UID 33');
+      const bytes = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&segment_index=1');
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('seg.so XHR failed'));
+        xhr.send();
+      });
+      return new TextDecoder().decode(bytes).includes('uid mapped danmaku');
+    });
+    if (!uidFiltered) report.pass.push('QB-H UID 33 的前导零 CRC32 mid_hash 也会被 XHR 过滤');
+    else report.fail.push('QB-H UID -> 前导零 mid_hash 映射失败');
+  } catch (error) {
+    report.fail.push('FATAL: ' + (error && error.message || error));
   }
 
   const ok = report.fail.length === 0;
-  try { fs.writeFileSync(path.join(ROOT, 'test', '_qb_lastrun.json'), JSON.stringify(report, null, 2) + '\n', 'utf8'); } catch (e) {}
-  console.log('==== OmniBlock 快捷拉黑自测 ====');
-  console.log('PASS:', report.pass.length); report.pass.forEach(x => console.log('  ✅', x));
-  console.log('FAIL:', report.fail.length); report.fail.forEach(x => console.log('  ❌', x));
-  console.log('Console(err/warn):', report.console.length); report.console.forEach(x => console.log('  ·', x));
-  console.log('PageErrors:', report.pageErrors.length); report.pageErrors.forEach(x => console.log('  ·', x));
-  console.log(ok ? '\nRESULT: ALL GREEN ✅' : '\nRESULT: HAS FAILURES ❌');
+  fs.writeFileSync(path.join(ROOT, 'test', '_qb_lastrun.json'), JSON.stringify(report, null, 2) + '\n', 'utf8');
+  console.log('==== OmniBlock B站回归测试 ====');
+  console.log('PASS:', report.pass.length); report.pass.forEach((line) => console.log('  PASS', line));
+  console.log('FAIL:', report.fail.length); report.fail.forEach((line) => console.log('  FAIL', line));
+  console.log('Console(errors/warn):', report.console.length); report.console.forEach((line) => console.log('  ', line));
+  console.log('PageErrors:', report.pageErrors.length); report.pageErrors.forEach((line) => console.log('  ', line));
   try { await browser.close(); } catch (e) {}
   process.exit(ok ? 0 : 1);
-})();
+})().catch((error) => { console.error('HARNESS ERROR:', error); process.exit(2); });

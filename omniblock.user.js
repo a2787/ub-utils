@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.9.0
+// @version       0.10.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -35,7 +35,7 @@
  *  - 三种处置：折叠（默认）、完全消失、跳过（抖音推荐流专用）。
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
- *  - B站弹幕：MAIN world 拦截 seg.so，手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
+ *  - B站弹幕：MAIN world 拦截 seg.so（当前播放器走 XHR，保留 fetch 兼容），手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
  *  - 全程本地，不联网、不上传任何数据。
  */
 (function () {
@@ -59,28 +59,23 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  // 穿透一层 open Shadow DOM 查找（B站评论/动态在影子 DOM 内，表层 query 拿不到）
+  // 穿透所有 open Shadow DOM 查找（B站评论/动态在影子 DOM 内，表层 query 拿不到）
   function deepQuery(root, sel) {
-    if (!root || !root.querySelector) return null;
-    let r = root.querySelector(sel);
-    if (r) return r;
-    if (root.shadowRoot) { r = root.shadowRoot.querySelector(sel); if (r) return r; }
-    if (root.querySelectorAll) {
-      for (const host of root.querySelectorAll('*')) {
-        if (host.shadowRoot) { r = host.shadowRoot.querySelector(sel); if (r) return r; }
-      }
-    }
-    return null;
+    return querySelectorAllDeep(root, sel)[0] || null;
   }
-  // 递归遍历 root 及其所有 open shadowRoot，收集所有匹配 sel 的元素（全局影子穿透）
+  // 递归遍历 root 及其所有 open shadowRoot，收集所有匹配 sel 的元素（全局影子穿透）。
+  // 逐节点匹配可避免每一层反复 querySelectorAll 全部后代，B站评论较多时尤其重要。
   function querySelectorAllDeep(root, sel) {
     const out = [];
-    if (!root || !root.querySelectorAll) return out;
+    if (!root) return out;
+    const seen = new Set();
     const collect = (node) => {
-      let list;
-      try { list = node.querySelectorAll(sel); } catch (e) { return; }
-      for (const el of list) if (el && out.indexOf(el) === -1) out.push(el);
-      if (node.shadowRoot) collect(node.shadowRoot);
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      if (node.nodeType === 1 && node.matches) {
+        try { if (node.matches(sel)) out.push(node); } catch (e) { return; }
+        if (node.shadowRoot) collect(node.shadowRoot);
+      }
       for (const c of node.children || []) collect(c);
     };
     collect(root);
@@ -332,7 +327,8 @@
       display: block !important; width: 100% !important; box-sizing: border-box !important;
       text-align: left !important; border: 0 !important; background: transparent !important;
       padding: 7px 10px !important; border-radius: 5px !important; cursor: pointer !important;
-      color: #c0392b !important; font-size: 13px !important; white-space: nowrap !important;
+      color: #c0392b !important; font: inherit !important; font-size: 13px !important;
+      list-style: none !important; white-space: nowrap !important;
     }
     .ob-quick:hover { background: #fdeceb !important; }
     /* 一键拉黑本页 / 弹窗内全部用户 */
@@ -343,6 +339,14 @@
       z-index: 2147483646 !important;
     }
     .ob-bulk:hover { background: #a93226 !important; }
+    /* B站右侧弹幕列表里的本地发送者屏蔽入口 */
+    .ob-dm-block {
+      flex: 0 0 auto !important; margin-left: 8px !important; padding: 2px 6px !important;
+      border: 1px solid #e89a91 !important; border-radius: 4px !important; background: #fff !important;
+      color: #c0392b !important; font-size: 11px !important; line-height: 18px !important; cursor: pointer !important;
+    }
+    .ob-dm-block:hover { background: #fdeceb !important; }
+    [data-ob-dm-blocked="1"] { display: none !important; }
 
     /* 选项面板 */
     #ob-panel { position: fixed; inset: 0; z-index: 2147483644; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
@@ -480,7 +484,7 @@
     setTimeout(() => { const close = (ev) => { if (!ctx.contains(ev.target)) { ctx.remove(); document.removeEventListener('click', close); } }; document.addEventListener('click', close); }, 0);
   }
 
-  function showConfirm(label, keys, anchorEl) {
+  function showConfirm(label, keys, anchorEl, onBlocked) {
     let box = $('#ob-confirm');
     if (box) box.remove();
     box = document.createElement('div');
@@ -497,6 +501,7 @@
     box.querySelector('.ob-ok').onclick = () => {
       const res = Store.addIdentities(keys, label);
       box.remove();
+      try { if (onBlocked) onBlocked(res); } catch (e) {}
       showToast(`已拉黑：${label || keys[0]}`, () => { /* 撤销：移除刚加的身份 */ keys.forEach((k) => Store.removeIdentity(k)); });
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
@@ -693,15 +698,27 @@
   // ---------- 微博 ----------
   Adapters.weibo = (function () {
     const SEL = {
-      card: '[action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], .card-feed',
-      userLink: 'a[href*="/u/"], a[href*="/n/"], a[nick-name], [data-user-card]',
+      card: '[action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], article.woo-panel-main, .card-feed',
+      userLink: 'a[href*="/u/"], a[href*="/n/"], a[nick-name], [data-user-card], [data-usercard], [usercard], [data-uid], [uid]',
     };
     function uidFromLink(link) {
       if (!link) return '';
       const href = attr(link, 'href') || '';
       const m = href.match(/\/u\/(\d+)/) || href.match(/\/(\d{6,})/);
       if (m) return normId(m[1]);
-      const card = attr(link, 'data-user-card') || attr(link, 'nick-name');
+      // 微博虚拟列表会把 uid 放在 usercard="id=..." / data-user-card 等属性里，
+      // 不能只依赖可变的主页 URL。
+      const values = [
+        attr(link, 'data-user-card'), attr(link, 'data-usercard'), attr(link, 'usercard'),
+        attr(link, 'data-uid'), attr(link, 'uid'),
+      ];
+      for (const value of values) {
+        const raw = normId(value);
+        const direct = raw.match(/^\d{5,}$/);
+        if (direct) return direct[0];
+        const inCard = raw.match(/(?:^|[?&;,\s])(?:id|uid)=(\d{5,})(?:$|[?&;,\s])/i);
+        if (inCard) return normId(inCard[1]);
+      }
       return '';
     }
     function findCard(el) {
@@ -712,12 +729,17 @@
       }
       return el;
     }
+    function findUserLink(item) {
+      const links = $$(SEL.userLink, item);
+      return links.find((link) => uidFromLink(link) && (textOf(link) || attr(link, 'nick-name')))
+        || links.find((link) => uidFromLink(link)) || null;
+    }
     return {
       id: 'weibo',
       match: (h) => /(^|\.)weibo\.com$/.test(h.hostname) || /(^|\.)weibo\.cn$/.test(h.hostname),
       selectors: [SEL.card],
       extract(item) {
-        const link = item.querySelector(SEL.userLink);
+        const link = findUserLink(item);
         const uid = uidFromLink(link);
         const name = textOf(link) || attr(link, 'nick-name');
         const keys = [];
@@ -861,14 +883,30 @@
       videoCard: '.bili-video-card, .video-card, a[href*="//www.bilibili.com/video/"]',
       space: '.space-item, .list-item',
     };
+
+    function dataIdentity(d) {
+      if (!d || typeof d !== 'object') return { mid: '', name: '' };
+      const candidates = [
+        d, d.user, d.member, d.author, d.owner,
+        d.reply, d.reply && d.reply.member, d.reply && d.reply.user,
+        d.root, d.root && d.root.member, d.data, d.data && d.data.member,
+      ].filter(Boolean);
+      let mid = '', name = '';
+      for (const item of candidates) {
+        if (!mid) mid = normId(item.mid || item.uid || item.user_id);
+        if (!name) name = normId(item.uname || item.name || item.nickname);
+        if (mid && name) break;
+      }
+      return { mid, name };
+    }
+
     function midFromEl(el) {
       // lit 组件常把数据挂到 __data.mid / __data.uid
-      const d = el.__data;
-      if (d) {
-        const mid = d.mid || d.uid || (d.user && (d.user.mid || d.user.uid)) || (d.member && d.member.mid);
-        if (mid) return normId(mid);
-      }
-      // 穿透 Shadow DOM：B站评论/动态在影子树内，表层 query 拿不到
+      const fromData = dataIdentity(el && el.__data);
+      if (fromData.mid) return fromData.mid;
+      const ownMid = attr(el, 'data-up-mid') || attr(el, 'data-mid') || attr(el, 'data-uid');
+      if (ownMid) return normId(ownMid);
+      // 穿透 Shadow DOM：B站评论/动态在影子树内，表层 query 拿不到。
       const link = deepQuery(el, 'a[href*="space.bilibili.com/"]');
       if (link) {
         const m = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/);
@@ -878,6 +916,31 @@
       if (up) return normId(attr(up, 'data-up-mid') || attr(up, 'data-mid') || attr(up, 'data-uid'));
       return '';
     }
+
+    function extract(el) {
+      const fromData = dataIdentity(el && el.__data);
+      const mid = fromData.mid || midFromEl(el);
+      const name = fromData.name || textOf(deepQuery(el, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
+      const keys = [];
+      if (mid) keys.push('bili:uid:' + mid);
+      return { keys, label: name, container: el };
+    }
+
+    function userFromSpaceLink(link) {
+      const m = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/);
+      if (!m) return null;
+      return { keys: ['bili:uid:' + normId(m[1])], label: textOf(link), container: link };
+    }
+
+    function collectCommentUsers(root) {
+      return querySelectorAllDeep(root, SEL.comment).map(extract);
+    }
+
+    function collectModalUsers(root) {
+      // B站视频页的举报弹窗并不含发送者；只有实际列出空间链接的用户列表才可批量处理。
+      return querySelectorAllDeep(root, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
+    }
+
     // B站评论是 Shadow DOM 嵌套，需递归穿透挂载 observer（简化：对 document 全树扫描 + 处理 shadowRoot）
     function walkShadow(root, cb) {
       if (!root) return;
@@ -889,13 +952,15 @@
       id: 'bilibili',
       match: (h) => /(^|\.)bilibili\.com$/.test(h.hostname),
       selectors: [SEL.comment, SEL.dyn, SEL.videoCard, SEL.space],
-      extract(item) {
-        const mid = midFromEl(item);
-        const name = textOf(deepQuery(item, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
-        const keys = [];
-        if (mid) keys.push('bili:uid:' + mid);
-        return { keys, label: name, container: item };
+      extract,
+      // 统计“本页用户”时只计算评论作者，绝不把推荐视频卡/列表项当成人。
+      collectUsers(root, purpose) {
+        return purpose === 'modal' ? collectModalUsers(root) : collectCommentUsers(root);
       },
+      canBulkModal(modal) {
+        return collectModalUsers(modal).length >= 2;
+      },
+      bulkFabLabel: (n) => '🚫 拉黑本页评论用户(' + n + ')',
       containerOf: (item) => item,
       onScan() {
         // 递归穿透 Shadow DOM 处理评论区
@@ -931,6 +996,14 @@
   function isMenuItem(el) {
     if (!el || el.nodeType !== 1) return false;
     if (el.matches && el.matches('a,button,[role="menuitem"],[role="button"]')) return true;
+    // B站评论菜单目前有两种版本：operation-list/operation-option，或
+    // bili-comment-menu 的 Shadow DOM 内 #options > li。
+    if (el.matches && el.matches('li.operation-option,.operation-option')) return true;
+    if (el.tagName === 'LI' && el.parentElement && el.parentElement.matches('.operation-list,[role="menu"]')) return true;
+    if (el.tagName === 'LI' && el.parentElement && el.parentElement.matches('#options')) {
+      const root = el.getRootNode && el.getRootNode();
+      if (root && root.host && root.host.tagName === 'BILI-COMMENT-MENU') return true;
+    }
     if (el.closest && el.closest('.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog')) return true;
     return false;
   }
@@ -975,23 +1048,31 @@
     // 3) 退化：链路节点里找用户主页链接取身份（deepQuery 可穿透一层影子）
     for (const n of chain) {
       if (!n || n.nodeType !== 1) continue;
+      // body/document 的后代是整页，扫到这里会把举报弹窗误关联为第一条评论。
+      if (n === document.body || n === document.documentElement) continue;
       const link = deepQuery(n, 'a[href*="space.bilibili.com/"]');
       if (link) { const mm = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/); if (mm) return { keys: ['bili:uid:' + normId(mm[1])], label: textOf(link) }; }
     }
     return null;
   }
 
-  function makeQuickBtn(label, anchorEl, cfg, key) {
-    const btn = document.createElement('div');
-    btn.className = 'ob-quick';
+  function makeQuickBtn(label, anchorEl, cfg, key, initialInfo) {
+    const listItem = anchorEl && anchorEl.tagName === 'LI';
+    // 保持 B站 <ul> 的合法子节点与原生菜单的布局规则。
+    const btn = document.createElement(listItem ? 'li' : 'button');
+    btn.className = 'ob-quick' + (listItem ? ' operation-option' : '');
+    if (listItem) { btn.setAttribute('role', 'menuitem'); btn.tabIndex = 0; }
+    else btn.type = 'button';
     btn.setAttribute('data-key', key);
     btn.textContent = '🚫 ' + label;
-    btn.addEventListener('click', (e) => {
+    const activate = (e) => {
       e.stopPropagation(); e.preventDefault();
-      const info = (cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl));
+      const info = initialInfo || (cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl));
       if (!info || !info.keys || !info.keys.length) { showToast('⚠️ 无法识别该用户，可试悬浮按钮或右键'); return; }
       showConfirm(info.label || '该用户', info.keys, anchorEl);
-    });
+    };
+    btn.addEventListener('click', activate);
+    if (listItem) btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') activate(e); });
     return btn;
   }
 
@@ -1005,21 +1086,29 @@
     douyin:   { label: '本地拉黑', anchorTexts: ['拉黑', '举报'] },
   };
 
-  const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"]';
+  const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
   function setupQuickBlock() {
     const a = currentAdapter; if (!a) return;
     if (!Store.getSetting('showQuickBlock')) return;
     const cfg = QB[a.id]; if (!cfg) return;
     function tryInject(el) {
-      if (!el || el.nodeType !== 1 || el.hasAttribute('data-ob-qb')) return;
+      if (!el || el.nodeType !== 1 || (el.classList && el.classList.contains('ob-quick'))) return;
+      // Lit/Vue 菜单重绘可能删掉我们的兄弟节点但保留原生 li；此时允许下一轮补回。
+      if (el.hasAttribute('data-ob-qb')) {
+        if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
+        el.removeAttribute('data-ob-qb');
+      }
       if (!Store.getSetting('showQuickBlock')) return;
       const t = textOf(el);
       if (!t) return;
       for (const txt of cfg.anchorTexts) {
         if (t.indexOf(txt) !== -1 && isMenuItem(el)) {
+          // 不向稿件举报等没有发送者上下文的菜单注入无效按钮。
+          const info = cfg.identify ? cfg.identify(el) : identifyFromAnchor(el);
+          if (!info || !info.keys || !info.keys.length) return;
           // 该菜单已有快速按钮则跳过（避免评论菜单里"加入黑名单"和"举报"各插一个）
           if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
-          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
+          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt, info);
           el.parentNode.insertBefore(btn, el.nextSibling);
           el.setAttribute('data-ob-qb', '1');
           return;
@@ -1037,11 +1126,9 @@
   }
 
   // ---- 一键拉黑本页 / 弹窗内全部可见用户 ----
-  function collectUsers(root) {
-    const a = currentAdapter; if (!a || !a.selectors) return [];
+  function uniqueUsers(items) {
     const out = []; const seen = new Set();
-    for (const item of querySelectorAllDeep(root || document, a.selectors.join(','))) {
-      const info = a.extract(item);
+    for (const info of items || []) {
       if (info && info.keys && info.keys.length) {
         const k = info.keys.join('|');
         if (!seen.has(k)) { seen.add(k); out.push(info); }
@@ -1049,6 +1136,28 @@
     }
     return out;
   }
+
+  function collectUsers(root, purpose) {
+    const a = currentAdapter; if (!a || !a.selectors) return [];
+    const scope = root || document;
+    if (typeof a.collectUsers === 'function') return uniqueUsers(a.collectUsers(scope, purpose || 'page'));
+    const selectors = (purpose === 'modal' && a.modalSelectors) || a.bulkSelectors || a.selectors;
+    const items = [];
+    for (const sel of selectors) {
+      for (const item of querySelectorAllDeep(scope, sel)) items.push(a.extract(item));
+    }
+    return uniqueUsers(items);
+  }
+
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.hidden || attr(el, 'aria-hidden') === 'true') return false;
+    if (el.tagName === 'DIALOG' && !el.open) return false;
+    const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) return false;
+    return !el.getClientRects || el.getClientRects().length > 0;
+  }
+
   function blockMany(list, anchorEl) {
     if (!list.length) { showToast('没有可拉黑的用户'); return; }
     const keys = [];
@@ -1060,9 +1169,18 @@
     const a = currentAdapter; if (!a) return;
     if (!Store.getSetting('showBulkBlock')) return;
     let fab = null;
+    const MODAL_SEL = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
+    const setFabVisible = (visible) => {
+      if (fab) fab.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
+    };
+    function hasOpenModal() {
+      return querySelectorAllDeep(document, MODAL_SEL).some(isVisible);
+    }
     function refreshFab() {
-      if (!Store.getSetting('showBulkBlock')) { if (fab) fab.style.display = 'none'; return; }
+      if (!Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
       const n = collectUsers(document).length;
+      // 页面批量按钮不应遮住举报/登录等原生弹窗，更不能显示无意义的“(0)”。
+      if (!n || hasOpenModal()) { setFabVisible(false); return; }
       if (!fab) {
         fab = document.createElement('div');
         fab.className = 'ob-bulk';
@@ -1071,24 +1189,24 @@
         const mountFab = () => { if (document.body) document.body.appendChild(fab); else setTimeout(mountFab, 300); };
         mountFab();
       }
-      fab.textContent = '🚫 拉黑本页用户(' + n + ')';
-      fab.style.display = n > 0 ? 'inline-flex' : 'none';
+      fab.textContent = a.bulkFabLabel ? a.bulkFabLabel(n) : '🚫 拉黑本页用户(' + n + ')';
+      setFabVisible(true);
     }
     function tryModal(modal) {
       if (!Store.getSetting('showBulkBlock')) return;
       if (modal.hasAttribute('data-ob-bulk')) return;
-      const users = collectUsers(modal);
+      if (a.canBulkModal && !a.canBulkModal(modal)) return;
+      const users = collectUsers(modal, 'modal');
       if (users.length < 2) return;   // 至少 2 个才视为"列表"
       modal.setAttribute('data-ob-bulk', '1');
       const btn = document.createElement('div');
       btn.className = 'ob-bulk';
       btn.textContent = '🚫 拉黑全部(' + users.length + ')';
-      btn.onclick = () => blockMany(collectUsers(modal), btn);
+      btn.onclick = () => blockMany(collectUsers(modal, 'modal'), btn);
       const header = modal.querySelector('header,.modal-header,.dialog-header,.head,.title') || modal.firstElementChild;
       if (header && header.parentNode) header.parentNode.insertBefore(btn, header);
       else modal.insertBefore(btn, modal.firstChild);
     }
-    const MODAL_SEL = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
     function scanModals() {
       if (!Store.getSetting('showBulkBlock')) return;
       for (const md of querySelectorAllDeep(document, MODAL_SEL)) tryModal(md);
@@ -1105,7 +1223,7 @@
   // ====================================================================
   function setupBilibiliDanmaku() {
     if (!/(^|\.)bilibili\.com$/.test(location.hostname)) return;
-    if (typeof window.fetch !== 'function') return;
+    if (typeof window.fetch !== 'function' && typeof XMLHttpRequest === 'undefined') return;
 
     // CRC32 表
     const crcTable = (function () {
@@ -1123,89 +1241,283 @@
       return (c ^ 0xFFFFFFFF) >>> 0;
     }
 
+    function normalHash(value) {
+      const hash = String(value == null ? '' : value).trim().replace(/^0x/i, '').toLowerCase();
+      return /^[0-9a-f]{1,8}$/.test(hash) ? hash.padStart(8, '0') : '';
+    }
+
     function blockedHashes() {
       const set = new Set();
-      // 从当前屏蔽名单里把 bili:uid:N 算成 dmhash
+      // 评论 UID 和弹幕 mid_hash 是两种可独立保存的身份。CRC 结果必须补齐 8 位。
       const all = Store.allIdentities();
       for (const key of all) {
         const m = key.match(/^bili:uid:(\d+)$/);
-        if (m) set.add(crc32(m[1]).toString(16));
+        if (m) set.add(crc32(m[1]).toString(16).padStart(8, '0'));
+        const hash = key.match(/^bili:dmhash:([0-9a-f]{1,8})$/i);
+        if (hash) set.add(normalHash(hash[1]));
       }
       return set;
     }
 
-    // 轻量 protobuf 解析：top-level repeated 消息 field1=elems；每个 elem 内 field6=midHash(string)
+    // 轻量 protobuf 解析：top-level repeated 消息 field1=elems；每个 elem 内
+    // field2=progress, field6=midHash, field7=content。保留原字节，避免重编码。
     function readVarint(buf, pos) {
-      let result = 0, shift = 0, b;
-      do { b = buf[pos++]; result |= (b & 0x7F) << shift; shift += 7; } while (b & 0x80 && pos < buf.length);
-      return { value: result >>> 0, next: pos };
-    }
-    function findMidHashInElem(buf, start, end) {
-      let p = start;
-      while (p < end) {
-        const tag = readVarint(buf, p); p = tag.next;
-        const field = tag.value >> 3, wt = tag.value & 7;
-        if (field === 6 && wt === 2) {
-          const len = readVarint(buf, p); p = len.next;
-          let s = '';
-          for (let i = p; i < p + len.value; i++) s += String.fromCharCode(buf[i]);
-          return s;
-        } else if (wt === 0) { p = readVarint(buf, p).next; }
-        else if (wt === 1) { p += 8; }
-        else if (wt === 5) { p += 4; }
-        else if (wt === 2) { const l = readVarint(buf, p); p = l.next + l.value; }
-        else return null;
+      let result = 0, shift = 0;
+      while (pos < buf.length) {
+        const b = buf[pos++];
+        if (shift < 32) result += (b & 0x7F) * Math.pow(2, shift);
+        if (!(b & 0x80)) return { value: result >>> 0, next: pos, ok: true };
+        shift += 7;
       }
-      return null;
+      return { value: result >>> 0, next: pos, ok: false };
     }
 
+    function skipField(buf, pos, wireType, end) {
+      if (wireType === 0) return readVarint(buf, pos).next;
+      if (wireType === 1) return pos + 8;
+      if (wireType === 5) return pos + 4;
+      if (wireType === 2) {
+        const len = readVarint(buf, pos);
+        return len.ok ? len.next + len.value : end + 1;
+      }
+      return end + 1;
+    }
+
+    const decoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : null;
+    function bytesToText(buf, start, length) {
+      const part = buf.subarray(start, start + length);
+      if (decoder) return decoder.decode(part);
+      let s = ''; for (let i = 0; i < part.length; i++) s += String.fromCharCode(part[i]);
+      try { return decodeURIComponent(escape(s)); } catch (e) { return s; }
+    }
+
+    function parseDanmakuElem(buf, start, end) {
+      const elem = { hash: '', content: '', progress: -1 };
+      let p = start;
+      while (p < end) {
+        const tag = readVarint(buf, p); if (!tag.ok) return elem; p = tag.next;
+        const field = tag.value >> 3, wt = tag.value & 7;
+        if (wt === 0) {
+          const value = readVarint(buf, p); if (!value.ok) return elem;
+          if (field === 2) elem.progress = value.value;
+          p = value.next;
+          continue;
+        }
+        if (wt === 2) {
+          const len = readVarint(buf, p); if (!len.ok || len.next + len.value > end) return elem;
+          if (field === 6) elem.hash = normalHash(bytesToText(buf, len.next, len.value));
+          else if (field === 7) elem.content = bytesToText(buf, len.next, len.value);
+          p = len.next + len.value;
+          continue;
+        }
+        p = skipField(buf, p, wt, end);
+        if (p > end) return elem;
+      }
+      return elem;
+    }
+
+    const dmByContent = new Map();
+    const dmByProgress = new Map();
+    function cleanDmText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function rememberDanmaku(elem) {
+      if (!elem || !elem.hash || !elem.content) return;
+      const content = cleanDmText(elem.content);
+      if (!content) return;
+      const hashes = dmByContent.get(content) || new Set();
+      hashes.add(elem.hash); dmByContent.set(content, hashes);
+      if (elem.progress >= 0) {
+        const key = String(elem.progress) + '\x1f' + content;
+        const progressHashes = dmByProgress.get(key) || new Set();
+        progressHashes.add(elem.hash); dmByProgress.set(key, progressHashes);
+      }
+      // 长视频连续播放时限制会话内索引大小，当前视频的侧栏仍会保留。
+      if (dmByContent.size > 5000) { dmByContent.clear(); dmByProgress.clear(); }
+    }
+
+    function copyRange(out, buf, start, end) {
+      for (let i = start; i < end; i++) out.push(buf[i]);
+    }
     function filterSeg(bytes) {
-      const blocked = blockedHashes();
-      if (blocked.size === 0) return bytes;
       const buf = new Uint8Array(bytes);
+      const blocked = blockedHashes();
       const out = [];
+      let changed = false;
       let p = 0;
       while (p < buf.length) {
-        const tag = readVarint(buf, p);
+        const start = p;
+        const tag = readVarint(buf, p); if (!tag.ok) return buf;
         const field = tag.value >> 3, wt = tag.value & 7;
         if (field === 1 && wt === 2) {
           const lenInfo = readVarint(buf, tag.next);
+          if (!lenInfo.ok) return buf;
           const elemStart = lenInfo.next, elemEnd = lenInfo.next + lenInfo.value;
-          const hash = findMidHashInElem(buf, elemStart, elemEnd);
-          if (hash && blocked.has(hash.toLowerCase())) { p = elemEnd; continue; } // 丢弃该弹幕
-          // 保留：把 tag+len+body 原样写入
-          for (let i = p; i < elemEnd; i++) out.push(buf[i]);
+          if (elemEnd > buf.length) return buf;
+          const elem = parseDanmakuElem(buf, elemStart, elemEnd);
+          rememberDanmaku(elem);
+          if (elem.hash && blocked.has(elem.hash)) { changed = true; p = elemEnd; continue; }
+          copyRange(out, buf, start, elemEnd);
           p = elemEnd;
-        } else if (wt === 0) { for (let i = p; i < tag.next; i++) out.push(buf[i]); p = readVarint(buf, tag.next).next; }
-        else if (wt === 1) { for (let i = p; i < tag.next + 8; i++) out.push(buf[i]); p = tag.next + 8; }
-        else if (wt === 5) { for (let i = p; i < tag.next + 4; i++) out.push(buf[i]); p = tag.next + 4; }
-        else if (wt === 2) { const l = readVarint(buf, tag.next); for (let i = p; i < tag.next + l.value + (l.next - tag.next); i++) out.push(buf[i]); p = l.next + l.value; }
-        else { out.push(buf[p]); p++; }
+          continue;
+        }
+        const next = skipField(buf, tag.next, wt, buf.length);
+        if (next > buf.length) return buf;
+        copyRange(out, buf, start, next);
+        p = next;
       }
-      return out;
+      scanDmPanels();
+      return changed ? new Uint8Array(out) : buf;
     }
 
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = function (input, init) {
-      const url = (typeof input === 'string') ? input : (input && input.url) || '';
-      const isDanmaku = /dm\/web\/seg\.so/.test(url) || /dm\/web\/view/.test(url) || /dm\/list\.so/.test(url);
-      if (!isDanmaku || !Store.getSetting('enabled')) return nativeFetch(input, init);
-      return nativeFetch(input, init).then(async (resp) => {
-        try {
-          const buf = await resp.arrayBuffer();
-          const filtered = filterSeg(buf);
-          // 重建响应时丢掉内容编码相关头，否则浏览器会二次解压导致弹幕全失
-          const hdr = new Headers();
-          resp.headers.forEach((v, k) => {
-            if (/^(content-encoding|content-length|transfer-encoding)$/i.test(k)) return;
-            hdr.append(k, v);
-          });
-          return new Response(new Uint8Array(filtered), { status: resp.status, statusText: resp.statusText, headers: hdr });
-        } catch (e) {
-          return resp;
+    function hashFromData(data) {
+      if (!data || typeof data !== 'object') return '';
+      const candidates = [data, data.dm, data.item, data.data, data.props, data.props && data.props.item].filter(Boolean);
+      for (const item of candidates) {
+        const hash = normalHash(item.midHash || item.mid_hash || item.dmHash || item.dm_hash || item.hash);
+        if (hash) return hash;
+      }
+      return '';
+    }
+
+    function timeInMs(text) {
+      const match = cleanDmText(text).match(/(?:^|\s)(\d{1,2}):(\d{2})(?:\s|$)/);
+      if (!match) return -1;
+      return (Number(match[1]) * 60 + Number(match[2])) * 1000;
+    }
+
+    function hashFromDmRow(row) {
+      const direct = normalHash(attr(row, 'data-mid-hash') || attr(row, 'data-mid_hash') || attr(row, 'data-dm-hash') || attr(row, 'data-danmaku-hash'));
+      if (direct) return direct;
+      const fromData = hashFromData(row.__data) || hashFromData(row.__vueParentComponent && row.__vueParentComponent.props) || hashFromData(row._vnode && row._vnode.props);
+      if (fromData) return fromData;
+      const rowText = cleanDmText(textOf(row));
+      if (!rowText) return '';
+      const rawProgress = attr(row, 'data-progress') || attr(row, 'data-time') || attr(row, 'data-dm-progress');
+      const progress = rawProgress == null || rawProgress === '' ? NaN : Number(rawProgress);
+      const at = Number.isFinite(progress) && progress >= 0 ? progress : timeInMs(rowText);
+      const candidates = new Set();
+      for (const [content, hashes] of dmByContent) {
+        if (!rowText.includes(content)) continue;
+        if (at >= 0) {
+          const exact = dmByProgress.get(String(at) + '\x1f' + content);
+          if (exact) for (const hash of exact) candidates.add(hash);
+          // 列表有时只显示到秒，允许 1 秒的时间差。
+          for (const [key, timedHashes] of dmByProgress) {
+            const divider = key.indexOf('\x1f');
+            if (divider < 0 || key.slice(divider + 1) !== content) continue;
+            if (Math.abs(Number(key.slice(0, divider)) - at) <= 1000) for (const hash of timedHashes) candidates.add(hash);
+          }
+        } else for (const hash of hashes) candidates.add(hash);
+      }
+      return candidates.size === 1 ? Array.from(candidates)[0] : '';
+    }
+
+    const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
+    const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';
+    function markDmRows(hash) {
+      for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
+        for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
+          if (hashFromDmRow(row) === hash) row.setAttribute('data-ob-dm-blocked', '1');
         }
+      }
+    }
+
+    function addDmBlockButton(row, hash) {
+      if (row.querySelector && row.querySelector(':scope > .ob-dm-block')) return;
+      const btn = document.createElement('button');
+      btn.className = 'ob-dm-block'; btn.type = 'button'; btn.textContent = '本地拉黑';
+      btn.title = '按该弹幕的 mid_hash 本地屏蔽发送者';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        showConfirm('该弹幕发送者', ['bili:dmhash:' + hash], btn, () => markDmRows(hash));
       });
+      row.appendChild(btn);
+    }
+
+    function scanDmPanels() {
+      if (!Store.getSetting('enabled')) return;
+      for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
+        for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
+          if (row.hasAttribute('data-ob-dm-blocked') || (row.classList && row.classList.contains('ob-dm-block'))) continue;
+          const hash = hashFromDmRow(row);
+          if (!hash) continue; // 没有可验证的 mid_hash 时不显示一个必然失败的按钮。
+          if (blockedHashes().has(hash)) { row.setAttribute('data-ob-dm-blocked', '1'); continue; }
+          addDmBlockButton(row, hash);
+        }
+      }
+    }
+
+    // view 是元数据 protobuf，不能按弹幕 Elem 过滤；只处理实际段/列表响应。
+    const isDanmakuUrl = (url) => /\/dm\/(?:wbi\/)?web\/seg\.so(?:[/?]|$)|\/dm\/list\.so(?:[/?]|$)/.test(String(url || ''));
+    const asArrayBuffer = (bytes) => {
+      if (bytes instanceof ArrayBuffer) return bytes;
+      if (ArrayBuffer.isView(bytes)) return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      return bytes;
     };
+
+    // 当前 B站播放器以 XMLHttpRequest + responseType=arraybuffer 请求 seg.so。
+    // 覆盖实例 response 的 getter，播放器自己的 onload 回调第一次读取时就拿到过滤后的字节。
+    if (typeof XMLHttpRequest !== 'undefined') {
+      const nativeXhrOpen = XMLHttpRequest.prototype.open;
+      const nativeXhrSend = XMLHttpRequest.prototype.send;
+      const responseDescriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+      function installXhrFilter(xhr) {
+        if (xhr.__obDanmakuResponseInstalled || !responseDescriptor || !responseDescriptor.get) return;
+        xhr.__obDanmakuResponseInstalled = true;
+        let lastRaw = null, lastFiltered = null;
+        try {
+          Object.defineProperty(xhr, 'response', {
+            configurable: true,
+            get() {
+              const raw = responseDescriptor.get.call(xhr);
+              if (!isDanmakuUrl(xhr.__obDanmakuUrl) || !Store.getSetting('enabled') || xhr.readyState !== 4 || !(raw instanceof ArrayBuffer)) return raw;
+              if (raw === lastRaw) return lastFiltered;
+              try {
+                lastRaw = raw;
+                lastFiltered = asArrayBuffer(filterSeg(raw));
+                return lastFiltered;
+              } catch (e) {
+                return raw;
+              }
+            },
+          });
+        } catch (e) {
+          xhr.__obDanmakuResponseInstalled = false;
+        }
+      }
+      XMLHttpRequest.prototype.open = function (method, url, ...args) {
+        this.__obDanmakuUrl = String(url || '');
+        return nativeXhrOpen.call(this, method, url, ...args);
+      };
+      XMLHttpRequest.prototype.send = function (...args) {
+        if (isDanmakuUrl(this.__obDanmakuUrl)) installXhrFilter(this);
+        return nativeXhrSend.call(this, ...args);
+      };
+    }
+
+    // fetch 保留为兼容分支；页面版本切换回 fetch 时仍可工作。
+    if (typeof window.fetch === 'function') {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        const url = (typeof input === 'string') ? input : (input && input.url) || '';
+        if (!isDanmakuUrl(url) || !Store.getSetting('enabled')) return nativeFetch(input, init);
+        return nativeFetch(input, init).then(async (resp) => {
+          try {
+            const buf = await resp.arrayBuffer();
+            const filtered = filterSeg(buf);
+            // 重建响应时丢掉内容编码相关头，否则浏览器会二次解压导致弹幕全失
+            const hdr = new Headers();
+            resp.headers.forEach((v, k) => {
+              if (/^(content-encoding|content-length|transfer-encoding)$/i.test(k)) return;
+              hdr.append(k, v);
+            });
+            return new Response(new Uint8Array(filtered), { status: resp.status, statusText: resp.statusText, headers: hdr });
+          } catch (e) {
+            return resp;
+          }
+        });
+      };
+    }
+    setInterval(scanDmPanels, 900);
   }
 
   // ====================================================================

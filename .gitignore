@@ -6,3 +6,7 @@ test/_lastrun.json
 test/_lastrun.log
 test/_qb_lastrun.json
 test/_qb_log.txt
+test/_probe_real*.cjs
+test/_real_*.json
+test/_real_*.png
+test/_shot_*.png

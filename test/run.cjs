@@ -1,13 +1,11 @@
 /* OmniBlock 自测夹具：用真实 Chrome 跑用户脚本
  * 覆盖：B站 Shadow DOM 拉黑链路 + 全局影子穿透兜底 + 检查更新按钮三分支
- * 依赖：playwright-core（本机 node workspace），系统 Chrome
+ * 依赖：playwright-core 与 Chrome；可用 PLAYWRIGHT_CORE_PATH / CHROME_PATH 覆盖自动发现。
  * 运行：node test/run.cjs
  */
-const { chromium } = require('C:/Users/et4vr/.workbuddy/binaries/node/workspace/node_modules/playwright-core');
+const { launchChromium, ROOT } = require('./runtime.cjs');
 const fs = require('fs');
 const path = require('path');
-
-const ROOT = 'E:/pluginforchrome';
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const UPDATE_URL = 'https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js';
 const DOWNLOAD_URL = UPDATE_URL;
@@ -99,8 +97,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
-  const browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  const browser = await launchChromium({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   });
