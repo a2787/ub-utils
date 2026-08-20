@@ -1,5 +1,8 @@
 vendor/
 *.user.js.bak
 test/_initscript.js
+test/_initqb.js
 test/_lastrun.json
 test/_lastrun.log
+test/_qb_lastrun.json
+test/_qb_log.txt

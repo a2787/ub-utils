@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.8.0
+// @version       0.9.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -124,6 +124,8 @@
     showHoverButton: true,
     douyinAutoSkip: true,
     skipCap: 6,                  // 连续跳过上限，超过则停在遮罩不再自动切
+    showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
+    showBulkBlock: true,         // 本页/弹窗内"一键拉黑全部用户"
   };
 
   const Store = (function () {
@@ -325,6 +327,23 @@
     }
     #ob-toast button { background: transparent; border: 0; color: #ffb3aa; cursor: pointer; font-size: 13px; }
 
+    /* 锚定式快速拉黑按钮（插在平台原生菜单项旁） */
+    .ob-quick {
+      display: block !important; width: 100% !important; box-sizing: border-box !important;
+      text-align: left !important; border: 0 !important; background: transparent !important;
+      padding: 7px 10px !important; border-radius: 5px !important; cursor: pointer !important;
+      color: #c0392b !important; font-size: 13px !important; white-space: nowrap !important;
+    }
+    .ob-quick:hover { background: #fdeceb !important; }
+    /* 一键拉黑本页 / 弹窗内全部用户 */
+    .ob-bulk {
+      display: inline-flex !important; align-items: center; gap: 4px; cursor: pointer !important;
+      font-size: 12px !important; color: #fff !important; background: #c0392b !important;
+      border: 0 !important; border-radius: 6px !important; padding: 4px 10px !important; margin: 4px !important;
+      z-index: 2147483646 !important;
+    }
+    .ob-bulk:hover { background: #a93226 !important; }
+
     /* 选项面板 */
     #ob-panel { position: fixed; inset: 0; z-index: 2147483644; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
     #ob-panel .ob-box { background: #fff; color: #222; width: min(680px, 92vw); max-height: 86vh; overflow: auto; border-radius: 12px; padding: 18px; font-size: 13px; }
@@ -467,7 +486,8 @@
     box = document.createElement('div');
     box.id = 'ob-confirm';
     box.innerHTML = `<div class="ob-title">确认拉黑？</div><div class="ob-sub"></div><div class="ob-row"><button class="ob-no">取消</button><button class="ob-ok">拉黑</button></div>`;
-    box.querySelector('.ob-sub').textContent = (label || '该用户') + '\n' + keys.join('  ');
+    const sub = (label || '该用户') + (keys.length ? '\n' + (keys.length > 5 ? keys.slice(0, 5).join('  ') + ' …(共' + keys.length + '项)' : keys.join('  ')) : '');
+    box.querySelector('.ob-sub').textContent = sub;
     box.querySelector('.ob-no').onclick = () => box.remove();
     let rect = { left: window.innerWidth / 2 - 130, top: window.innerHeight / 2 - 60 };
     if (anchorEl && anchorEl.getBoundingClientRect) { const r = anchorEl.getBoundingClientRect(); rect = { left: clamp(r.left, 8, window.innerWidth - 280), top: clamp(r.bottom + 6, 8, window.innerHeight - 160) }; }
@@ -901,6 +921,186 @@
   })();
 
   // ====================================================================
+  // 5.5 锚定式快速拉黑 + 一键拉黑全部（贴着平台原生拉黑/举报入口）
+  // --------------------------------------------------------------------
+  // 思路：用 MutationObserver 盯住平台原生菜单里的"拉黑/举报"等项，紧挨着
+  // 插入"🚫 本地拉黑"；点击时从上下文自动识别当前用户并走现有拉黑流程。
+  // 各平台 DOM 类名常变，故用"文本 + 菜单项形态"判定，比写死 class 更鲁棒。
+  // 一键拉黑全部：复用适配器扫描本页/弹窗内全部可见用户并去重后批量入库。
+  // ====================================================================
+  function isMenuItem(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.matches && el.matches('a,button,[role="menuitem"],[role="button"]')) return true;
+    if (el.closest && el.closest('.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog')) return true;
+    return false;
+  }
+
+  // 从锚点上下文识别用户身份：优先 URL（空间页）；其次沿 composedPath 找适配器命中条目
+  // 沿祖先链向上（遇 Shadow DOM 用 .host 跨出），比 composedPath 更稳（影子内按钮的 composedPath 在某些环境缺失）
+  // uid 型身份前缀：与 keyMap / 各适配器 extract 保持一致（data-mid/data-uid 必为数字 uid）。
+  // 注意 bilibili 适配器 extract 用的是 'bili:uid:' 而非 'bilibili:uid:'，故此处以规范前缀为准，避免产生孤儿 key。
+  const UID_PREFIX = { bilibili: 'bili:uid:', weibo: 'weibo:uid:', zhihu: 'zhihu:uid:', tieba: 'tieba:uid:', x: 'x:uid:', douyin: 'douyin:uid:' };
+
+  function ancestorChain(elm) {
+    const out = [];
+    let n = elm;
+    while (n) {
+      out.push(n);
+      if (n.parentNode) n = n.parentNode;
+      else if (n.host) n = n.host;
+      else break;
+    }
+    return out;
+  }
+
+  function identifyFromAnchor(anchor) {
+    const a = currentAdapter; if (!a) return null;
+    if (a.id === 'bilibili') {
+      const m = location.href.match(/space\.bilibili\.com\/(\d+)/);
+      if (m) return { keys: ['bili:uid:' + m[1]], label: '' };
+    }
+    const chain = ancestorChain(anchor);
+    // 1) 链路里直接带 mid/uid（弹幕等）
+    for (const n of chain) {
+      const mid = (n.getAttribute && (n.getAttribute('data-mid') || n.getAttribute('data-uid'))) || '';
+      if (mid) return { keys: [(UID_PREFIX[a.id] || a.id + ':uid:') + normId(mid)], label: '' };
+    }
+    // 2) 链路命中适配器条目 → 复用 extract
+    for (const n of chain) {
+      if (!n || n.nodeType !== 1 || !n.matches) continue;
+      for (const sel of (a.selectors || [])) {
+        if (n.matches(sel)) { const info = a.extract(n); if (info && info.keys && info.keys.length) return info; }
+      }
+    }
+    // 3) 退化：链路节点里找用户主页链接取身份（deepQuery 可穿透一层影子）
+    for (const n of chain) {
+      if (!n || n.nodeType !== 1) continue;
+      const link = deepQuery(n, 'a[href*="space.bilibili.com/"]');
+      if (link) { const mm = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/); if (mm) return { keys: ['bili:uid:' + normId(mm[1])], label: textOf(link) }; }
+    }
+    return null;
+  }
+
+  function makeQuickBtn(label, anchorEl, cfg, key) {
+    const btn = document.createElement('div');
+    btn.className = 'ob-quick';
+    btn.setAttribute('data-key', key);
+    btn.textContent = '🚫 ' + label;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); e.preventDefault();
+      const info = (cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl));
+      if (!info || !info.keys || !info.keys.length) { showToast('⚠️ 无法识别该用户，可试悬浮按钮或右键'); return; }
+      showConfirm(info.label || '该用户', info.keys, anchorEl);
+    });
+    return btn;
+  }
+
+  // 各平台"原生锚点文本"：评论/用户页用拉黑类，弹幕/举报页用举报类
+  const QB = {
+    bilibili: { label: '本地拉黑', anchorTexts: ['加入黑名单', '拉黑', '举报'] },
+    weibo:    { label: '本地拉黑', anchorTexts: ['拉黑', '举报'] },
+    zhihu:    { label: '本地拉黑', anchorTexts: ['拉黑', '举报'] },
+    tieba:    { label: '本地拉黑', anchorTexts: ['拉黑', '举报'] },
+    x:        { label: '本地拉黑', anchorTexts: ['Block', '封鎖', 'Report', '举报'] },
+    douyin:   { label: '本地拉黑', anchorTexts: ['拉黑', '举报'] },
+  };
+
+  const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"]';
+  function setupQuickBlock() {
+    const a = currentAdapter; if (!a) return;
+    if (!Store.getSetting('showQuickBlock')) return;
+    const cfg = QB[a.id]; if (!cfg) return;
+    function tryInject(el) {
+      if (!el || el.nodeType !== 1 || el.hasAttribute('data-ob-qb')) return;
+      if (!Store.getSetting('showQuickBlock')) return;
+      const t = textOf(el);
+      if (!t) return;
+      for (const txt of cfg.anchorTexts) {
+        if (t.indexOf(txt) !== -1 && isMenuItem(el)) {
+          // 该菜单已有快速按钮则跳过（避免评论菜单里"加入黑名单"和"举报"各插一个）
+          if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
+          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
+          el.parentNode.insertBefore(btn, el.nextSibling);
+          el.setAttribute('data-ob-qb', '1');
+          return;
+        }
+      }
+    }
+    function scanAll() {
+      if (!Store.getSetting('showQuickBlock')) return;
+      for (const el of querySelectorAllDeep(document, QB_CANDIDATE)) tryInject(el);
+    }
+    // 周期扫描：B站菜单在 Shadow DOM 内，MutationObserver 跨不过影子边界，故用定时器 + 全局穿透扫描
+    setInterval(scanAll, 900);
+    scanAll();
+    (window.OB = window.OB || {}).setupQuickBlock = scanAll;
+  }
+
+  // ---- 一键拉黑本页 / 弹窗内全部可见用户 ----
+  function collectUsers(root) {
+    const a = currentAdapter; if (!a || !a.selectors) return [];
+    const out = []; const seen = new Set();
+    for (const item of querySelectorAllDeep(root || document, a.selectors.join(','))) {
+      const info = a.extract(item);
+      if (info && info.keys && info.keys.length) {
+        const k = info.keys.join('|');
+        if (!seen.has(k)) { seen.add(k); out.push(info); }
+      }
+    }
+    return out;
+  }
+  function blockMany(list, anchorEl) {
+    if (!list.length) { showToast('没有可拉黑的用户'); return; }
+    const keys = [];
+    list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
+    showConfirm('拉黑全部 ' + list.length + ' 位用户', keys, anchorEl);
+  }
+
+  function setupBulkBlock() {
+    const a = currentAdapter; if (!a) return;
+    if (!Store.getSetting('showBulkBlock')) return;
+    let fab = null;
+    function refreshFab() {
+      if (!Store.getSetting('showBulkBlock')) { if (fab) fab.style.display = 'none'; return; }
+      const n = collectUsers(document).length;
+      if (!fab) {
+        fab = document.createElement('div');
+        fab.className = 'ob-bulk';
+        fab.style.position = 'fixed'; fab.style.left = '14px'; fab.style.bottom = '14px';
+        fab.onclick = () => { const list = collectUsers(document); if (!list.length) { showToast('本页没有可拉黑的用户'); return; } blockMany(list, fab); };
+        const mountFab = () => { if (document.body) document.body.appendChild(fab); else setTimeout(mountFab, 300); };
+        mountFab();
+      }
+      fab.textContent = '🚫 拉黑本页用户(' + n + ')';
+      fab.style.display = n > 0 ? 'inline-flex' : 'none';
+    }
+    function tryModal(modal) {
+      if (!Store.getSetting('showBulkBlock')) return;
+      if (modal.hasAttribute('data-ob-bulk')) return;
+      const users = collectUsers(modal);
+      if (users.length < 2) return;   // 至少 2 个才视为"列表"
+      modal.setAttribute('data-ob-bulk', '1');
+      const btn = document.createElement('div');
+      btn.className = 'ob-bulk';
+      btn.textContent = '🚫 拉黑全部(' + users.length + ')';
+      btn.onclick = () => blockMany(collectUsers(modal), btn);
+      const header = modal.querySelector('header,.modal-header,.dialog-header,.head,.title') || modal.firstElementChild;
+      if (header && header.parentNode) header.parentNode.insertBefore(btn, header);
+      else modal.insertBefore(btn, modal.firstChild);
+    }
+    const MODAL_SEL = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
+    function scanModals() {
+      if (!Store.getSetting('showBulkBlock')) return;
+      for (const md of querySelectorAllDeep(document, MODAL_SEL)) tryModal(md);
+    }
+    // 周期扫描（弹窗可能在 Shadow DOM 内，定时器 + 影子穿透更稳）
+    setInterval(() => { refreshFab(); scanModals(); }, 1200);
+    refreshFab(); scanModals();
+    (window.OB = window.OB || {}).refreshBulk = refreshFab;
+    (window.OB = window.OB || {}).collectUsers = collectUsers;
+  }
+
+  // ====================================================================
   // 6. B站弹幕过滤（MAIN world 拦截 seg.so + CRC32 正向映射）
   // ====================================================================
   function setupBilibiliDanmaku() {
@@ -1088,6 +1288,8 @@
           <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>
           <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
           <label><input type="checkbox" id="ob-hover" checked> 显示悬浮拉黑按钮</label>
+          <label><input type="checkbox" id="ob-quick" checked> 在平台原生"拉黑/举报"旁显示"本地拉黑"</label>
+          <label><input type="checkbox" id="ob-bulk" checked> 显示"一键拉黑本页/全部"按钮</label>
           <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
           <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
         </div>
@@ -1134,6 +1336,8 @@
       const s = Store.settings();
       panel.querySelector('#ob-enabled').checked = s.enabled;
       panel.querySelector('#ob-hover').checked = s.showHoverButton;
+    panel.querySelector('#ob-quick').checked = s.showQuickBlock;
+    panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
@@ -1154,6 +1358,8 @@
     panel.querySelectorAll('input[name="ob-mode"]').forEach((r) => r.onchange = () => { if (r.checked) { Store.setSetting('hideMode', r.value); if (currentScanner) currentScanner.schedule(); } });
     panel.querySelector('#ob-enabled').onchange = (e) => { Store.setSetting('enabled', e.target.checked); if (currentScanner) currentScanner.schedule(); };
     panel.querySelector('#ob-hover').onchange = (e) => Store.setSetting('showHoverButton', e.target.checked);
+    panel.querySelector('#ob-quick').onchange = (e) => { Store.setSetting('showQuickBlock', e.target.checked); if (e.target.checked && window.OB && window.OB.setupQuickBlock) window.OB.setupQuickBlock(); };
+    panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); if (e.target.checked && window.OB && window.OB.refreshBulk) window.OB.refreshBulk(); };
     panel.querySelector('#ob-skip').onchange = (e) => Store.setSetting('douyinAutoSkip', e.target.checked);
     panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) Store.setSetting('skipCap', v); };
     panel.querySelector('#ob-export').onclick = () => {
@@ -1189,6 +1395,8 @@
   if (currentAdapter) {
     setupBilibiliDanmaku();
     currentScanner = createScanner(currentAdapter);
+    setupQuickBlock();
+    setupBulkBlock();
     // 首屏延迟补扫（应对 SPA 晚加载）
     setTimeout(() => currentScanner && currentScanner.schedule(), 800);
     setTimeout(() => currentScanner && currentScanner.schedule(), 2500);
@@ -1209,5 +1417,5 @@
   }
 
   // 暴露调试接口
-  window.OB = { Store, Index, openOptions, adapters: Adapters };
+  window.OB = { Store, Index, openOptions, adapters: Adapters, setupQuickBlock, setupBulkBlock, collectUsers, identifyFromAnchor };
 })();
