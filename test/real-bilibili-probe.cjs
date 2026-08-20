@@ -1,5 +1,6 @@
 /* 真实 B站页面只读探针。
- * 使用隔离的临时 Chrome 配置和内存 GM 存储；不会读取用户 Cookie、不会触发平台写操作。
+ * 使用隔离的临时 Chrome 配置和内存 GM 存储；只修改该临时本地名单，
+ * 不会读取用户 Cookie，也不会触发平台写操作或官方拉黑。
  * 运行：node test/real-bilibili-probe.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -160,7 +161,28 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     }
 
     if (VERIFY_LOCAL_BUTTON) {
+      await page.waitForFunction(() => {
+        if (window.OB && typeof window.OB.setupQuickBlock === 'function') window.OB.setupQuickBlock();
+        const find = (node) => {
+          if (!node) return false;
+          if (node.nodeType === 1 && node.classList && node.classList.contains('ob-quick')) return true;
+          if (node.shadowRoot && find(node.shadowRoot)) return true;
+          for (const child of node.children || []) if (find(child)) return true;
+          return false;
+        };
+        return find(document);
+      }, null, { timeout: 8000, polling: 400 }).catch(() => {});
       result.localButton = await page.evaluate(async () => {
+        function collect(root, selector) {
+          const out = [];
+          const walk = (node) => {
+            if (!node) return;
+            if (node.nodeType === 1 && node.matches && node.matches(selector)) out.push(node);
+            if (node.shadowRoot) walk(node.shadowRoot);
+            for (const child of node.children || []) walk(child);
+          };
+          walk(root); return out;
+        }
         function findButton(root) {
           if (!root) return null;
           if (root.nodeType === 1 && root.classList && root.classList.contains('ob-quick')) return root;
@@ -168,13 +190,67 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
           for (const child of root.children || []) { const inside = findButton(child); if (inside) return inside; }
           return null;
         }
-        const button = findButton(document);
-        if (!button) return { found: false };
+        function composedElements(start) {
+          const out = [];
+          let node = start;
+          while (node) {
+            if (node.nodeType === 1) out.push(node);
+            if (node.parentNode) node = node.parentNode;
+            else if (node.host) node = node.host;
+            else {
+              const root = node.getRootNode && node.getRootNode();
+              node = root && root !== node && root.host || null;
+            }
+          }
+          return out;
+        }
+        const renderers = collect(document, 'bili-comment-renderer');
+        const targetIndex = renderers.findIndex((renderer, index) => index < renderers.length - 1 && findButton(renderer));
+        if (targetIndex < 0) return { found: false, reason: '没有同时具备本地入口和下一条评论的目标行' };
+        const targetRenderer = renderers[targetIndex];
+        const nextRenderer = renderers[targetIndex + 1];
+        const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+        const target = adapter && adapter.containerOf ? adapter.containerOf(targetRenderer) : targetRenderer;
+        const next = adapter && adapter.containerOf ? adapter.containerOf(nextRenderer) : nextRenderer;
+        const button = findButton(targetRenderer);
+        const targetElements = composedElements(target);
+        const nextElements = composedElements(next);
+        const common = targetElements.find((element) => nextElements.includes(element));
+        const commonBefore = common && common.getBoundingClientRect();
+        const before = target.getBoundingClientRect();
+        const nextBefore = next.getBoundingClientRect();
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         const confirm = document.getElementById('ob-confirm');
-        const result = { found: true, confirm: !!confirm, hasName: !!(confirm && !confirm.textContent.includes('该用户')) };
-        confirm && confirm.querySelector('.ob-no').click();
+        const result = {
+          found: true,
+          confirm: !!confirm,
+          hasName: !!(confirm && !confirm.textContent.includes('该用户')),
+          containerTag: target.tagName,
+          beforeHeight: Math.round(before.height),
+        };
+        if (!confirm) return result;
+        confirm.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const after = target.getBoundingClientRect();
+        const nextAfter = next.getBoundingClientRect();
+        const commonAfter = common && common.getBoundingClientRect();
+        const root = target.getRootNode();
+        result.hidden = target.classList.contains('ob-hidden') && getComputedStyle(target).display === 'none' && after.height === 0;
+        result.barCount = root.querySelectorAll ? root.querySelectorAll('.ob-bar').length : -1;
+        result.nextShift = Math.round(nextBefore.top - nextAfter.top);
+        result.relativeNextShift = commonBefore && commonAfter
+          ? Math.round((nextBefore.top - commonBefore.top) - (nextAfter.top - commonAfter.top))
+          : 0;
+        result.layoutClosed = result.relativeNextShift >= Math.max(1, Math.floor(before.height) - 1);
+
+        const toast = document.getElementById('ob-toast');
+        const undo = toast && toast.querySelector('button');
+        if (undo) {
+          undo.click();
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        result.restored = !!undo && !target.hasAttribute('data-ob-blocked') && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0;
         return result;
       });
     }
@@ -240,6 +316,8 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       if (!probe.commentUserCount) failed.push('未识别任何评论作者');
       if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible || !/^🚫 拉黑本页评论用户\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) failed.push('本页评论批量入口未出现');
       if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
+      if (local.containerTag !== 'BILI-COMMENT-THREAD-RENDERER' || !local.hidden || local.barCount !== 0 || !local.layoutClosed) failed.push('真实评论未按完整线程无提示、零占位隐藏');
+      if (!local.restored) failed.push('撤销本地拉黑后真实评论未恢复');
       if (!(probe.danmakuXhrTypes || []).some((item) => item.responseType === 'arraybuffer')) failed.push('未捕获 seg.so 的 ArrayBuffer XHR');
       if (failed.length) result.errors.push('验证失败：' + failed.join('；'));
     }

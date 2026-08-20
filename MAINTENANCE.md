@@ -212,3 +212,65 @@
 - 版本/发布状态：源码为 `0.11.0`；未提交、未推送，`origin/master` 仍为 v0.10.0。
 - 下一项最有价值的验证：在正常登录的微博只读会话中捕获一条包含 `@提及` 的评论，
   验证本地拉黑评论作者只隐藏该评论行，并将脱敏结构加入 `test/adapters.cjs`。
+
+### 2026-08-21 - v0.11.1 - 评论与弹幕无提示、零占位隐藏
+
+**范围与改动文件**
+
+- `omniblock.user.js`：评论和可识别弹幕固定使用可逆的 `display:none`，不再受灰条模式
+  影响；B站根评论按真实 `BILI-COMMENT-THREAD-RENDERER` 隐藏完整线程，楼中楼只隐藏
+  自身；B站弹幕列表行增加跨 Shadow DOM 的内联隐藏与恢复。帖子、动态、搜索卡等其他
+  内容仍保留灰条/完全消失设置。userscript 版本提高为 `0.11.1`。
+- `test/state.cjs`、`test/quickblock.cjs`：人工合成夹具改用已捕获的 B站 thread/renderer
+  层级，断言评论高度为 0、无 `.ob-bar`、相邻行补位、楼中楼边界正确且撤销可恢复。
+- `test/adapters.cjs`：人工合成的微博、知乎、贴吧、X、抖音评论/弹幕契约新增无提示、
+  零占位断言；贴吧正文节点必须提升到完整楼层容器。
+- `test/real-bilibili-probe.cjs`：严格模式会等待菜单水合，在隔离内存名单中执行一次
+  本地拉黑并撤销；不触发平台官方拉黑或其他站内写操作。
+- `README.md`、`MAINTENANCE.md`：同步用户可见行为、真实证据、限制和发布状态。
+
+**`real-site verified`**
+
+- 2026-08-21，隔离未登录浏览器，
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.11.1 解析到 2 位评论作者；本地拉黑
+  第一条根评论后，真实 `BILI-COMMENT-THREAD-RENDERER` 高度从 417px 变为 0，
+  `.ob-bar` 数量为 0，下一线程相对共同容器上移 417px；撤销后评论恢复。当前菜单仍为
+  `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`，并捕获到 `seg.so` 的
+  `XMLHttpRequest(responseType=arraybuffer)`。
+- 2026-08-21，隔离未登录公开流，`https://weibo.com/` 最终路由到
+  `https://weibo.com/newlogin?...`，当前公开流 6 个候选解析身份 6/6；这只确认公开卡片
+  身份路径仍有效，不代表微博评论无痕隐藏已在生产页验证。
+
+**`structure regression`**
+
+- `node test/run.cjs`：11/11，通过通用 UI、Shadow DOM、更新元数据和移动视口。
+- `node test/state.cjs`：6/6，通过根评论完整线程、楼中楼边界、零间距、后加载内容、
+  总开关恢复和 X 虚拟条目恢复。
+- `node test/quickblock.cjs`：11/11，通过 B站完整评论线程、菜单复用、批量事务、弹幕
+  列表零占位、撤销和 XHR 数据段过滤。
+- `node test/adapters.cjs`：14/14，通过五个平台身份契约及评论/弹幕无提示隐藏。
+- `node test/douyin.cjs`：2/2，通过推荐流节点复用、无限上限和延迟复核。
+- `node --check omniblock.user.js`、`node --check test/real-bilibili-probe.cjs` 与
+  `git diff --check`：均通过。
+
+**`blocked`**
+
+| 平台/范围 | 2026-08-21 阻碍 | 未能声称的结果 |
+|---|---|---|
+| B站右侧弹幕列表 | 隔离页仍未返回可安全匹配发送者的列表行。 | 列表行零占位隐藏和 `mid_hash` 过滤目前只有 `structure regression`；不能声称列表入口已在生产页验证。 |
+| 微博评论 | 未登录公开流没有可交互评论上下文。 | 不声称评论无痕隐藏已真实验证。 |
+| 知乎 | `https://www.zhihu.com/hot` 跳转登录页。 | 不声称真实评论或信息流可用。 |
+| 贴吧 | `https://tieba.baidu.com/f?kw=python` 返回“百度安全验证”。 | 不声称真实楼层或楼中楼无痕隐藏已验证。 |
+| X | `https://x.com/home` 只显示登录页。 | X 条目零占位策略只有 `structure regression`，真实虚拟列表仍需复核。 |
+| 抖音 | `https://www.douyin.com/` 标题为“验证码中间页”。 | 不声称真实评论、弹幕或推荐流可用。 |
+
+**检查、限制与发布**
+
+- 当前限制：B站已经缓存进播放器的弹幕需等待下一段加载或刷新后才会被数据段过滤；
+  仅处理 open Shadow DOM；拿不到规范身份的条目保持原样。X 的虚拟列表改为零占位后尚无
+  真实登录态证据。
+- 版本/发布状态：源码为 `0.11.1`，本条交接随本次提交落库，尚未推送；提交前基线与
+  当前 `origin/master` 均为 `544ed9de95489f9f7b8bc8991372ecb5666abae1`（v0.11.0）。工作区中既有的
+  `.workbuddy/memory/2026-08-20.md` 和三张 `test/shot-*.png` 脏改动未暂存、未回退。
+- 下一项最有价值的验证：在能返回发送者列表行的隔离 B站视频页复核 `mid_hash` 到行的
+  匹配，确认点击本地拉黑后该真实弹幕行高度为 0，并把脱敏结构加入 `test/quickblock.cjs`。

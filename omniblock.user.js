@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.11.0
+// @version       0.11.1
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -34,7 +34,7 @@
  * --------------------------------------------------------------------------
  * 设计要点（详见项目计划文档）：
  *  - 一份共享名单（GM 单键存储），6 个平台通用；可导出/导入 JSON 备份。
- *  - 三种处置：折叠（默认）、完全消失、跳过（抖音推荐流专用）。
+ *  - 评论/弹幕固定零占位隐藏；其他内容可折叠或完全消失；抖音推荐流可自动跳过。
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
  *  - B站弹幕：MAIN world 拦截 seg.so（当前播放器走 XHR，保留 fetch 兼容），手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
@@ -401,7 +401,7 @@
   })();
 
   // ====================================================================
-  // 2. 隐藏引擎：折叠 / 完全消失
+  // 2. 隐藏引擎：评论/弹幕零占位隐藏，其他内容可折叠或完全消失
   // ====================================================================
   GM_addStyle(`
     [data-ob-blocked="1"].ob-collapsed { position: relative !important; }
@@ -515,6 +515,33 @@
   `);
 
   const blockedContainers = new Set();
+  const inlineDisplayStates = new WeakMap();
+
+  function needsInlineHide(container) {
+    if (!container || !container.getRootNode) return false;
+    const root = container.getRootNode();
+    // 文档样式无法选择 Shadow Root 内的元素，也无法隐藏宿主的影子内容。
+    return !!container.shadowRoot || !!(root && root.host);
+  }
+
+  function setInlineHidden(container, hidden) {
+    if (!container || !container.style) return;
+    if (hidden) {
+      if (!inlineDisplayStates.has(container)) {
+        inlineDisplayStates.set(container, {
+          value: container.style.getPropertyValue('display'),
+          priority: container.style.getPropertyPriority('display'),
+        });
+      }
+      container.style.setProperty('display', 'none', 'important');
+      return;
+    }
+    const previous = inlineDisplayStates.get(container);
+    if (!previous) return;
+    if (previous.value) container.style.setProperty('display', previous.value, previous.priority);
+    else container.style.removeProperty('display');
+    inlineDisplayStates.delete(container);
+  }
 
   function blockedBarText(label) {
     return `🔇 内容已屏蔽${label ? ' · ' + label : ''} · 点击展开`;
@@ -523,10 +550,15 @@
   function makeBar(container, label) {
     const bar = document.createElement('div');
     bar.className = 'ob-bar';
+    // 提示条可能被插入 Shadow Root；使用内联样式确保不依赖文档级 stylesheet 穿透。
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;cursor:pointer;font-size:13px;line-height:1.6;padding:6px 10px;margin:2px 0;background:#f3f3f5;color:#888;border-left:3px solid #bbb;border-radius:4px;';
     bar.textContent = blockedBarText(label);
     bar.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (container && container.hasAttribute('data-ob-blocked')) container.classList.toggle('ob-expanded');
+      if (container && container.hasAttribute('data-ob-blocked')) {
+        const expanded = container.classList.toggle('ob-expanded');
+        setInlineHidden(container, !expanded && needsInlineHide(container));
+      }
     });
     return bar;
   }
@@ -542,9 +574,11 @@
       container.__obBar = null;
       container.classList.remove('ob-collapsed', 'ob-expanded');
       container.classList.add('ob-hidden');
+      setInlineHidden(container, needsInlineHide(container));
     } else {
       container.classList.remove('ob-hidden');
       container.classList.add('ob-collapsed');
+      setInlineHidden(container, needsInlineHide(container) && !container.classList.contains('ob-expanded'));
       let bar = container.__obBar;
       if (!bar || !bar.isConnected) bar = makeBar(container, label);
       bar.textContent = blockedBarText(label);
@@ -557,6 +591,7 @@
 
   function unmark(container) {
     if (!container) return;
+    setInlineHidden(container, false);
     if (container.__obBar && container.__obBar.parentNode) container.__obBar.parentNode.removeChild(container.__obBar);
     container.__obBar = null;
     container.removeAttribute('data-ob-blocked');
@@ -574,14 +609,20 @@
     for (const container of blockedContainers) if (!container.isConnected) blockedContainers.delete(container);
   }
 
+  function modeForItem(adapter, item) {
+    for (const selector of adapter.disappearSelectors || []) {
+      if (item.matches && item.matches(selector)) return 'disappear';
+    }
+    return adapter.forceMode === 'collapse' || adapter.forceMode === 'disappear' ? adapter.forceMode : '';
+  }
+
   // 通用：处理一个"条目"——抽出身份，命中则隐藏
   function handleItem(adapter, item) {
     const info = adapter.extract(item);
     const container = (info && adapter.containerOf && adapter.containerOf(item)) || (info && info.container) || item;
     if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
     if (Index.isBlocked(info.keys)) {
-      // 虚拟列表只折叠，保留节点高度契约，避免列表复用时错位。
-      markBlocked(container, info.label, adapter.forceMode === 'collapse' ? 'collapse' : '');
+      markBlocked(container, info.label, modeForItem(adapter, item));
     } else unmark(container);
   }
 
@@ -966,6 +1007,7 @@
       id: 'douyin',
       match: (h) => /(^|\.)douyin\.com$/.test(h.hostname),
       selectors: [SEL.comment, SEL.siteCard, SEL.profileList, SEL.danmaku],
+      disappearSelectors: [SEL.comment, SEL.danmaku],
       extract(item) {
         if (item.matches && item.matches(SEL.comment)) return extractComment(item);
         if (item.matches && item.matches(SEL.profileList)) return extractProfileList(item);
@@ -1061,6 +1103,7 @@
       id: 'weibo',
       match: (h) => /(^|\.)weibo\.com$/.test(h.hostname) || /(^|\.)weibo\.cn$/.test(h.hostname),
       selectors: [SEL.comment, SEL.card],
+      disappearSelectors: [SEL.comment],
       extract(item) {
         const link = findUserLink(item);
         const uid = uidFromLink(link);
@@ -1077,6 +1120,7 @@
   Adapters.zhihu = (function () {
     const SEL = {
       item: '.ContentItem, .FeedCard, .TopstoryItem, [data-testid="AnswerCard"], .CommentItem, .List-item',
+      comment: '.CommentItem',
       userLink: 'a[href*="/people/"], a[href*="/org/"]',
     };
     function idFromLink(link) {
@@ -1098,6 +1142,7 @@
       id: 'zhihu',
       match: (h) => /(^|\.)zhihu\.com$/.test(h.hostname),
       selectors: [SEL.item],
+      disappearSelectors: [SEL.comment],
       extract(item) {
         const link = item.querySelector(SEL.userLink);
         const { token } = idFromLink(link);
@@ -1117,7 +1162,7 @@
       cell: '[data-testid="cellInnerDiv"]',
       userLink: 'a[role="link"][href^="/"]',
     };
-    // X 时间线是虚拟列表，强制折叠（保留节点，不 display:none），防闪烁/错位
+    // X 的回复与普通帖子共用同一条目结构；统一零占位隐藏，避免回复位置留下灰条或空行。
     function findCell(el) {
       let p = el;
       while (p && p !== document.body) {
@@ -1129,8 +1174,8 @@
     return {
       id: 'x',
       match: (h) => /(^|\.)(x|twitter)\.com$/.test(h.hostname),
-      forceMode: 'collapse',
       selectors: [SEL.tweet],
+      disappearSelectors: [SEL.tweet],
       extract(item) {
         // 取推文作者链接（形如 /handle）
         const links = $$('a[role="link"]', item);
@@ -1175,22 +1220,26 @@
       }
       return el;
     }
+    function containerForItem(item) {
+      return item.matches(SEL.thread) ? findContainer(item, SEL.thread)
+        : (item.closest && item.closest('div.l_post.l_post_bright')) || item;
+    }
     return {
       id: 'tieba',
       match: (h) => /(^|\.)tieba\.baidu\.com$/.test(h.hostname),
       // 楼中楼集合不是单条回复；没有可靠的单回复捕获结构时不扫描该集合。
       selectors: [SEL.thread, SEL.post],
+      disappearSelectors: [SEL.post],
       extract(item) {
         let fieldEl = item.querySelector(SEL.author);
         if (!fieldEl && item.hasAttribute && item.hasAttribute('data-field')) fieldEl = item;
         const { uid, name } = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
         const keys = [];
         appendIdentityKey(keys, 'tieba:uid', uid);
-        const container = item.matches(SEL.thread) ? findContainer(item, SEL.thread)
-          : findContainer(item, SEL.post);
+        const container = containerForItem(item);
         return { keys, label: name, container };
       },
-      containerOf: (item) => item,
+      containerOf: containerForItem,
     };
   })();
 
@@ -1236,13 +1285,21 @@
       return '';
     }
 
+    function commentContainer(el) {
+      if (el && el.tagName === 'BILI-COMMENT-RENDERER' && el.getRootNode) {
+        const root = el.getRootNode();
+        if (root && root.host && root.host.tagName === 'BILI-COMMENT-THREAD-RENDERER') return root.host;
+      }
+      return el;
+    }
+
     function extract(el) {
       const fromData = dataIdentity(el && el.__data);
       const mid = fromData.mid || midFromEl(el);
       const name = fromData.name || textOf(deepQuery(el, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
       const keys = [];
       appendIdentityKey(keys, 'bili:uid', mid);
-      return { keys, label: name, container: el };
+      return { keys, label: name, container: commentContainer(el) };
     }
 
     function userFromSpaceLink(link) {
@@ -1264,6 +1321,7 @@
       id: 'bilibili',
       match: (h) => /(^|\.)bilibili\.com$/.test(h.hostname),
       selectors: [SEL.comment, SEL.dyn, SEL.videoCard, SEL.space],
+      disappearSelectors: [SEL.comment],
       extract,
       // 统计“本页用户”时只计算评论作者，绝不把推荐视频卡/列表项当成人。
       collectUsers(root, purpose) {
@@ -1273,7 +1331,7 @@
         return collectModalUsers(modal).length >= 2;
       },
       bulkFabLabel: (n) => '🚫 拉黑本页评论用户(' + n + ')',
-      containerOf: (item) => item,
+      containerOf: commentContainer,
     };
   })();
 
@@ -1756,21 +1814,25 @@
         for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
           const existingButton = row.querySelector && row.querySelector(':scope > .ob-dm-block');
           if (!enabled) {
+            setInlineHidden(row, false);
             row.removeAttribute('data-ob-dm-blocked');
             if (existingButton) existingButton.remove();
             continue;
           }
           const hash = hashFromDmRow(row);
           if (!hash) {
+            setInlineHidden(row, false);
             row.removeAttribute('data-ob-dm-blocked');
             if (existingButton) existingButton.remove();
             continue;
           }
           if (blocked.has(hash)) {
             row.setAttribute('data-ob-dm-blocked', '1');
+            setInlineHidden(row, true);
             if (existingButton) existingButton.remove();
             continue;
           }
+          setInlineHidden(row, false);
           row.removeAttribute('data-ob-dm-blocked');
           if (showButton) addDmBlockButton(row, hash);
           else if (existingButton) existingButton.remove();
@@ -1930,7 +1992,7 @@
           <button id="ob-add" style="background:#c0392b;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer">添加</button>
         </div>
 
-        <h3>隐藏方式</h3>
+        <h3>帖子 / 动态等其他内容的隐藏方式</h3>
         <div style="display:flex;gap:16px;flex-wrap:wrap">
           <label><input type="radio" name="ob-mode" value="collapse" checked> 折叠成灰条（默认，可追溯）</label>
           <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>

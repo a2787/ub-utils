@@ -1,5 +1,6 @@
 /* OmniBlock B站回归测试。
- * 覆盖真实页面已捕获的结构：bili-comment-renderer 的 __data.member.mid、
+ * 覆盖真实页面已捕获的结构：bili-comment-thread-renderer Shadow Root 内
+ * bili-comment-renderer 的 __data.member.mid、
  * bili-comment-menu Shadow DOM 的 <ul id="options"><li>，以及 seg.so protobuf。
  * 运行：node test/quickblock.cjs
  */
@@ -40,7 +41,11 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
   }
   const comments = document.getElementById('comments');
   const commentsRoot = comments.attachShadow({mode:'open'});
+  const commentsStyle = document.createElement('style'); commentsStyle.textContent = 'bili-comment-thread-renderer{display:block;height:24px;margin:0;padding:0}'; commentsRoot.appendChild(commentsStyle);
   function makeComment(mid, uname) {
+    const thread = document.createElement('bili-comment-thread-renderer');
+    thread.id = 'comment-' + mid;
+    const threadRoot = thread.attachShadow({mode:'open'});
     const renderer = document.createElement('bili-comment-renderer');
     renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
     const root = renderer.attachShadow({mode:'open'});
@@ -49,10 +54,11 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     const menuRoot = menu.attachShadow({mode:'open'});
     const list = document.createElement('ul'); list.id = 'options';
     for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
-    menuRoot.appendChild(list); root.append(link, menu);
-    return renderer;
+    menuRoot.appendChild(list); root.append(link, menu); threadRoot.appendChild(renderer);
+    return thread;
   }
   commentsRoot.append(makeComment(111, 'Alice'), makeComment(222, 'Bob'), makeComment(333, 'Carol'));
+  window.__commentRenderer = (mid) => commentsRoot.querySelector('#comment-' + mid).shadowRoot.querySelector('bili-comment-renderer');
 </script>
 </body></html>`;
 
@@ -110,7 +116,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     else report.fail.push('QB-A 评论统计错误：' + JSON.stringify(count));
 
     const menu = await page.evaluate(() => {
-      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      const renderer = window.__commentRenderer('111');
       const list = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('#options');
       const button = list.querySelector('.ob-quick');
       return { tag: button && button.tagName, text: button && button.textContent, count: list.querySelectorAll('.ob-quick').length };
@@ -120,20 +126,29 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
 
     const quickBlock = await page.evaluate(async () => {
-      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      const renderer = window.__commentRenderer('111');
+      const container = window.OB.adapters.bilibili.containerOf(renderer);
       const button = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { confirm: false };
       const named = confirm.textContent.includes('Alice');
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
-      return { confirm: true, named, blocked: window.OB.Index.isBlocked('bili:uid:111') };
+      return {
+        confirm: true,
+        named,
+        blocked: window.OB.Index.isBlocked('bili:uid:111'),
+        fullThread: container.tagName === 'BILI-COMMENT-THREAD-RENDERER',
+        hiddenClass: container.classList.contains('ob-hidden'),
+        visuallyHidden: getComputedStyle(container).display === 'none' || container.getBoundingClientRect().height === 0,
+        bars: container.getRootNode().querySelectorAll('.ob-bar').length,
+      };
     });
-    if (quickBlock.confirm && quickBlock.named && quickBlock.blocked) report.pass.push('QB-C 评论菜单可解析 __data.member.mid / uname 并拉黑正确 UID');
+    if (quickBlock.confirm && quickBlock.named && quickBlock.blocked && quickBlock.fullThread && quickBlock.hiddenClass && quickBlock.visuallyHidden && quickBlock.bars === 0) report.pass.push('QB-C 评论菜单拉黑正确 UID，完整评论线程无提示、零占位消失');
     else report.fail.push('QB-C 评论菜单身份识别失败：' + JSON.stringify(quickBlock));
 
     const recycledMenu = await page.evaluate(async () => {
-      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      const renderer = window.__commentRenderer('111');
       renderer.__data = { mid: '777', member: { mid: '777', uname: 'Recycled' } };
       const link = renderer.shadowRoot.querySelector('.user-name');
       link.href = '//space.bilibili.com/777'; link.textContent = 'Recycled';
@@ -242,9 +257,16 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, confirm: false };
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
-      return { exists: true, confirm: true, blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'), hidden: row.getAttribute('data-ob-dm-blocked') === '1' };
+      return {
+        exists: true,
+        confirm: true,
+        blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'),
+        hidden: row.getAttribute('data-ob-dm-blocked') === '1',
+        visuallyHidden: getComputedStyle(row).display === 'none' || row.getBoundingClientRect().height === 0,
+        bars: document.querySelectorAll('#dm-panel .ob-bar').length,
+      };
     });
-    if (dm.exists && dm.confirm && dm.blocked && dm.hidden) report.pass.push('QB-H 弹幕列表按 mid_hash 显示本地拉黑并存入独立身份键（XHR 段数据）');
+    if (dm.exists && dm.confirm && dm.blocked && dm.hidden && dm.visuallyHidden && dm.bars === 0) report.pass.push('QB-H 弹幕列表按 mid_hash 拉黑后无提示、零占位消失（XHR 段数据）');
     else report.fail.push('QB-H 弹幕列表拉黑失败：' + JSON.stringify(dm));
 
     const dmUndo = await page.evaluate(async () => {
@@ -256,9 +278,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         toast: true,
         removed: !window.OB.Index.isBlocked('bili:dmhash:678f8529'),
         visible: row.getAttribute('data-ob-dm-blocked') !== '1',
+        visuallyVisible: getComputedStyle(row).display !== 'none' && row.getBoundingClientRect().height > 0,
       };
     });
-    if (dmUndo.toast && dmUndo.removed && dmUndo.visible) report.pass.push('QB-I 撤销弹幕发送者拉黑后，当前列表行立即恢复');
+    if (dmUndo.toast && dmUndo.removed && dmUndo.visible && dmUndo.visuallyVisible) report.pass.push('QB-I 撤销弹幕发送者拉黑后，当前列表行立即恢复');
     else report.fail.push('QB-I 弹幕撤销未恢复列表行：' + JSON.stringify(dmUndo));
 
     const filtered = await page.evaluate(async () => {
