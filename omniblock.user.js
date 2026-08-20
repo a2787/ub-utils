@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name          OmniBlock 拉黑不上限（6 平台统一本地黑名单）
-// @namespace     https://github.com/vibeme/omniblock
+// @name          本地内容过滤增强
+// @namespace     https://github.com/a2787/ub-utils
 // @version       0.6.0
-// @description   一个本地黑名单，跨 B站/微博/知乎/百度贴吧/X(推特)/抖音 隐藏指定用户的所有内容。无数量上限、纯本地、不联网。
+// @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
 // @match         *://m.weibo.cn/*
@@ -19,6 +19,8 @@
 // @grant         GM_addValueChangeListener
 // @run-at        document-start
 // @sandbox       raw
+// @updateURL     https://cdn.jsdelivr.net/gh/a2787/ub-utils@master/omniblock.user.js
+// @downloadURL   https://cdn.jsdelivr.net/gh/a2787/ub-utils@master/omniblock.user.js
 // @license       MIT
 // @author        vibeme (抖音/微博适配器行为脱胎自 Pynseq-Douyin / Pynseq-Weibo，MIT；其余适配器自建)
 // ==/UserScript==
