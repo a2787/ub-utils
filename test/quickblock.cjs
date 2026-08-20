@@ -12,7 +12,7 @@ const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0
 const SHIM = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
-window.GM_setValue = (k,v) => { window.__gm[k] = v; };
+window.GM_setValue = (k,v) => { window.__gm[k] = v; window.__writes = (window.__writes || 0) + 1; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
@@ -132,6 +132,24 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (quickBlock.confirm && quickBlock.named && quickBlock.blocked) report.pass.push('QB-C 评论菜单可解析 __data.member.mid / uname 并拉黑正确 UID');
     else report.fail.push('QB-C 评论菜单身份识别失败：' + JSON.stringify(quickBlock));
 
+    const recycledMenu = await page.evaluate(async () => {
+      const renderer = document.querySelector('bili-comments').shadowRoot.querySelector('bili-comment-renderer');
+      renderer.__data = { mid: '777', member: { mid: '777', uname: 'Recycled' } };
+      const link = renderer.shadowRoot.querySelector('.user-name');
+      link.href = '//space.bilibili.com/777'; link.textContent = 'Recycled';
+      const menu = renderer.shadowRoot.querySelector('bili-comment-menu');
+      menu.__data = { member: { mid: '777', uname: 'Recycled' } };
+      const button = menu.shadowRoot.querySelector('.ob-quick');
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      const result = { confirm: !!confirm, currentUser: !!(confirm && confirm.textContent.includes('Recycled')), staleUser: !!(confirm && confirm.textContent.includes('Alice')) };
+      if (confirm) confirm.querySelector('.ob-no').click();
+      return result;
+    });
+    if (recycledMenu.confirm && recycledMenu.currentUser && !recycledMenu.staleUser)
+      report.pass.push('QB-D 虚拟列表复用评论菜单时，快捷入口按点击时上下文识别当前用户');
+    else report.fail.push('QB-D 快捷入口使用了过期身份：' + JSON.stringify(recycledMenu));
+
     await page.evaluate(() => {
       const dialog = document.createElement('div'); dialog.id = 'report-dialog'; dialog.setAttribute('role', 'dialog');
       dialog.innerHTML = '<ul class="operation-list"><li class="operation-option">举报</li></ul>';
@@ -144,8 +162,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return { quick: !!dialog.querySelector('.ob-quick'), bulk: !!dialog.querySelector('.ob-bulk'), visibleFab };
     });
     if (!dialogState.quick && !dialogState.bulk && !dialogState.visibleFab)
-      report.pass.push('QB-D 举报弹窗没有无效本地拉黑或“(0)”浮层');
-    else report.fail.push('QB-D 举报弹窗误注入：' + JSON.stringify(dialogState));
+      report.pass.push('QB-E 举报弹窗没有无效本地拉黑或“(0)”浮层');
+    else report.fail.push('QB-E 举报弹窗误注入：' + JSON.stringify(dialogState));
     await page.evaluate(() => document.getElementById('report-dialog').remove());
 
     await page.evaluate(() => {
@@ -157,15 +175,53 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const bulk = await page.evaluate(async () => {
       const button = document.querySelector('#likers .ob-bulk');
       if (!button) return { exists: false };
+      window.__writes = 0;
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, confirm: false };
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
-      return { exists: true, confirm: true, blocked: ['901', '902', '903'].every((id) => window.OB.Index.isBlocked('bili:uid:' + id)) };
+      const persons = Object.values(window.OB.Store.persons());
+      const likerGroups = persons.filter((person) => person.identities.some((key) => /^bili:uid:90[123]$/.test(key)));
+      return {
+        exists: true,
+        confirm: true,
+        blocked: ['901', '902', '903'].every((id) => window.OB.Index.isBlocked('bili:uid:' + id)),
+        separate: likerGroups.length === 3 && likerGroups.every((person) => person.identities.filter((key) => /^bili:uid:90[123]$/.test(key)).length === 1),
+        writes: window.__writes,
+      };
     });
-    if (bulk.exists && bulk.confirm && bulk.blocked) report.pass.push('QB-E 仅对实际用户列表弹窗显示并执行批量拉黑');
-    else report.fail.push('QB-E 批量拉黑失败：' + JSON.stringify(bulk));
+    if (bulk.exists && bulk.confirm && bulk.blocked && bulk.separate && bulk.writes === 1) report.pass.push('QB-F 批量拉黑逐人存储，并以一次持久化提交');
+    else report.fail.push('QB-F 批量拉黑事务错误：' + JSON.stringify(bulk));
     await page.evaluate(() => document.getElementById('likers').remove());
+
+    await page.evaluate(() => {
+      const modal = document.createElement('div'); modal.id = 'undo-list'; modal.setAttribute('role', 'dialog');
+      modal.innerHTML = '<header>混合用户</header><a href="//space.bilibili.com/901">U901</a><a href="//space.bilibili.com/904">U904</a>';
+      document.body.appendChild(modal);
+    });
+    await wait(1300);
+    const bulkUndo = await page.evaluate(async () => {
+      const button = document.querySelector('#undo-list .ob-bulk');
+      if (!button) return { exists: false };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const toast = document.getElementById('ob-toast');
+      if (!toast) return { exists: true, confirm: true, toast: false };
+      window.__writes = 0;
+      toast.querySelector('button').click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      return {
+        exists: true, confirm: true, toast: true,
+        existingKept: window.OB.Index.isBlocked('bili:uid:901'),
+        newRemoved: !window.OB.Index.isBlocked('bili:uid:904'),
+        undoWrites: window.__writes,
+      };
+    });
+    if (bulkUndo.exists && bulkUndo.confirm && bulkUndo.toast && bulkUndo.existingKept && bulkUndo.newRemoved && bulkUndo.undoWrites === 1)
+      report.pass.push('QB-G 批量撤销一次提交且只移除本次新增身份');
+    else report.fail.push('QB-G 批量撤销边界错误：' + JSON.stringify(bulkUndo));
+    await page.evaluate(() => document.getElementById('undo-list').remove());
 
     await page.evaluate(async () => {
       await new Promise((resolve, reject) => {
@@ -188,8 +244,22 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
       return { exists: true, confirm: true, blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'), hidden: row.getAttribute('data-ob-dm-blocked') === '1' };
     });
-    if (dm.exists && dm.confirm && dm.blocked && dm.hidden) report.pass.push('QB-F 弹幕列表按 mid_hash 显示本地拉黑并存入独立身份键（XHR 段数据）');
-    else report.fail.push('QB-F 弹幕列表拉黑失败：' + JSON.stringify(dm));
+    if (dm.exists && dm.confirm && dm.blocked && dm.hidden) report.pass.push('QB-H 弹幕列表按 mid_hash 显示本地拉黑并存入独立身份键（XHR 段数据）');
+    else report.fail.push('QB-H 弹幕列表拉黑失败：' + JSON.stringify(dm));
+
+    const dmUndo = await page.evaluate(async () => {
+      const toast = document.getElementById('ob-toast');
+      if (!toast) return { toast: false };
+      toast.querySelector('button').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const row = document.querySelector('#dm-panel .bpx-player-dm-item');
+      return {
+        toast: true,
+        removed: !window.OB.Index.isBlocked('bili:dmhash:678f8529'),
+        visible: row.getAttribute('data-ob-dm-blocked') !== '1',
+      };
+    });
+    if (dmUndo.toast && dmUndo.removed && dmUndo.visible) report.pass.push('QB-I 撤销弹幕发送者拉黑后，当前列表行立即恢复');
+    else report.fail.push('QB-I 弹幕撤销未恢复列表行：' + JSON.stringify(dmUndo));
 
     const filtered = await page.evaluate(async () => {
       const bytes = await new Promise((resolve, reject) => {
@@ -203,8 +273,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const text = new TextDecoder().decode(bytes);
       return { hasBlocked: text.includes('hello danmaku'), hasKept: text.includes('keep danmaku'), hasUidMapped: text.includes('uid mapped danmaku') };
     });
-    if (!filtered.hasBlocked && filtered.hasKept && filtered.hasUidMapped) report.pass.push('QB-G XHR 返回的后续弹幕段会过滤已拉黑 mid_hash，其余保留');
-    else report.fail.push('QB-G 弹幕段过滤失败：' + JSON.stringify(filtered));
+    if (filtered.hasBlocked && filtered.hasKept && filtered.hasUidMapped) report.pass.push('QB-J 撤销后 XHR 返回的后续弹幕段不再过滤该 mid_hash');
+    else report.fail.push('QB-J 弹幕段撤销过滤失败：' + JSON.stringify(filtered));
 
     const uidFiltered = await page.evaluate(async () => {
       window.OB.Store.addIdentities(['bili:uid:33'], 'UID 33');
@@ -218,8 +288,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       });
       return new TextDecoder().decode(bytes).includes('uid mapped danmaku');
     });
-    if (!uidFiltered) report.pass.push('QB-H UID 33 的前导零 CRC32 mid_hash 也会被 XHR 过滤');
-    else report.fail.push('QB-H UID -> 前导零 mid_hash 映射失败');
+    if (!uidFiltered) report.pass.push('QB-K UID 33 的前导零 CRC32 mid_hash 也会被 XHR 过滤');
+    else report.fail.push('QB-K UID -> 前导零 mid_hash 映射失败');
   } catch (error) {
     report.fail.push('FATAL: ' + (error && error.message || error));
   }

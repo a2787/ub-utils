@@ -97,6 +97,9 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
+  const metadataReady = /\/\/\s*@grant\s+GM_info\b/.test(USERSCRIPT) && /\/\/\s*@connect\s+raw\.githubusercontent\.com\b/.test(USERSCRIPT);
+  if (metadataReady) report.pass.push('J 更新元数据：已声明 GM_info 与更新域名权限');
+  else report.fail.push('J 更新元数据缺少 GM_info 或 @connect 声明');
   const browser = await launchChromium({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
@@ -153,7 +156,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   })()`);
   (b.alice && b.carol) ? report.pass.push('B 未拉黑者初始可见：Alice/Carol 正常') : report.fail.push('B 未拉黑者异常：' + JSON.stringify(b));
 
-  await page.screenshot({ path: path.join(ROOT, 'test', 'shot-1-load.png'), fullPage: true });
+  await page.screenshot({ path: path.join(ROOT, 'test', '_shot_1_load.png'), fullPage: true });
 
   // C. 右键穿透 Shadow DOM：Carol 影子内 <a> 派发 contextmenu
   const c = await page.evaluate(`(() => {
@@ -182,7 +185,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   })()`);
   (d.confirmShown && d.carolBlocked && d.inList) ? report.pass.push('D 拉黑全流程：Carol 已隐藏且进名单') : report.fail.push('D 拉黑流程失败：' + JSON.stringify(d));
 
-  await page.screenshot({ path: path.join(ROOT, 'test', 'shot-2-after-block.png'), fullPage: true });
+  await page.screenshot({ path: path.join(ROOT, 'test', '_shot_2_after_block.png'), fullPage: true });
 
   // E. 设置面板：出现且含"抖音连续跳过上限"(skipCap) 与 "检查更新"按钮
   const e = await page.evaluate(`(async () => {
@@ -243,7 +246,25 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   })()`);
   (i && i.includes('检查失败')) ? report.pass.push('I 检查更新·网络错误：提示检查失败') : report.fail.push('I 网络错误分支失败：' + JSON.stringify(i));
 
-  await page.screenshot({ path: path.join(ROOT, 'test', 'shot-3-settings.png'), fullPage: true });
+  await page.screenshot({ path: path.join(ROOT, 'test', '_shot_3_settings.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await sleep(100);
+  const mobile = await page.evaluate(() => {
+    const box = document.querySelector('#ob-panel .ob-box');
+    const rect = box && box.getBoundingClientRect();
+    return {
+      box: !!box,
+      left: rect && rect.left,
+      right: rect && rect.right,
+      viewport: innerWidth,
+      overflow: box ? box.scrollWidth > box.clientWidth + 1 : true,
+    };
+  });
+  (mobile.box && mobile.left >= 0 && mobile.right <= mobile.viewport + 1 && !mobile.overflow)
+    ? report.pass.push('K 移动视口：设置面板完整落在视口内且无横向溢出')
+    : report.fail.push('K 移动视口布局错误：' + JSON.stringify(mobile));
+  await page.screenshot({ path: path.join(ROOT, 'test', '_shot_4_mobile_settings.png'), fullPage: false });
 
   const ok = report.fail.length === 0;
   // 同步落盘报告（务必在 browser.close 之前，避免其偶发挂起导致进程卡死、结果丢失）
@@ -253,7 +274,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   console.log('FAIL:', report.fail.length); report.fail.forEach(x => console.log('  ❌', x));
   console.log('Console(errors/warn):', report.console.length); report.console.forEach(x => console.log('  ·', x));
   console.log('PageErrors:', report.pageErrors.length); report.pageErrors.forEach(x => console.log('  ·', x));
-  console.log(ok ? '\nRESULT: ALL GREEN ✅' : '\nRESULT: HAS FAILURES ❌');
+  console.log(ok ? '\nRESULT: STRUCTURE REGRESSION PASSED' : '\nRESULT: STRUCTURE REGRESSION FAILED');
   // 不 await browser.close：偶发挂起会让进程无法自然退出；强制退出以保结果落盘
   try { browser.close().catch(() => {}); } catch (e) {}
   process.exit(ok ? 0 : 1);

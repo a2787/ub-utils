@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.10.0
-// @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
+// @version       0.11.0
+// @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
 // @match         *://m.weibo.cn/*
@@ -19,6 +19,8 @@
 // @grant         GM_addValueChangeListener
 // @grant         GM_xmlhttpRequest
 // @grant         GM_openInTab
+// @grant         GM_info
+// @connect       raw.githubusercontent.com
 // @run-at        document-start
 // @sandbox       raw
 // @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
@@ -36,7 +38,7 @@
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
  *  - B站弹幕：MAIN world 拦截 seg.so（当前播放器走 XHR，保留 fetch 兼容），手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
- *  - 全程本地，不联网、不上传任何数据。
+ *  - 名单与浏览数据只在本机保存，不上传；仅用户主动检查更新时请求脚本更新地址。
  */
 (function () {
   'use strict';
@@ -44,10 +46,6 @@
   // ====================================================================
   // 0. 基础工具
   // ====================================================================
-  const PLATFORM_LABEL = {
-    bili: 'B站', weibo: '微博', zhihu: '知乎', tieba: '贴吧', x: 'X', douyin: '抖音',
-  };
-
   // 更新地址（与脚本头 @updateURL/@downloadURL 保持一致；用户脚本运行时无法自读元数据，故显式声明）
   const UPDATE_URL = 'https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js';
   const DOWNLOAD_URL = UPDATE_URL;
@@ -58,7 +56,6 @@
   const attr = (el, a) => (el ? el.getAttribute(a) : null);
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 穿透所有 open Shadow DOM 查找（B站评论/动态在影子 DOM 内，表层 query 拿不到）
   function deepQuery(root, sel) {
     return querySelectorAllDeep(root, sel)[0] || null;
@@ -108,6 +105,78 @@
     return String(v).replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
+  const IDENTITY_NORMALIZERS = {
+    'bili:uid': normalizeDigits,
+    'bili:dmhash': (value) => {
+      const hash = normId(value).replace(/^0x/i, '').toLowerCase();
+      return /^[0-9a-f]{1,8}$/.test(hash) ? hash.padStart(8, '0') : '';
+    },
+    'weibo:uid': normalizeDigits,
+    'zhihu:token': normalizeOpaque,
+    'tieba:uid': normalizeDigits,
+    'x:handle': (value) => {
+      const handle = normId(value).replace(/^@/, '').toLowerCase();
+      return /^[a-z0-9_]{1,15}$/.test(handle) ? handle : '';
+    },
+    'douyin:secuid': normalizeOpaque,
+    'douyin:uid': normalizeDigits,
+    // 旧版本可能保存过姓名或非规范 uid。保留可导入/导出兼容，但适配器不再生成这些键。
+    'weibo:name': normalizeLegacyName,
+    'zhihu:name': normalizeLegacyName,
+    'tieba:name': normalizeLegacyName,
+    'zhihu:uid': normalizeOpaque,
+    'x:uid': normalizeOpaque,
+  };
+  const MANUAL_IDENTITY_TYPE = {
+    bili: 'bili:uid', weibo: 'weibo:uid', zhihu: 'zhihu:token',
+    tieba: 'tieba:uid', x: 'x:handle', douyin: 'douyin:secuid',
+  };
+
+  function normalizeDigits(value) {
+    const digits = normId(value);
+    return /^\d+$/.test(digits) ? digits.replace(/^0+(?=\d)/, '') : '';
+  }
+
+  function normalizeOpaque(value) {
+    const opaque = normId(value);
+    return opaque && opaque.length <= 256 && !/[\s\u0000-\u001f\u007f]/.test(opaque) ? opaque : '';
+  }
+
+  function normalizeLegacyName(value) {
+    const name = normNick(value);
+    return name && name.length <= 200 && !/[\u0000-\u001f\u007f]/.test(name) ? name : '';
+  }
+
+  function normalizeIdentityKey(key) {
+    const raw = normId(key);
+    for (const type of Object.keys(IDENTITY_NORMALIZERS)) {
+      const prefix = type + ':';
+      if (!raw.startsWith(prefix)) continue;
+      const value = IDENTITY_NORMALIZERS[type](raw.slice(prefix.length));
+      return value ? prefix + value : '';
+    }
+    return '';
+  }
+
+  function normalizeIdentityKeys(keys) {
+    const out = [];
+    const seen = new Set();
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      const normalized = normalizeIdentityKey(key);
+      if (normalized && !seen.has(normalized)) { seen.add(normalized); out.push(normalized); }
+    }
+    return out;
+  }
+
+  function makeIdentityKey(type, value) {
+    return normalizeIdentityKey(type + ':' + normId(value));
+  }
+
+  function appendIdentityKey(keys, type, value) {
+    const key = makeIdentityKey(type, value);
+    if (key) keys.push(key);
+  }
+
   // ====================================================================
   // 1. 共享名单存储（一份名单，6 平台通用）
   // ====================================================================
@@ -127,6 +196,49 @@
     let data = null;             // { version, persons:{}, settings:{} }
     const listeners = [];
 
+    function cleanText(value, fallback, maxLength) {
+      if (value == null) return fallback;
+      const text = String(value).replace(/[\u0000-\u001f\u007f]/g, '').trim();
+      return (text || fallback).slice(0, maxLength);
+    }
+
+    function sanitizeSettings(input) {
+      const source = input && typeof input === 'object' ? input : {};
+      const out = { ...DEFAULT_SETTINGS };
+      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock']) {
+        if (typeof source[key] === 'boolean') out[key] = source[key];
+      }
+      if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
+      const cap = Number(source.skipCap);
+      if (Number.isFinite(cap)) out.skipCap = clamp(Math.round(cap), 0, 50);
+      return out;
+    }
+
+    function genId() {
+      return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    }
+
+    function sanitizePersons(input) {
+      const out = Object.create(null);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+      for (const sourceId of Object.keys(input)) {
+        const person = input[sourceId];
+        if (!person || typeof person !== 'object') continue;
+        const identities = normalizeIdentityKeys(person.identities);
+        if (!identities.length) continue;
+        let id = /^p_[A-Za-z0-9_-]+$/.test(sourceId) ? sourceId : genId();
+        while (out[id]) id = genId();
+        out[id] = {
+          label: cleanText(person.label, '未命名', 200),
+          note: cleanText(person.note, '', 2000),
+          createdAt: Number.isFinite(Number(person.createdAt)) ? Number(person.createdAt) : Date.now(),
+          hits: Number.isFinite(Number(person.hits)) ? Math.max(0, Math.round(Number(person.hits))) : 0,
+          identities,
+        };
+      }
+      return out;
+    }
+
     function load() {
       if (data) return data;
       let raw;
@@ -134,12 +246,8 @@
       if (raw && typeof raw === 'string') {
         try { raw = JSON.parse(raw); } catch (e) { raw = null; }
       }
-      if (!raw || typeof raw !== 'object') raw = null;
-      data = raw && raw.persons ? raw : { version: 1, persons: {}, settings: { ...DEFAULT_SETTINGS } };
-      if (!data.settings) data.settings = { ...DEFAULT_SETTINGS };
-      for (const k of Object.keys(DEFAULT_SETTINGS)) {
-        if (data.settings[k] === undefined) data.settings[k] = DEFAULT_SETTINGS[k];
-      }
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
+      data = { version: 1, persons: sanitizePersons(raw.persons), settings: sanitizeSettings(raw.settings) };
       return data;
     }
 
@@ -150,58 +258,93 @@
 
     function persons() { return load().persons; }
     function settings() { return load().settings; }
-    function setSetting(k, v) { load().settings[k] = v; persist(); }
+    function setSetting(k, v) {
+      if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k)) return false;
+      const next = sanitizeSettings({ ...load().settings, [k]: v });
+      if (next[k] === load().settings[k]) return true;
+      data.settings = next; persist(); return true;
+    }
     function getSetting(k) { return load().settings[k]; }
 
-    function genId() {
-      return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    function addIdentitiesInternal(keys, label, note, meta) {
+      load();
+      const normalized = normalizeIdentityKeys(keys);
+      if (!normalized.length) return { person: null, personId: '', added: 0, addedKeys: [], rejected: true };
+      const pset = persons();
+      const existingKeys = allIdentities();
+      const matchedIds = Object.keys(pset).filter((id) => normalized.some((key) => pset[id].identities.includes(key)));
+      let targetId = matchedIds[0] || '';
+      if (!targetId) {
+        targetId = genId();
+        while (pset[targetId]) targetId = genId();
+        pset[targetId] = {
+          label: cleanText(label, '未命名', 200), note: cleanText(note, '', 2000),
+          createdAt: meta && Number.isFinite(Number(meta.createdAt)) ? Number(meta.createdAt) : Date.now(),
+          hits: meta && Number.isFinite(Number(meta.hits)) ? Math.max(0, Math.round(Number(meta.hits))) : 0,
+          identities: [],
+        };
+      }
+      const target = pset[targetId];
+      // 一个身份只能归属一个人物；导入桥接记录时合并已有重复人物。
+      for (const id of matchedIds.slice(1)) {
+        const other = pset[id];
+        for (const key of other.identities) if (!target.identities.includes(key)) target.identities.push(key);
+        if (target.label === '未命名' && other.label) target.label = other.label;
+        if (!target.note && other.note) target.note = other.note;
+        target.createdAt = Math.min(target.createdAt || Date.now(), other.createdAt || Date.now());
+        target.hits = (target.hits || 0) + (other.hits || 0);
+        delete pset[id];
+      }
+      for (const key of normalized) if (!target.identities.includes(key)) target.identities.push(key);
+      if (label && target.label === '未命名') target.label = cleanText(label, '未命名', 200);
+      const addedKeys = normalized.filter((key) => !existingKeys.has(key));
+      return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false };
     }
 
-    // 按原始身份键数组新增一个"人物"，或合并进已有（同平台同值则合并）
     function addIdentities(keys, label, note) {
-      load();
-      const pset = persons();
-      let target = null;
-      // 命中已有同键则合并
-      for (const id in pset) {
-        if (keys.some((k) => pset[id].identities.includes(k))) { target = pset[id]; break; }
+      const result = addIdentitiesInternal(keys, label, note);
+      if (!result.rejected) persist();
+      return result;
+    }
+
+    function addIdentityGroups(groups) {
+      const results = [];
+      for (const group of Array.isArray(groups) ? groups : []) {
+        const result = addIdentitiesInternal(group && group.keys, group && group.label, group && group.note);
+        if (!result.rejected) results.push(result);
       }
-      if (!target) {
-        target = { label: label || '未命名', note: note || '', createdAt: Date.now(), hits: 0, identities: [] };
-        const id = genId();
-        pset[id] = target;
-      }
-      let added = 0;
-      for (const k of keys) {
-        if (k && !target.identities.includes(k)) { target.identities.push(k); added++; }
-      }
-      if (label && target.label === '未命名') target.label = label;
-      persist();
-      return { person: target, added };
+      if (results.length) persist();
+      return results;
     }
 
     function removePerson(id) {
       load();
-      if (persons()[id]) { delete persons()[id]; persist(); return true; }
+      if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; persist(); return true; }
       return false;
     }
 
-    function removeIdentity(key) {
+    function removeIdentities(keys) {
       load();
-      let removed = false;
-      for (const id in persons()) {
+      const targets = new Set(normalizeIdentityKeys(keys));
+      if (!targets.size) return 0;
+      let removed = 0;
+      for (const id of Object.keys(persons())) {
         const arr = persons()[id].identities;
-        const i = arr.indexOf(key);
-        if (i >= 0) { arr.splice(i, 1); removed = true; if (arr.length === 0) delete persons()[id]; }
+        const kept = arr.filter((key) => !targets.has(key));
+        removed += arr.length - kept.length;
+        if (kept.length) persons()[id].identities = kept;
+        else if (kept.length !== arr.length) delete persons()[id];
       }
       if (removed) persist();
       return removed;
     }
 
+    function removeIdentity(key) { return removeIdentities([key]) > 0; }
+
     function allIdentities() {
       const set = new Set();
       const pset = persons();
-      for (const id in pset) for (const k of pset[id].identities) set.add(k);
+      for (const id of Object.keys(pset)) for (const key of pset[id].identities) set.add(key);
       return set;
     }
 
@@ -211,22 +354,23 @@
 
     function importJSON(text) {
       const obj = JSON.parse(text);
-      if (!obj || !obj.persons) throw new Error('格式不正确：缺少 persons');
-      load();
-      const cur = persons();
-      for (const id in obj.persons) {
-        const p = obj.persons[id];
-        if (!p || !Array.isArray(p.identities)) continue;
-        let target = null;
-        for (const k of p.identities) {
-          for (const cid in cur) { if (cur[cid].identities.includes(k)) { target = cur[cid]; break; } }
-          if (target) break;
-        }
-        if (!target) { target = { label: p.label || '未命名', note: p.note || '', createdAt: p.createdAt || Date.now(), hits: p.hits || 0, identities: [] }; const nid = genId(); cur[nid] = target; }
-        for (const k of p.identities) if (!target.identities.includes(k)) target.identities.push(k);
+      if (!obj || typeof obj !== 'object' || !obj.persons || typeof obj.persons !== 'object' || Array.isArray(obj.persons)) {
+        throw new Error('格式不正确：缺少 persons');
       }
-      if (obj.settings) for (const k of Object.keys(DEFAULT_SETTINGS)) if (obj.settings[k] !== undefined) data.settings[k] = obj.settings[k];
+      load();
+      const result = { persons: 0, identities: 0, skipped: 0 };
+      for (const id of Object.keys(obj.persons)) {
+        const person = obj.persons[id];
+        if (!person || !Array.isArray(person.identities)) { result.skipped++; continue; }
+        const before = Object.keys(persons()).length;
+        const added = addIdentitiesInternal(person.identities, person.label, person.note, person);
+        if (added.rejected) { result.skipped++; continue; }
+        if (Object.keys(persons()).length > before) result.persons++;
+        result.identities += added.added;
+      }
+      if (obj.settings && typeof obj.settings === 'object') data.settings = sanitizeSettings({ ...data.settings, ...obj.settings });
       persist();
+      return result;
     }
 
     // 跨标签页/设置变更的监听
@@ -237,8 +381,8 @@
     function onChange(fn) { listeners.push(fn); }
 
     return {
-      persons, settings, setSetting, getSetting, addIdentities, removePerson,
-      removeIdentity, allIdentities, exportJSON, importJSON, onChange,
+      persons, settings, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
+      removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
     };
   })();
 
@@ -350,46 +494,63 @@
 
     /* 选项面板 */
     #ob-panel { position: fixed; inset: 0; z-index: 2147483644; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
-    #ob-panel .ob-box { background: #fff; color: #222; width: min(680px, 92vw); max-height: 86vh; overflow: auto; border-radius: 12px; padding: 18px; font-size: 13px; }
+    #ob-panel .ob-box { box-sizing: border-box; background: #fff; color: #222; width: min(680px, 92vw); max-height: 86vh; overflow: auto; border-radius: 8px; padding: 18px; font-size: 13px; }
     #ob-panel h2 { margin: 0 0 10px; font-size: 16px; }
     #ob-panel h3 { margin: 16px 0 6px; font-size: 14px; }
-    #ob-panel input, #ob-panel select, #ob-panel textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    #ob-panel input:not([type="checkbox"]):not([type="radio"]), #ob-panel select, #ob-panel textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    #ob-panel input[type="checkbox"], #ob-panel input[type="radio"] { width: auto; margin: 0 4px 0 0; }
     #ob-panel .ob-list { border: 1px solid #eee; border-radius: 8px; max-height: 260px; overflow: auto; }
     #ob-panel .ob-item { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f2f2f2; align-items: center; }
     #ob-panel .ob-item:last-child { border-bottom: 0; }
     #ob-panel .ob-item .ob-meta { color: #999; font-size: 11px; word-break: break-all; }
     #ob-panel .ob-del { color: #c0392b; cursor: pointer; border: 0; background: transparent; font-size: 12px; white-space: nowrap; }
     #ob-panel .ob-close { float: right; cursor: pointer; border: 0; background: transparent; font-size: 18px; color: #999; }
+    #ob-gear {
+      position: fixed; right: 14px; bottom: 14px; z-index: 2147483643;
+      width: 40px; height: 40px; border: 0; border-radius: 50%; padding: 0;
+      background: #2b2b32; color: #fff; font-size: 20px; line-height: 40px;
+      text-align: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); user-select: none;
+    }
+    #ob-gear:hover { background: #41414a; }
   `);
 
-  const processed = new WeakSet();   // 已处理过的节点，防重复/死循环
+  const blockedContainers = new Set();
 
-  function makeBar(label) {
+  function blockedBarText(label) {
+    return `🔇 内容已屏蔽${label ? ' · ' + label : ''} · 点击展开`;
+  }
+
+  function makeBar(container, label) {
     const bar = document.createElement('div');
     bar.className = 'ob-bar';
-    bar.textContent = `🔇 内容已屏蔽${label ? ' · ' + label : ''} · 点击展开`;
+    bar.textContent = blockedBarText(label);
     bar.addEventListener('click', (e) => {
       e.stopPropagation();
-      const el = bar.nextElementSibling;
-      if (el && el.hasAttribute('data-ob-blocked')) el.classList.toggle('ob-expanded');
+      if (container && container.hasAttribute('data-ob-blocked')) container.classList.toggle('ob-expanded');
     });
     return bar;
   }
 
   // 标记一个容器为已屏蔽（折叠或完全消失）
-  function markBlocked(container, label) {
-    if (!container || processed.has(container)) return;
-    processed.add(container);
-    const mode = Store.getSetting('hideMode');
+  function markBlocked(container, label, forceMode) {
+    if (!container || !container.setAttribute) return;
+    const mode = forceMode || Store.getSetting('hideMode');
+    blockedContainers.add(container);
     container.setAttribute('data-ob-blocked', '1');
-    container.classList.remove('ob-hidden', 'ob-collapsed', 'ob-expanded');
     if (mode === 'disappear') {
+      if (container.__obBar && container.__obBar.parentNode) container.__obBar.remove();
+      container.__obBar = null;
+      container.classList.remove('ob-collapsed', 'ob-expanded');
       container.classList.add('ob-hidden');
     } else {
+      container.classList.remove('ob-hidden');
       container.classList.add('ob-collapsed');
-      const bar = makeBar(label);
-      container.parentNode && container.parentNode.insertBefore(bar, container);
-      // 记录 bar 以便后续若取消屏蔽可移除
+      let bar = container.__obBar;
+      if (!bar || !bar.isConnected) bar = makeBar(container, label);
+      bar.textContent = blockedBarText(label);
+      if (container.parentNode && (bar.parentNode !== container.parentNode || bar.nextElementSibling !== container)) {
+        container.parentNode.insertBefore(bar, container);
+      }
       container.__obBar = bar;
     }
   }
@@ -400,32 +561,28 @@
     container.__obBar = null;
     container.removeAttribute('data-ob-blocked');
     container.classList.remove('ob-hidden', 'ob-collapsed', 'ob-expanded');
-    processed.delete(container);
+    blockedContainers.delete(container);
+  }
+
+  function clearBlockedContent() {
+    const targets = new Set(blockedContainers);
+    for (const container of querySelectorAllDeep(document, '[data-ob-blocked="1"]')) targets.add(container);
+    for (const container of targets) unmark(container);
+  }
+
+  function pruneBlockedContainers() {
+    for (const container of blockedContainers) if (!container.isConnected) blockedContainers.delete(container);
   }
 
   // 通用：处理一个"条目"——抽出身份，命中则隐藏
   function handleItem(adapter, item) {
-    if (processed.has(item)) {
-      // 已处理但可能已不在名单：检查是否仍需隐藏
-    }
     const info = adapter.extract(item);
-    if (!info) { processed.add(item); return; }
+    const container = (info && adapter.containerOf && adapter.containerOf(item)) || (info && info.container) || item;
+    if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
     if (Index.isBlocked(info.keys)) {
-      const container = (adapter.containerOf && adapter.containerOf(item)) || item;
-      if (adapter.forceMode === 'collapse') {
-        // 虚拟列表：只折叠，绝不 display:none
-        markBlocked(container, info.label);
-        if (Store.getSetting('hideMode') === 'disappear') {
-          container.classList.remove('ob-hidden');
-          container.classList.add('ob-collapsed');
-          if (!container.__obBar && container.parentNode) container.parentNode.insertBefore(makeBar(info.label), container);
-        }
-      } else {
-        markBlocked(container, info.label);
-      }
-    } else if (item.hasAttribute && item.hasAttribute('data-ob-blocked')) {
-      unmark(item);
-    }
+      // 虚拟列表只折叠，保留节点高度契约，避免列表复用时错位。
+      markBlocked(container, info.label, adapter.forceMode === 'collapse' ? 'collapse' : '');
+    } else unmark(container);
   }
 
   // ====================================================================
@@ -433,9 +590,56 @@
   // ====================================================================
   function createScanner(adapter) {
     let scheduled = false;
+    const observedRoots = new Set();
+    const observedAttributes = [
+      'href', 'data-e2e', 'data-e2e-vid', 'data-mid', 'data-uid', 'uid',
+      'data-user-id', 'data-user-card', 'data-usercard', 'data-usercard-mid', 'usercard', 'nick-name',
+      'data-field', 'data-sec-uid', 'data-secuid', 'data-danmaku-user-id', 'data-danmu-user-id',
+      'data-mid-hash', 'data-mid_hash', 'data-dm-hash', 'data-danmaku-hash',
+      'comment_id', 'comment-id', 'data-comment-id', 'action-type',
+    ];
+    const mo = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes || []) discoverShadowRoots(node);
+      schedule();
+    });
+
+    function observeRoot(root) {
+      if (!root || observedRoots.has(root)) return;
+      observedRoots.add(root);
+      try {
+        mo.observe(root, { childList: true, attributes: true, attributeFilter: observedAttributes, subtree: true });
+      } catch (e) { return; }
+      discoverShadowRoots(root);
+    }
+
+    function discoverShadowRoots(root) {
+      if (!root) return;
+      if (root.nodeType === 1 && root.shadowRoot) observeRoot(root.shadowRoot);
+      if (!root.querySelectorAll) return;
+      for (const node of root.querySelectorAll('*')) if (node.shadowRoot) observeRoot(node.shadowRoot);
+    }
+
+    function pruneObservedRoots() {
+      let hasDetachedRoot = false;
+      for (const root of observedRoots) {
+        if (root.host && !root.host.isConnected) { hasDetachedRoot = true; break; }
+      }
+      if (!hasDetachedRoot) return;
+      mo.disconnect();
+      observedRoots.clear();
+      if (document.documentElement) observeRoot(document.documentElement);
+    }
+
     function scanOnce() {
       scheduled = false;
-      if (!Store.getSetting('enabled')) return;
+      pruneBlockedContainers();
+      pruneObservedRoots();
+      discoverShadowRoots(document);
+      if (!Store.getSetting('enabled')) {
+        clearBlockedContent();
+        try { adapter.onDisabled && adapter.onDisabled(); } catch (e) {}
+        return;
+      }
       if (adapter.selectors) {
         for (const sel of adapter.selectors) {
           for (const item of querySelectorAllDeep(document, sel)) {
@@ -450,14 +654,11 @@
       scheduled = true;
       requestAnimationFrame(scanOnce);
     }
-    const mo = new MutationObserver(() => schedule());
     // 初始扫描 + 监听
     schedule();
-    try {
-      mo.observe(document.documentElement, { childList: true, subtree: true });
-    } catch (e) {
-      document.addEventListener('DOMContentLoaded', () => { try { mo.observe(document.documentElement, { childList: true, subtree: true }); } catch (e2) {} });
-    }
+    if (document.documentElement) observeRoot(document.documentElement);
+    else document.addEventListener('DOMContentLoaded', () => observeRoot(document.documentElement), { once: true });
+    Store.onChange(schedule);
     // SPA 路由切换：重新全扫
     let lastUrl = location.href;
     setInterval(() => {
@@ -484,13 +685,15 @@
     setTimeout(() => { const close = (ev) => { if (!ctx.contains(ev.target)) { ctx.remove(); document.removeEventListener('click', close); } }; document.addEventListener('click', close); }, 0);
   }
 
-  function showConfirm(label, keys, anchorEl, onBlocked) {
+  function showConfirm(label, keys, anchorEl, onBlocked, commit) {
+    const normalizedKeys = normalizeIdentityKeys(keys);
+    if (!normalizedKeys.length) { showToast('无法识别可靠身份'); return; }
     let box = $('#ob-confirm');
     if (box) box.remove();
     box = document.createElement('div');
     box.id = 'ob-confirm';
     box.innerHTML = `<div class="ob-title">确认拉黑？</div><div class="ob-sub"></div><div class="ob-row"><button class="ob-no">取消</button><button class="ob-ok">拉黑</button></div>`;
-    const sub = (label || '该用户') + (keys.length ? '\n' + (keys.length > 5 ? keys.slice(0, 5).join('  ') + ' …(共' + keys.length + '项)' : keys.join('  ')) : '');
+    const sub = (label || '该用户') + '\n' + (normalizedKeys.length > 5 ? normalizedKeys.slice(0, 5).join('  ') + ' …(共' + normalizedKeys.length + '项)' : normalizedKeys.join('  '));
     box.querySelector('.ob-sub').textContent = sub;
     box.querySelector('.ob-no').onclick = () => box.remove();
     let rect = { left: window.innerWidth / 2 - 130, top: window.innerHeight / 2 - 60 };
@@ -499,10 +702,22 @@
     box.style.top = rect.top + 'px';
     document.body.appendChild(box);
     box.querySelector('.ob-ok').onclick = () => {
-      const res = Store.addIdentities(keys, label);
+      let transaction;
+      try {
+        if (commit) transaction = commit();
+        else {
+          const result = Store.addIdentities(normalizedKeys, label);
+          transaction = {
+            result,
+            undo: result.addedKeys.length ? () => Store.removeIdentities(result.addedKeys) : null,
+          };
+        }
+      } catch (e) {
+        box.remove(); showToast('拉黑失败：' + (e && e.message || e)); return;
+      }
       box.remove();
-      try { if (onBlocked) onBlocked(res); } catch (e) {}
-      showToast(`已拉黑：${label || keys[0]}`, () => { /* 撤销：移除刚加的身份 */ keys.forEach((k) => Store.removeIdentity(k)); });
+      try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
+      showToast(`已拉黑：${label || normalizedKeys[0]}`, transaction && transaction.undo);
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
     };
@@ -516,7 +731,9 @@
     t.innerHTML = `<span></span><button>撤销</button>`;
     t.querySelector('span').textContent = msg;
     let undone = false;
-    t.querySelector('button').onclick = () => { if (undone) return; undone = true; onUndo && onUndo(); t.remove(); if (currentScanner) currentScanner.schedule(); };
+    const undoButton = t.querySelector('button');
+    if (typeof onUndo !== 'function') undoButton.remove();
+    else undoButton.onclick = () => { if (undone) return; undone = true; onUndo(); t.remove(); if (currentScanner) currentScanner.schedule(); };
     document.body.appendChild(t);
     setTimeout(() => { if (t.parentNode) t.remove(); }, 5000);
   }
@@ -581,11 +798,12 @@
   // ---------- 抖音 ----------
   Adapters.douyin = (function () {
     const SEL = {
-      comment: '[data-e2e="comment-item"]',
-      commentUser: '[data-e2e="comment-username"], a[href*="/user/"]',
-      searchCard: '[data-e2e="general-card"], [data-e2e="search-card"]',
-      postList: '[data-e2e="user-post-list"] [data-e2e="scroll-list"] > *, [data-e2e="video-desc"]',
+      comment: '[data-e2e="comment-item"], .comment-item',
+      commentNickname: '[data-e2e="comment-username"], [data-e2e*="nickname"], [data-e2e*="user-name"], [class*="nickname"], [class*="user-name"], [class*="username"]',
+      siteCard: '.search-result-card, .discover-video-card-item, [data-e2e="general-card"], [data-e2e="search-card"]',
+      profileList: '[data-e2e="user-post-list"] [data-e2e="scroll-list"]',
       feedActive: '[data-e2e="feed-active-video"]',
+      feedVideo: '[data-e2e-vid][data-e2e^="feed-"]',
       feedAuthorLink: '[data-e2e="video-avatar"][href*="/user/"], a[href*="/user/"]',
       feedAuthorName: '[data-e2e="feed-video-nickname"], [data-e2e="feed-author-name"]',
       danmaku: '[data-danmu-id], [data-danmaku-id], [data-danmaku-user-id], [data-danmu-user-id]',
@@ -603,21 +821,37 @@
       return '';
     }
 
+    function findAuthorLink(item) {
+      const links = Array.from(item.querySelectorAll('a[href*="/user/"]'));
+      const first = links.find((link) => secUidFromHref(attr(link, 'href')));
+      if (!first) return null;
+      const sec = secUidFromHref(attr(first, 'href'));
+      return links.find((link) => secUidFromHref(attr(link, 'href')) === sec && textOf(link)) || first;
+    }
+
     function extractComment(item) {
-      const link = item.querySelector('a[href*="/user/"]');
+      const link = findAuthorLink(item);
       const sec = secUidFromHref(attr(link, 'href'));
-      const name = textOf(item.querySelector('[data-e2e="comment-username"]')) || textOf(link);
+      const name = textOf(link) || textOf(item.querySelector(SEL.commentNickname));
       const keys = [];
-      if (sec) keys.push('douyin:secuid:' + sec);
+      appendIdentityKey(keys, 'douyin:secuid', sec);
       return { keys, label: name, container: item };
     }
 
     function extractGeneric(item) {
-      const link = item.querySelector('a[href*="/user/"]');
+      const link = findAuthorLink(item);
       const sec = secUidFromHref(attr(link, 'href'));
       const name = textOf(item.querySelector('[data-e2e="feed-video-nickname"], [data-e2e="feed-author-name"]')) || textOf(link);
       const keys = [];
-      if (sec) keys.push('douyin:secuid:' + sec);
+      appendIdentityKey(keys, 'douyin:secuid', sec);
+      return { keys, label: name, container: item };
+    }
+
+    function extractProfileList(item) {
+      const sec = /^\/user\/[^/?#]+/i.test(location.pathname) ? secUidFromHref(location.href) : '';
+      const name = textOf(document.querySelector('h1, [data-e2e="user-title"]'));
+      const keys = [];
+      appendIdentityKey(keys, 'douyin:secuid', sec);
       return { keys, label: name, container: item };
     }
 
@@ -625,25 +859,58 @@
       const uid = normId(attr(item, 'data-danmaku-user-id') || attr(item, 'data-danmu-user-id') || attr(item, 'data-user-id') || attr(item, 'data-uid'));
       const sec = secUidFromHref(attr(item, 'data-sec-uid') || attr(item, 'href') || '');
       const keys = [];
-      if (uid) keys.push('douyin:uid:' + uid);
-      if (sec) keys.push('douyin:secuid:' + sec);
+      appendIdentityKey(keys, 'douyin:uid', uid);
+      appendIdentityKey(keys, 'douyin:secuid', sec);
       if (!keys.length) return null;   // 无身份属性则跳过（抖音弹幕兜底见计划 M5）
       return { keys, label: '', container: item };
     }
 
     // 推荐流自动切：视觉遮罩 + 点下一条，带四道安全阀
-    const skippedIds = new WeakSet();
+    const skippedTokens = new WeakMap();
     let consecutive = 0;
     let coverEl = null;
+    let pendingSkip = null;
     function ensureCover() {
       if (coverEl) return coverEl;
       coverEl = document.createElement('div');
       coverEl.id = 'ob-feed-cover';
       coverEl.style.display = 'none';
+      const title = document.createElement('span');
+      const detail = document.createElement('small');
+      coverEl.append(title, detail);
+      coverEl.__obTitle = title; coverEl.__obDetail = detail;
       document.body.appendChild(coverEl);
       return coverEl;
     }
     function clearCover() { if (coverEl) coverEl.style.display = 'none'; }
+    function cancelPendingSkip() {
+      if (pendingSkip) clearTimeout(pendingSkip.timer);
+      pendingSkip = null;
+    }
+
+    function videoToken(active, sec) {
+      return normId(attr(active, 'data-e2e-vid') || attr(active, 'data-video-id') || attr(active, 'data-item-id'))
+        || sec + '|' + location.pathname + location.search;
+    }
+
+    function showFeedCover(name) {
+      const cover = ensureCover();
+      cover.style.display = 'flex';
+      const titleText = '🔇 已自动跳过被屏蔽作者';
+      const detailText = (name ? '（' + name + '）' : '') + ' · 如误切可手动划走';
+      if (cover.__obTitle.textContent !== titleText) cover.__obTitle.textContent = titleText;
+      if (cover.__obDetail.textContent !== detailText) cover.__obDetail.textContent = detailText;
+    }
+
+    function activeFeedItem() {
+      const marked = $(SEL.feedActive);
+      if (marked) return marked;
+      const playing = $$(SEL.feedVideo).filter((item) => {
+        const media = item.querySelector('video, audio');
+        return media && !media.paused;
+      });
+      return playing.length === 1 ? playing[0] : null;
+    }
 
     function advance() {
       const next = $('[data-e2e="video-switch-next-arrow"]');
@@ -657,54 +924,92 @@
     }
 
     function feedTick() {
-      const active = $(SEL.feedActive);
-      if (!active) { clearCover(); consecutive = 0; return; }
+      const active = activeFeedItem();
+      if (!active) { cancelPendingSkip(); clearCover(); consecutive = 0; return; }
       const link = active.querySelector(SEL.feedAuthorLink);
       const sec = secUidFromHref(attr(link, 'href'));
       const name = textOf(active.querySelector(SEL.feedAuthorName)) || textOf(link);
-      if (!sec) { clearCover(); return; }   // 拿不到作者身份就不动
-      const blocked = Index.isBlocked(['douyin:secuid:' + sec]);
-      if (!blocked) { clearCover(); consecutive = 0; return; }
+      const identity = makeIdentityKey('douyin:secuid', sec);
+      if (!identity) { cancelPendingSkip(); clearCover(); return; }   // 拿不到作者身份就不动
+      const blocked = Index.isBlocked([identity]);
+      if (!blocked) { cancelPendingSkip(); clearCover(); consecutive = 0; return; }
 
-      const videoId = attr(active, 'data-e2e-vid') || sec;
-      ensureCover();
-      coverEl.style.display = 'flex';
-      coverEl.innerHTML = `🔇 已自动跳过被屏蔽作者<small>${name ? '（' + name + '）' : ''} · 如误切可手动划走</small>`;
+      const token = videoToken(active, sec);
+      showFeedCover(name);
 
-      if (!Store.getSetting('douyinAutoSkip')) return;   // 仅遮罩，不自动切
-      if (skippedIds.has(active)) return;                // 安全阀② 同视频只切一次
-      if (consecutive >= (Store.getSetting('skipCap') || 6)) { return; }  // 安全阀③ 连续上限
+      if (!Store.getSetting('douyinAutoSkip')) { cancelPendingSkip(); return; }   // 仅遮罩，不自动切
+      if (skippedTokens.get(active) === token) return;   // 同一个视频只切一次；节点复用为新视频时允许重判。
+      const cap = Number(Store.getSetting('skipCap'));
+      if (cap > 0 && consecutive >= cap) return;
 
-      skippedIds.add(active);
+      skippedTokens.set(active, token);
       consecutive++;
-      const delay = rand(200, 600);                      // 安全阀① 随机延迟
-      setTimeout(advance, delay);
+      cancelPendingSkip();
+      const delay = rand(200, 600);
+      const timer = setTimeout(() => {
+        pendingSkip = null;
+        if (!Store.getSetting('enabled') || !Store.getSetting('douyinAutoSkip')) return;
+        const current = activeFeedItem();
+        if (current !== active) return;
+        const currentLink = current.querySelector(SEL.feedAuthorLink);
+        const currentSec = secUidFromHref(attr(currentLink, 'href'));
+        const currentIdentity = makeIdentityKey('douyin:secuid', currentSec);
+        if (videoToken(current, currentSec) !== token || !Index.isBlocked(currentIdentity)) return;
+        advance();
+      }, delay);
+      pendingSkip = { timer, active, token };
     }
+
+    function disableFeed() { cancelPendingSkip(); clearCover(); consecutive = 0; }
 
     return {
       id: 'douyin',
       match: (h) => /(^|\.)douyin\.com$/.test(h.hostname),
-      selectors: [SEL.comment, SEL.searchCard, SEL.postList, SEL.danmaku],
+      selectors: [SEL.comment, SEL.siteCard, SEL.profileList, SEL.danmaku],
       extract(item) {
         if (item.matches && item.matches(SEL.comment)) return extractComment(item);
+        if (item.matches && item.matches(SEL.profileList)) return extractProfileList(item);
         if (item.matches && item.matches(SEL.danmaku)) return extractDanmaku(item);
         return extractGeneric(item);
       },
       containerOf: (item) => item,
       onScan: feedTick,
+      onDisabled: disableFeed,
     };
   })();
 
   // ---------- 微博 ----------
   Adapters.weibo = (function () {
     const SEL = {
-      card: '[action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], article.woo-panel-main, .card-feed',
+      card: '.card-wrap[action-type="feed_list_item"], .card-wrap[mid], [action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], article.woo-panel-main, .card-feed',
+      comment: '.card-review[comment_id]',
       userLink: 'a[href*="/u/"], a[href*="/n/"], a[nick-name], [data-user-card], [data-usercard], [usercard], [data-uid], [uid]',
+      postAuthor: [
+        '.card-feed .content > .info a.name[href]',
+        '.card-feed .content > .info [nick-name]',
+        '.card-feed .avator a[href]',
+        '.card-feed .avatar a[href]',
+        '.content > .info a.name[href]',
+        'header a[nick-name][href]',
+        'header a[href*="/u/"]',
+        'header [usercard]',
+        'header [data-user-card]',
+        'header [data-usercard]',
+        ':scope > a[nick-name][href]',
+      ].join(','),
+      commentAuthor: [
+        ':scope > .content > .txt a.name[href]',
+        ':scope > .content > .txt a[nick-name][href]',
+        ':scope > .con1 > .info a.name[href]',
+        ':scope > .con1 > .info a[nick-name][href]',
+        ':scope > .avator a[href]',
+        ':scope > .avatar a[href]',
+      ].join(','),
     };
     function uidFromLink(link) {
       if (!link) return '';
       const href = attr(link, 'href') || '';
-      const m = href.match(/\/u\/(\d+)/) || href.match(/\/(\d{6,})/);
+      const m = href.match(/\/u\/(\d{5,})(?:[/?#]|$)/) || href.match(/\/(\d{5,})(?:[/?#]|$)/);
       if (m) return normId(m[1]);
       // 微博虚拟列表会把 uid 放在 usercard="id=..." / data-user-card 等属性里，
       // 不能只依赖可变的主页 URL。
@@ -721,7 +1026,8 @@
       }
       return '';
     }
-    function findCard(el) {
+    function findContainer(el) {
+      if (el.matches && el.matches(SEL.comment)) return el;
       let p = el;
       while (p && p !== document.body) {
         if (p.matches && p.matches(SEL.card)) return p;
@@ -729,25 +1035,41 @@
       }
       return el;
     }
-    function findUserLink(item) {
-      const links = $$(SEL.userLink, item);
+    function preferredLink(links) {
       return links.find((link) => uidFromLink(link) && (textOf(link) || attr(link, 'nick-name')))
         || links.find((link) => uidFromLink(link)) || null;
+    }
+    function findUserLink(item) {
+      if (item.matches && item.matches(SEL.comment)) {
+        // 评论作者必须来自评论行自己的作者槽，不能退回到提及用户或外层微博作者。
+        return preferredLink($$(SEL.commentAuthor, item));
+      }
+      const scoped = preferredLink($$(SEL.postAuthor, item));
+      if (scoped) return scoped;
+
+      // 旧版信息流存在没有稳定作者 class 的卡片；只有整卡唯一 UID 时才安全兜底。
+      const byUid = new Map();
+      for (const link of $$(SEL.userLink, item)) {
+        const uid = uidFromLink(link);
+        if (!uid) continue;
+        const current = byUid.get(uid);
+        if (!current || (!textOf(current) && textOf(link))) byUid.set(uid, link);
+      }
+      return byUid.size === 1 ? preferredLink(Array.from(byUid.values())) : null;
     }
     return {
       id: 'weibo',
       match: (h) => /(^|\.)weibo\.com$/.test(h.hostname) || /(^|\.)weibo\.cn$/.test(h.hostname),
-      selectors: [SEL.card],
+      selectors: [SEL.comment, SEL.card],
       extract(item) {
         const link = findUserLink(item);
         const uid = uidFromLink(link);
         const name = textOf(link) || attr(link, 'nick-name');
         const keys = [];
-        if (uid) keys.push('weibo:uid:' + uid);
-        if (name) keys.push('weibo:name:' + normNick(name));
-        return { keys, label: name, container: findCard(item) };
+        appendIdentityKey(keys, 'weibo:uid', uid);
+        return { keys, label: name, container: findContainer(item) };
       },
-      containerOf: (item) => findCard(item),
+      containerOf: (item) => findContainer(item),
     };
   })();
 
@@ -781,8 +1103,7 @@
         const { token } = idFromLink(link);
         const name = textOf(link);
         const keys = [];
-        if (token) keys.push('zhihu:token:' + token);   // 永久 id 优先
-        if (name) keys.push('zhihu:name:' + normNick(name)); // 仅兜底
+        appendIdentityKey(keys, 'zhihu:token', token);
         return { keys, label: name, container: findCard(item) };
       },
       containerOf: (item) => findCard(item),
@@ -822,7 +1143,7 @@
           if (m2 && !href.includes('/status/') && !href.includes('/photo') && !href.includes('/video')) { handle = m2[1]; break; }
         }
         const keys = [];
-        if (handle) keys.push('x:handle:' + handle.toLowerCase());
+        appendIdentityKey(keys, 'x:handle', handle);
         return { keys, label: handle ? '@' + handle : '', container: findCell(item) };
       },
       containerOf: (item) => findCell(item),
@@ -834,7 +1155,6 @@
     const SEL = {
       thread: 'li.j_thread_list, div.threadlist_item',
       post: 'div.l_post.l_post_bright, div.d_post_content_main',
-      lzl: '.j_lzl_container, .lzl_cnt',
       author: 'span.tb_icon_author[data-field], div.d_name[data-field], [data-field]',
     };
     function uidFromField(el) {
@@ -858,16 +1178,15 @@
     return {
       id: 'tieba',
       match: (h) => /(^|\.)tieba\.baidu\.com$/.test(h.hostname),
-      selectors: [SEL.thread, SEL.post, SEL.lzl],
+      // 楼中楼集合不是单条回复；没有可靠的单回复捕获结构时不扫描该集合。
+      selectors: [SEL.thread, SEL.post],
       extract(item) {
         let fieldEl = item.querySelector(SEL.author);
         if (!fieldEl && item.hasAttribute && item.hasAttribute('data-field')) fieldEl = item;
         const { uid, name } = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
         const keys = [];
-        if (uid) keys.push('tieba:uid:' + uid);
-        if (name) keys.push('tieba:name:' + name);
+        appendIdentityKey(keys, 'tieba:uid', uid);
         const container = item.matches(SEL.thread) ? findContainer(item, SEL.thread)
-          : item.matches(SEL.lzl) ? findContainer(item, SEL.lzl)
           : findContainer(item, SEL.post);
         return { keys, label: name, container };
       },
@@ -922,14 +1241,14 @@
       const mid = fromData.mid || midFromEl(el);
       const name = fromData.name || textOf(deepQuery(el, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
       const keys = [];
-      if (mid) keys.push('bili:uid:' + mid);
+      appendIdentityKey(keys, 'bili:uid', mid);
       return { keys, label: name, container: el };
     }
 
     function userFromSpaceLink(link) {
       const m = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/);
       if (!m) return null;
-      return { keys: ['bili:uid:' + normId(m[1])], label: textOf(link), container: link };
+      return { keys: [makeIdentityKey('bili:uid', m[1])], label: textOf(link), container: link };
     }
 
     function collectCommentUsers(root) {
@@ -941,13 +1260,6 @@
       return querySelectorAllDeep(root, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
     }
 
-    // B站评论是 Shadow DOM 嵌套，需递归穿透挂载 observer（简化：对 document 全树扫描 + 处理 shadowRoot）
-    function walkShadow(root, cb) {
-      if (!root) return;
-      cb(root);
-      const kids = root.shadowRoot ? [root.shadowRoot] : (root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : []);
-      for (const k of kids) walkShadow(k, cb);
-    }
     return {
       id: 'bilibili',
       match: (h) => /(^|\.)bilibili\.com$/.test(h.hostname),
@@ -962,26 +1274,6 @@
       },
       bulkFabLabel: (n) => '🚫 拉黑本页评论用户(' + n + ')',
       containerOf: (item) => item,
-      onScan() {
-        // 递归穿透 Shadow DOM 处理评论区
-        if (!Store.getSetting('enabled')) return;
-        const roots = [document];
-        const seen = new Set();
-        function rec(node) {
-          if (!node || seen.has(node)) return;
-          seen.add(node);
-          if (node.querySelectorAll) {
-            for (const sel of Adapters.bilibili.selectors) {
-              for (const el of Array.from(node.querySelectorAll(sel))) {
-                if (!processed.has(el)) { try { handleItem(Adapters.bilibili, el); } catch (e) {} }
-              }
-            }
-          }
-          if (node.shadowRoot) rec(node.shadowRoot);
-          if (node.querySelectorAll) for (const c of Array.from(node.querySelectorAll('*'))) if (c.shadowRoot) rec(c.shadowRoot);
-        }
-        rec(document);
-      },
     };
   })();
 
@@ -1012,7 +1304,7 @@
   // 沿祖先链向上（遇 Shadow DOM 用 .host 跨出），比 composedPath 更稳（影子内按钮的 composedPath 在某些环境缺失）
   // uid 型身份前缀：与 keyMap / 各适配器 extract 保持一致（data-mid/data-uid 必为数字 uid）。
   // 注意 bilibili 适配器 extract 用的是 'bili:uid:' 而非 'bilibili:uid:'，故此处以规范前缀为准，避免产生孤儿 key。
-  const UID_PREFIX = { bilibili: 'bili:uid:', weibo: 'weibo:uid:', zhihu: 'zhihu:uid:', tieba: 'tieba:uid:', x: 'x:uid:', douyin: 'douyin:uid:' };
+  const UID_TYPE = { bilibili: 'bili:uid', weibo: 'weibo:uid', tieba: 'tieba:uid', douyin: 'douyin:uid' };
 
   function ancestorChain(elm) {
     const out = [];
@@ -1030,13 +1322,15 @@
     const a = currentAdapter; if (!a) return null;
     if (a.id === 'bilibili') {
       const m = location.href.match(/space\.bilibili\.com\/(\d+)/);
-      if (m) return { keys: ['bili:uid:' + m[1]], label: '' };
+      if (m) return { keys: [makeIdentityKey('bili:uid', m[1])], label: '' };
     }
     const chain = ancestorChain(anchor);
     // 1) 链路里直接带 mid/uid（弹幕等）
     for (const n of chain) {
       const mid = (n.getAttribute && (n.getAttribute('data-mid') || n.getAttribute('data-uid'))) || '';
-      if (mid) return { keys: [(UID_PREFIX[a.id] || a.id + ':uid:') + normId(mid)], label: '' };
+      const type = UID_TYPE[a.id];
+      const key = type && mid ? makeIdentityKey(type, mid) : '';
+      if (key) return { keys: [key], label: '' };
     }
     // 2) 链路命中适配器条目 → 复用 extract
     for (const n of chain) {
@@ -1051,12 +1345,12 @@
       // body/document 的后代是整页，扫到这里会把举报弹窗误关联为第一条评论。
       if (n === document.body || n === document.documentElement) continue;
       const link = deepQuery(n, 'a[href*="space.bilibili.com/"]');
-      if (link) { const mm = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/); if (mm) return { keys: ['bili:uid:' + normId(mm[1])], label: textOf(link) }; }
+      if (link) { const mm = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/); if (mm) return { keys: [makeIdentityKey('bili:uid', mm[1])], label: textOf(link) }; }
     }
     return null;
   }
 
-  function makeQuickBtn(label, anchorEl, cfg, key, initialInfo) {
+  function makeQuickBtn(label, anchorEl, cfg, key) {
     const listItem = anchorEl && anchorEl.tagName === 'LI';
     // 保持 B站 <ul> 的合法子节点与原生菜单的布局规则。
     const btn = document.createElement(listItem ? 'li' : 'button');
@@ -1067,7 +1361,8 @@
     btn.textContent = '🚫 ' + label;
     const activate = (e) => {
       e.stopPropagation(); e.preventDefault();
-      const info = initialInfo || (cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl));
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      const info = cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl);
       if (!info || !info.keys || !info.keys.length) { showToast('⚠️ 无法识别该用户，可试悬浮按钮或右键'); return; }
       showConfirm(info.label || '该用户', info.keys, anchorEl);
     };
@@ -1087,10 +1382,14 @@
   };
 
   const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
+  let refreshQuickBlock = () => {};
   function setupQuickBlock() {
     const a = currentAdapter; if (!a) return;
-    if (!Store.getSetting('showQuickBlock')) return;
     const cfg = QB[a.id]; if (!cfg) return;
+    function clearInjected() {
+      for (const button of querySelectorAllDeep(document, '.ob-quick')) button.remove();
+      for (const anchor of querySelectorAllDeep(document, '[data-ob-qb]')) anchor.removeAttribute('data-ob-qb');
+    }
     function tryInject(el) {
       if (!el || el.nodeType !== 1 || (el.classList && el.classList.contains('ob-quick'))) return;
       // Lit/Vue 菜单重绘可能删掉我们的兄弟节点但保留原生 li；此时允许下一轮补回。
@@ -1108,7 +1407,7 @@
           if (!info || !info.keys || !info.keys.length) return;
           // 该菜单已有快速按钮则跳过（避免评论菜单里"加入黑名单"和"举报"各插一个）
           if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
-          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt, info);
+          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
           el.parentNode.insertBefore(btn, el.nextSibling);
           el.setAttribute('data-ob-qb', '1');
           return;
@@ -1116,13 +1415,14 @@
       }
     }
     function scanAll() {
-      if (!Store.getSetting('showQuickBlock')) return;
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) { clearInjected(); return; }
       for (const el of querySelectorAllDeep(document, QB_CANDIDATE)) tryInject(el);
     }
     // 周期扫描：B站菜单在 Shadow DOM 内，MutationObserver 跨不过影子边界，故用定时器 + 全局穿透扫描
     setInterval(scanAll, 900);
     scanAll();
-    (window.OB = window.OB || {}).setupQuickBlock = scanAll;
+    refreshQuickBlock = scanAll;
+    Store.onChange(scanAll);
   }
 
   // ---- 一键拉黑本页 / 弹窗内全部可见用户 ----
@@ -1130,8 +1430,10 @@
     const out = []; const seen = new Set();
     for (const info of items || []) {
       if (info && info.keys && info.keys.length) {
-        const k = info.keys.join('|');
-        if (!seen.has(k)) { seen.add(k); out.push(info); }
+        const keys = normalizeIdentityKeys(info.keys);
+        if (!keys.length || keys.some((key) => seen.has(key))) continue;
+        keys.forEach((key) => seen.add(key));
+        out.push({ ...info, keys });
       }
     }
     return out;
@@ -1162,12 +1464,22 @@
     if (!list.length) { showToast('没有可拉黑的用户'); return; }
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
-    showConfirm('拉黑全部 ' + list.length + ' 位用户', keys, anchorEl);
+    showConfirm('拉黑全部 ' + list.length + ' 位用户', keys, anchorEl, null, () => {
+      const results = Store.addIdentityGroups(list.map((info) => ({ keys: info.keys, label: info.label })));
+      const addedKeys = [];
+      for (const result of results) {
+        for (const key of result.addedKeys) if (!addedKeys.includes(key)) addedKeys.push(key);
+      }
+      return {
+        result: { added: addedKeys.length, addedKeys },
+        undo: addedKeys.length ? () => Store.removeIdentities(addedKeys) : null,
+      };
+    });
   }
 
+  let refreshBulkBlock = () => {};
   function setupBulkBlock() {
     const a = currentAdapter; if (!a) return;
-    if (!Store.getSetting('showBulkBlock')) return;
     let fab = null;
     const MODAL_SEL = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
     const setFabVisible = (visible) => {
@@ -1177,12 +1489,13 @@
       return querySelectorAllDeep(document, MODAL_SEL).some(isVisible);
     }
     function refreshFab() {
-      if (!Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
+      if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
       const n = collectUsers(document).length;
       // 页面批量按钮不应遮住举报/登录等原生弹窗，更不能显示无意义的“(0)”。
       if (!n || hasOpenModal()) { setFabVisible(false); return; }
       if (!fab) {
-        fab = document.createElement('div');
+        fab = document.createElement('button');
+        fab.type = 'button'; fab.setAttribute('data-ob-kind', 'page');
         fab.className = 'ob-bulk';
         fab.style.position = 'fixed'; fab.style.left = '14px'; fab.style.bottom = '14px';
         fab.onclick = () => { const list = collectUsers(document); if (!list.length) { showToast('本页没有可拉黑的用户'); return; } blockMany(list, fab); };
@@ -1193,29 +1506,39 @@
       setFabVisible(true);
     }
     function tryModal(modal) {
-      if (!Store.getSetting('showBulkBlock')) return;
-      if (modal.hasAttribute('data-ob-bulk')) return;
-      if (a.canBulkModal && !a.canBulkModal(modal)) return;
+      let btn = Array.from(modal.children || []).find((child) => child.matches && child.matches('.ob-bulk[data-ob-kind="modal"]')) || null;
+      const allowed = (!a.canBulkModal || a.canBulkModal(modal));
       const users = collectUsers(modal, 'modal');
-      if (users.length < 2) return;   // 至少 2 个才视为"列表"
+      if (!allowed || users.length < 2) {
+        if (btn) btn.remove();
+        modal.removeAttribute('data-ob-bulk');
+        return;
+      }
       modal.setAttribute('data-ob-bulk', '1');
-      const btn = document.createElement('div');
-      btn.className = 'ob-bulk';
+      if (!btn) {
+        btn = document.createElement('button'); btn.type = 'button';
+        btn.className = 'ob-bulk'; btn.setAttribute('data-ob-kind', 'modal');
+        btn.onclick = () => blockMany(collectUsers(modal, 'modal'), btn);
+        const header = modal.querySelector('header,.modal-header,.dialog-header,.head,.title') || modal.firstElementChild;
+        if (header && header.parentNode) header.parentNode.insertBefore(btn, header);
+        else modal.insertBefore(btn, modal.firstChild);
+      }
       btn.textContent = '🚫 拉黑全部(' + users.length + ')';
-      btn.onclick = () => blockMany(collectUsers(modal, 'modal'), btn);
-      const header = modal.querySelector('header,.modal-header,.dialog-header,.head,.title') || modal.firstElementChild;
-      if (header && header.parentNode) header.parentNode.insertBefore(btn, header);
-      else modal.insertBefore(btn, modal.firstChild);
+    }
+    function clearModalControls() {
+      for (const button of querySelectorAllDeep(document, '.ob-bulk[data-ob-kind="modal"]')) button.remove();
+      for (const modal of querySelectorAllDeep(document, '[data-ob-bulk]')) modal.removeAttribute('data-ob-bulk');
     }
     function scanModals() {
-      if (!Store.getSetting('showBulkBlock')) return;
+      if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { clearModalControls(); return; }
       for (const md of querySelectorAllDeep(document, MODAL_SEL)) tryModal(md);
     }
+    function refreshAll() { refreshFab(); scanModals(); }
     // 周期扫描（弹窗可能在 Shadow DOM 内，定时器 + 影子穿透更稳）
-    setInterval(() => { refreshFab(); scanModals(); }, 1200);
-    refreshFab(); scanModals();
-    (window.OB = window.OB || {}).refreshBulk = refreshFab;
-    (window.OB = window.OB || {}).collectUsers = collectUsers;
+    setInterval(refreshAll, 1200);
+    refreshAll();
+    refreshBulkBlock = refreshAll;
+    Store.onChange(refreshAll);
   }
 
   // ====================================================================
@@ -1331,7 +1654,7 @@
         progressHashes.add(elem.hash); dmByProgress.set(key, progressHashes);
       }
       // 长视频连续播放时限制会话内索引大小，当前视频的侧栏仍会保留。
-      if (dmByContent.size > 5000) { dmByContent.clear(); dmByProgress.clear(); }
+      if (dmByContent.size > 5000 || dmByProgress.size > 10000) { dmByContent.clear(); dmByProgress.clear(); }
     }
 
     function copyRange(out, buf, start, end) {
@@ -1413,14 +1736,6 @@
 
     const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
     const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';
-    function markDmRows(hash) {
-      for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
-        for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
-          if (hashFromDmRow(row) === hash) row.setAttribute('data-ob-dm-blocked', '1');
-        }
-      }
-    }
-
     function addDmBlockButton(row, hash) {
       if (row.querySelector && row.querySelector(':scope > .ob-dm-block')) return;
       const btn = document.createElement('button');
@@ -1428,20 +1743,37 @@
       btn.title = '按该弹幕的 mid_hash 本地屏蔽发送者';
       btn.addEventListener('click', (e) => {
         e.stopPropagation(); e.preventDefault();
-        showConfirm('该弹幕发送者', ['bili:dmhash:' + hash], btn, () => markDmRows(hash));
+        showConfirm('该弹幕发送者', [makeIdentityKey('bili:dmhash', hash)], btn, scanDmPanels);
       });
       row.appendChild(btn);
     }
 
     function scanDmPanels() {
-      if (!Store.getSetting('enabled')) return;
+      const enabled = Store.getSetting('enabled');
+      const showButton = enabled && Store.getSetting('showQuickBlock');
+      const blocked = enabled ? blockedHashes() : new Set();
       for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
         for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
-          if (row.hasAttribute('data-ob-dm-blocked') || (row.classList && row.classList.contains('ob-dm-block'))) continue;
+          const existingButton = row.querySelector && row.querySelector(':scope > .ob-dm-block');
+          if (!enabled) {
+            row.removeAttribute('data-ob-dm-blocked');
+            if (existingButton) existingButton.remove();
+            continue;
+          }
           const hash = hashFromDmRow(row);
-          if (!hash) continue; // 没有可验证的 mid_hash 时不显示一个必然失败的按钮。
-          if (blockedHashes().has(hash)) { row.setAttribute('data-ob-dm-blocked', '1'); continue; }
-          addDmBlockButton(row, hash);
+          if (!hash) {
+            row.removeAttribute('data-ob-dm-blocked');
+            if (existingButton) existingButton.remove();
+            continue;
+          }
+          if (blocked.has(hash)) {
+            row.setAttribute('data-ob-dm-blocked', '1');
+            if (existingButton) existingButton.remove();
+            continue;
+          }
+          row.removeAttribute('data-ob-dm-blocked');
+          if (showButton) addDmBlockButton(row, hash);
+          else if (existingButton) existingButton.remove();
         }
       }
     }
@@ -1498,11 +1830,11 @@
     if (typeof window.fetch === 'function') {
       const nativeFetch = window.fetch.bind(window);
       window.fetch = function (input, init) {
-        const url = (typeof input === 'string') ? input : (input && input.url) || '';
+        const url = (typeof input === 'string' || input instanceof URL) ? String(input) : (input && input.url) || '';
         if (!isDanmakuUrl(url) || !Store.getSetting('enabled')) return nativeFetch(input, init);
         return nativeFetch(input, init).then(async (resp) => {
           try {
-            const buf = await resp.arrayBuffer();
+            const buf = await resp.clone().arrayBuffer();
             const filtered = filterSeg(buf);
             // 重建响应时丢掉内容编码相关头，否则浏览器会二次解压导致弹幕全失
             const hdr = new Headers();
@@ -1517,6 +1849,7 @@
         });
       };
     }
+    Store.onChange(scanDmPanels);
     setInterval(scanDmPanels, 900);
   }
 
@@ -1573,9 +1906,12 @@
     if (panel) { panel.remove(); return; }
     panel = document.createElement('div');
     panel.id = 'ob-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'OmniBlock 设置');
     panel.innerHTML = `
       <div class="ob-box">
-        <button class="ob-close">×</button>
+        <button class="ob-close" type="button" aria-label="关闭">×</button>
         <h2>OmniBlock 设置（拉黑不上限）</h2>
         <div class="ob-meta">当前屏蔽身份数：<b id="ob-count">0</b> · 平台：B站/微博/知乎/贴吧/X/抖音</div>
 
@@ -1623,7 +1959,7 @@
         </div>
         <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
 
-        <p style="color:#999;font-size:12px;margin-top:14px">纯本地工具，不联网、不上传任何数据。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
+        <p style="color:#999;font-size:12px;margin-top:14px">名单与浏览数据只保存在本机，不上传。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
       </div>`;
     document.body.appendChild(panel);
     panel.querySelector('.ob-close').onclick = () => panel.remove();
@@ -1638,7 +1974,10 @@
         const p = ps[id];
         const row = document.createElement('div');
         row.className = 'ob-item';
-        row.innerHTML = `<div><div>${p.label || '未命名'}</div><div class="ob-meta">${(p.identities || []).join('  ')}</div></div>`;
+        const details = document.createElement('div');
+        const name = document.createElement('div'); name.textContent = p.label || '未命名';
+        const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).join('  ');
+        details.append(name, identities); row.appendChild(details);
         const del = document.createElement('button');
         del.className = 'ob-del'; del.textContent = '删除';
         del.onclick = () => { Store.removePerson(id); refresh(); if (currentScanner) currentScanner.schedule(); };
@@ -1648,8 +1987,8 @@
       const s = Store.settings();
       panel.querySelector('#ob-enabled').checked = s.enabled;
       panel.querySelector('#ob-hover').checked = s.showHoverButton;
-    panel.querySelector('#ob-quick').checked = s.showQuickBlock;
-    panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
+      panel.querySelector('#ob-quick').checked = s.showQuickBlock;
+      panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
@@ -1662,16 +2001,22 @@
       const val = normId(panel.querySelector('#ob-val').value);
       const label = panel.querySelector('#ob-label').value.trim();
       if (!val) return;
-      const keyMap = { bili: 'bili:uid:', weibo: 'weibo:uid:', zhihu: 'zhihu:token:', tieba: 'tieba:uid:', x: 'x:handle:', douyin: 'douyin:secuid:' };
-      Store.addIdentities([keyMap[plat] + val], label || val);
+      const key = makeIdentityKey(MANUAL_IDENTITY_TYPE[plat], val);
+      if (!key) { showToast('身份格式不正确'); return; }
+      Store.addIdentities([key], label || val);
       panel.querySelector('#ob-val').value = '';
       refresh(); if (currentScanner) currentScanner.schedule();
     };
     panel.querySelectorAll('input[name="ob-mode"]').forEach((r) => r.onchange = () => { if (r.checked) { Store.setSetting('hideMode', r.value); if (currentScanner) currentScanner.schedule(); } });
-    panel.querySelector('#ob-enabled').onchange = (e) => { Store.setSetting('enabled', e.target.checked); if (currentScanner) currentScanner.schedule(); };
-    panel.querySelector('#ob-hover').onchange = (e) => Store.setSetting('showHoverButton', e.target.checked);
-    panel.querySelector('#ob-quick').onchange = (e) => { Store.setSetting('showQuickBlock', e.target.checked); if (e.target.checked && window.OB && window.OB.setupQuickBlock) window.OB.setupQuickBlock(); };
-    panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); if (e.target.checked && window.OB && window.OB.refreshBulk) window.OB.refreshBulk(); };
+    panel.querySelector('#ob-enabled').onchange = (e) => {
+      Store.setSetting('enabled', e.target.checked);
+      if (!e.target.checked) clearHover();
+      refreshQuickBlock(); refreshBulkBlock();
+      if (currentScanner) currentScanner.schedule();
+    };
+    panel.querySelector('#ob-hover').onchange = (e) => { Store.setSetting('showHoverButton', e.target.checked); if (!e.target.checked) clearHover(); };
+    panel.querySelector('#ob-quick').onchange = (e) => { Store.setSetting('showQuickBlock', e.target.checked); refreshQuickBlock(); };
+    panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); refreshBulkBlock(); };
     panel.querySelector('#ob-skip').onchange = (e) => Store.setSetting('douyinAutoSkip', e.target.checked);
     panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) Store.setSetting('skipCap', v); };
     panel.querySelector('#ob-export').onclick = () => {
@@ -1688,7 +2033,15 @@
     file.onchange = () => {
       const f = file.files[0]; if (!f) return;
       const reader = new FileReader();
-      reader.onload = () => { try { Store.importJSON(String(reader.result)); refresh(); if (currentScanner) currentScanner.schedule(); } catch (e) { alert('导入失败：' + e.message); } };
+      reader.onload = () => {
+        try {
+          const result = Store.importJSON(String(reader.result));
+          refresh(); refreshQuickBlock(); refreshBulkBlock();
+          if (currentScanner) currentScanner.schedule();
+          showToast('导入完成：新增 ' + result.identities + ' 个身份' + (result.skipped ? '，跳过 ' + result.skipped + ' 条无效记录' : ''));
+        } catch (e) { alert('导入失败：' + e.message); }
+        file.value = '';
+      };
       reader.readAsText(f);
     };
   }
@@ -1718,16 +2071,20 @@
     (function mountGear() {
       if (!document.body) { setTimeout(mountGear, 300); return; }
       if (document.getElementById('ob-gear')) return;
-      const gear = document.createElement('div');
+      const gear = document.createElement('button');
+      gear.type = 'button';
       gear.id = 'ob-gear';
       gear.textContent = '⚙';
       gear.title = '本地内容过滤增强 · 设置';
-      gear.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;width:40px;height:40px;border-radius:50%;background:#2b2b32;color:#fff;font-size:20px;line-height:40px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);user-select:none;';
+      gear.setAttribute('aria-label', '打开 OmniBlock 设置');
       gear.onclick = () => openOptions();
       document.body.appendChild(gear);
     })();
   }
 
   // 暴露调试接口
-  window.OB = { Store, Index, openOptions, adapters: Adapters, setupQuickBlock, setupBulkBlock, collectUsers, identifyFromAnchor };
+  window.OB = {
+    Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
+    setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
+  };
 })();

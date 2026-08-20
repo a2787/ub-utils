@@ -1,4 +1,4 @@
-/* 已知真实属性片段的跨平台适配器回归测试。
+/* 人工合成的跨平台适配器回归测试，选择器契约来自已记录的真实属性片段和本地参考实现。
  * 这不是各站真页面验收；真站验证由 real-bilibili-probe.cjs 和手工登录态复核承担。
  * 运行：node test/adapters.cjs
  */
@@ -26,6 +26,14 @@ const cases = [
     body: '<article class="woo-panel-main"><a href="//weibo.com/u/1234567890" data-user-card="id=1234567890&foo=bar" usercard="1234567890" nick-name="微博作者">微博作者</a></article>',
   },
   {
+    id: 'weibo', name: 'weibo-comment', url: 'https://weibo.com/test', selector: '.card-review[comment_id]', expected: 'weibo:uid:123450001', unexpected: 'weibo:uid:999990001', expectSelfContainer: true,
+    body: '<div class="card-review" comment_id="c1"><div class="content"><div class="txt"><a href="/u/999990001">被提及用户</a><a class="name" href="/u/123450001" nick-name="评论作者">评论作者</a></div></div></div>',
+  },
+  {
+    id: 'weibo', name: 'weibo-search', url: 'https://s.weibo.com/weibo?q=test', selector: '.card-wrap[action-type="feed_list_item"]', expected: 'weibo:uid:123450002',
+    body: '<div class="card-wrap" action-type="feed_list_item"><div class="card-feed"><div class="content"><div class="info"><a class="name" href="/u/123450002">搜索作者</a></div></div></div></div>',
+  },
+  {
     id: 'zhihu', url: 'https://www.zhihu.com/hot', selector: '.ContentItem', expected: 'zhihu:token:known-author',
     body: '<div class="ContentItem"><a href="/people/known-author">知乎作者</a></div>',
   },
@@ -34,12 +42,28 @@ const cases = [
     body: '<div class="l_post l_post_bright"><span class="tb_icon_author" data-field="{&quot;author&quot;:{&quot;user_id&quot;:&quot;987654321&quot;,&quot;user_name&quot;:&quot;贴吧作者&quot;}}"></span></div>',
   },
   {
+    id: 'tieba', name: 'tieba-lzl-collection-guard', url: 'https://tieba.baidu.com/p/1', selector: '.j_lzl_container', expectSelected: false,
+    body: '<div class="j_lzl_container"><div data-field="{&quot;user_id&quot;:&quot;111111111&quot;}"></div><div data-field="{&quot;user_id&quot;:&quot;222222222&quot;}"></div></div>',
+  },
+  {
     id: 'x', url: 'https://x.com/home', selector: 'article[data-testid="tweet"]', expected: 'x:handle:knownhandle',
     body: '<div data-testid="cellInnerDiv"><article data-testid="tweet"><a role="link" href="/knownhandle">@knownhandle</a></article></div>',
   },
   {
     id: 'douyin', url: 'https://www.douyin.com/test', selector: '[data-e2e="comment-item"]', expected: 'douyin:secuid:MS4wLjABAAKnown',
     body: '<div data-e2e="comment-item"><a data-e2e="comment-username" href="/user/MS4wLjABAAKnown">抖音作者</a></div>',
+  },
+  {
+    id: 'douyin', name: 'douyin-comment-fallback', url: 'https://www.douyin.com/test', selector: '.comment-item', expected: 'douyin:secuid:MS4wLjABAAFallback',
+    body: '<div class="comment-item"><a href="/user/MS4wLjABAAFallback"></a><a href="/user/MS4wLjABAAFallback">抖音评论作者</a></div>',
+  },
+  {
+    id: 'douyin', name: 'douyin-search', url: 'https://www.douyin.com/search/test', selector: '.search-result-card', expected: 'douyin:secuid:MS4wLjABAASearch',
+    body: '<div class="search-result-card"><a href="/user/MS4wLjABAASearch">抖音搜索作者</a></div>',
+  },
+  {
+    id: 'douyin', name: 'douyin-profile', url: 'https://www.douyin.com/user/MS4wLjABAAProfile', selector: '[data-e2e="user-post-list"] [data-e2e="scroll-list"]', expected: 'douyin:secuid:MS4wLjABAAProfile',
+    body: '<h1>抖音主页作者</h1><section data-e2e="user-post-list"><div data-e2e="scroll-list"><a href="/video/1">作品</a></div></section>',
   },
 ];
 
@@ -59,11 +83,19 @@ const cases = [
       const result = await page.evaluate(({ id, selector }) => {
         const adapter = window.OB && window.OB.adapters[id];
         const item = document.querySelector(selector);
-        return { adapter: !!adapter, item: !!item, info: adapter && item ? adapter.extract(item) : null };
+        const selected = !!(adapter && item && adapter.selectors.some((candidate) => item.matches(candidate)));
+        const info = adapter && item ? adapter.extract(item) : null;
+        return { adapter: !!adapter, item: !!item, selected, selfContainer: !!info && info.container === item, info };
       }, test);
       const keys = result.info && result.info.keys || [];
-      if (result.adapter && result.item && keys.includes(test.expected)) report.pass.push(test.id + ': ' + test.expected);
-      else report.fail.push(test.id + ': ' + JSON.stringify(result));
+      const label = test.name || test.id;
+      const selectionOk = test.expectSelected === false ? !result.selected : result.selected;
+      const identityOk = test.expectSelected === false || keys.includes(test.expected);
+      const exclusionOk = !test.unexpected || !keys.includes(test.unexpected);
+      const containerOk = !test.expectSelfContainer || result.selfContainer;
+      if (result.adapter && result.item && selectionOk && identityOk && exclusionOk && containerOk) {
+        report.pass.push(label + ': ' + (test.expectSelected === false ? 'not selected' : test.expected));
+      } else report.fail.push(label + ': ' + JSON.stringify(result));
       await page.close();
     }
   } catch (error) {
