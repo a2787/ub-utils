@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.11.1
+// @version       0.12.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -491,6 +491,70 @@
     }
     .ob-dm-block:hover { background: #fdeceb !important; }
     [data-ob-dm-blocked="1"] { display: none !important; }
+
+    /* B站弹幕发送者管理工具：直接使用已解析的 seg.so 数据，不依赖原生弹幕菜单。 */
+    #ob-dm-tool {
+      position: fixed; right: 14px; bottom: 62px; z-index: 2147483643;
+      box-sizing: border-box; min-height: 34px; max-width: min(220px, calc(100vw - 28px));
+      border: 0; border-radius: 6px; padding: 7px 10px; background: #2b2b32; color: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; font-size: 12px; line-height: 20px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #ob-dm-tool:hover { background: #41414a; }
+    #ob-dm-manager {
+      position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-dm-manager .ob-dm-box {
+      box-sizing: border-box; width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column;
+      border-radius: 8px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-dm-manager .ob-dm-head, #ob-dm-manager .ob-dm-toolbar, #ob-dm-manager .ob-dm-footer {
+      display: flex; align-items: center; gap: 8px;
+    }
+    #ob-dm-manager .ob-dm-head { justify-content: space-between; margin-bottom: 10px; }
+    #ob-dm-manager h2 { margin: 0; font-size: 16px; }
+    #ob-dm-manager .ob-dm-close, #ob-dm-manager .ob-dm-page {
+      flex: 0 0 auto; width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent;
+      color: #555; cursor: pointer; font-size: 18px; line-height: 32px; padding: 0;
+    }
+    #ob-dm-manager .ob-dm-close:hover, #ob-dm-manager .ob-dm-page:hover:not(:disabled) { background: #f1f1f1; }
+    #ob-dm-manager .ob-dm-toolbar { flex-wrap: wrap; margin-bottom: 10px; }
+    #ob-dm-manager .ob-dm-search {
+      flex: 1 1 220px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
+      border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
+    }
+    #ob-dm-manager .ob-dm-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
+    #ob-dm-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
+    #ob-dm-manager .ob-dm-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+    #ob-dm-manager .ob-dm-sender {
+      box-sizing: border-box; min-height: 52px; display: grid; grid-template-columns: auto minmax(0, 1fr) 34px;
+      align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #f0f0f0;
+    }
+    #ob-dm-manager .ob-dm-sender:last-child { border-bottom: 0; }
+    #ob-dm-manager .ob-dm-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ob-dm-manager .ob-dm-meta { color: #888; font-size: 11px; margin-top: 2px; }
+    #ob-dm-manager .ob-dm-single {
+      width: 32px; height: 32px; border: 0; border-radius: 4px; padding: 0; background: transparent;
+      color: #c0392b; cursor: pointer; font-size: 15px;
+    }
+    #ob-dm-manager .ob-dm-single:hover { background: #fdeceb; }
+    #ob-dm-manager .ob-dm-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
+    #ob-dm-manager .ob-dm-status { color: #777; }
+    #ob-dm-manager .ob-dm-pages { display: inline-flex; align-items: center; gap: 4px; }
+    #ob-dm-manager .ob-dm-page:disabled { color: #bbb; cursor: default; }
+    #ob-dm-manager .ob-dm-batch {
+      min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b;
+      color: #fff; cursor: pointer; font-size: 12px;
+    }
+    #ob-dm-manager .ob-dm-batch:hover:not(:disabled) { background: #a93226; }
+    #ob-dm-manager .ob-dm-batch:disabled { background: #ccc; cursor: default; }
+    @media (max-width: 520px) {
+      #ob-dm-manager { align-items: flex-end; }
+      #ob-dm-manager .ob-dm-box { width: 100vw; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-dm-manager .ob-dm-footer { align-items: stretch; }
+      #ob-dm-manager .ob-dm-batch { flex: 1 1 100%; }
+    }
 
     /* 选项面板 */
     #ob-panel { position: fixed; inset: 0; z-index: 2147483644; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
@@ -1246,7 +1310,7 @@
   // ---------- B站 ----------
   Adapters.bilibili = (function () {
     const SEL = {
-      comment: 'bili-comment-renderer, bili-sub-comment-renderer, .comment-item, .reply-item, [data-comment-id]',
+      comment: 'bili-comment-renderer, bili-comment-reply-renderer, bili-sub-comment-renderer, .comment-item, .reply-item, [data-comment-id]',
       dyn: '.bili-dyn-item, .bili-dynamic-card, [data-dyn-id]',
       videoCard: '.bili-video-card, .video-card, a[href*="//www.bilibili.com/video/"]',
       space: '.space-item, .list-item',
@@ -1323,14 +1387,14 @@
       selectors: [SEL.comment, SEL.dyn, SEL.videoCard, SEL.space],
       disappearSelectors: [SEL.comment],
       extract,
-      // 统计“本页用户”时只计算评论作者，绝不把推荐视频卡/列表项当成人。
+      // 统计当前已加载的根评论和楼中楼作者，绝不把推荐视频卡/列表项当成人。
       collectUsers(root, purpose) {
         return purpose === 'modal' ? collectModalUsers(root) : collectCommentUsers(root);
       },
       canBulkModal(modal) {
         return collectModalUsers(modal).length >= 2;
       },
-      bulkFabLabel: (n) => '🚫 拉黑本页评论用户(' + n + ')',
+      bulkFabLabel: (n) => '🚫 拉黑已加载评论作者(' + n + ')',
       containerOf: commentContainer,
     };
   })();
@@ -1518,11 +1582,11 @@
     return !el.getClientRects || el.getClientRects().length > 0;
   }
 
-  function blockMany(list, anchorEl) {
+  function blockMany(list, anchorEl, confirmLabel) {
     if (!list.length) { showToast('没有可拉黑的用户'); return; }
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
-    showConfirm('拉黑全部 ' + list.length + ' 位用户', keys, anchorEl, null, () => {
+    showConfirm(confirmLabel || ('拉黑全部 ' + list.length + ' 位用户'), keys, anchorEl, null, () => {
       const results = Store.addIdentityGroups(list.map((info) => ({ keys: info.keys, label: info.label })));
       const addedKeys = [];
       for (const result of results) {
@@ -1699,17 +1763,55 @@
 
     const dmByContent = new Map();
     const dmByProgress = new Map();
+    const dmSenders = new Map();
+    const selectedDmHashes = new Set();
+    const DM_PAGE_SIZE = 100;
+    const DM_SENDER_LIMIT = 5000;
+    let dmTool = null;
+    let dmManager = null;
+    let dmManagerKeyHandler = null;
+    let dmSearch = '';
+    let dmPage = 0;
+    let dmVideoKey = '';
     function cleanDmText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function currentVideoKey() {
+      const match = location.pathname.match(/^\/video\/([^/?]+)/);
+      return match ? match[1] : location.pathname;
+    }
+    function resetDmSessionIfNeeded() {
+      const key = currentVideoKey();
+      if (!dmVideoKey) { dmVideoKey = key; return false; }
+      if (key === dmVideoKey) return false;
+      dmVideoKey = key;
+      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); selectedDmHashes.clear();
+      dmSearch = ''; dmPage = 0;
+      if (dmManager) closeDmManager();
+      return true;
+    }
     function rememberDanmaku(elem) {
       if (!elem || !elem.hash || !elem.content) return;
       const content = cleanDmText(elem.content);
       if (!content) return;
+      resetDmSessionIfNeeded();
       const hashes = dmByContent.get(content) || new Set();
       hashes.add(elem.hash); dmByContent.set(content, hashes);
       if (elem.progress >= 0) {
         const key = String(elem.progress) + '\x1f' + content;
         const progressHashes = dmByProgress.get(key) || new Set();
         progressHashes.add(elem.hash); dmByProgress.set(key, progressHashes);
+      }
+      let sender = dmSenders.get(elem.hash);
+      if (!sender) {
+        if (dmSenders.size >= DM_SENDER_LIMIT) {
+          const oldest = dmSenders.keys().next().value;
+          dmSenders.delete(oldest); selectedDmHashes.delete(oldest);
+        }
+        sender = { hash: elem.hash, content, progress: elem.progress, count: 0 };
+        dmSenders.set(elem.hash, sender);
+      }
+      sender.count++;
+      if (sender.progress < 0 || (elem.progress >= 0 && elem.progress < sender.progress)) {
+        sender.progress = elem.progress; sender.content = content;
       }
       // 长视频连续播放时限制会话内索引大小，当前视频的侧栏仍会保留。
       if (dmByContent.size > 5000 || dmByProgress.size > 10000) { dmByContent.clear(); dmByProgress.clear(); }
@@ -1745,7 +1847,7 @@
         copyRange(out, buf, start, next);
         p = next;
       }
-      scanDmPanels();
+      scanDmPanels(); refreshDmTool();
       return changed ? new Uint8Array(out) : buf;
     }
 
@@ -1790,6 +1892,172 @@
         } else for (const hash of hashes) candidates.add(hash);
       }
       return candidates.size === 1 ? Array.from(candidates)[0] : '';
+    }
+
+    function formatDmProgress(progress) {
+      if (!Number.isFinite(progress) || progress < 0) return '--:--';
+      const total = Math.floor(progress / 1000);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const seconds = total % 60;
+      return hours
+        ? hours + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0')
+        : String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    function availableDmSenders() {
+      resetDmSessionIfNeeded();
+      const blocked = blockedHashes();
+      return Array.from(dmSenders.values())
+        .filter((sender) => !blocked.has(sender.hash))
+        .sort((a, b) => (a.progress < 0 ? Number.MAX_SAFE_INTEGER : a.progress) - (b.progress < 0 ? Number.MAX_SAFE_INTEGER : b.progress));
+    }
+
+    function closeDmManager() {
+      if (dmManager) dmManager.remove();
+      dmManager = null;
+      if (dmManagerKeyHandler) document.removeEventListener('keydown', dmManagerKeyHandler);
+      dmManagerKeyHandler = null;
+    }
+
+    function renderDmManager() {
+      if (!dmManager || !dmManager.isConnected) return;
+      const available = availableDmSenders();
+      const availableHashes = new Set(available.map((sender) => sender.hash));
+      for (const hash of Array.from(selectedDmHashes)) if (!availableHashes.has(hash)) selectedDmHashes.delete(hash);
+      const term = cleanDmText(dmSearch).toLowerCase();
+      const filtered = term ? available.filter((sender) => sender.content.toLowerCase().includes(term)) : available;
+      const pageCount = Math.max(1, Math.ceil(filtered.length / DM_PAGE_SIZE));
+      dmPage = clamp(dmPage, 0, pageCount - 1);
+      const pageItems = filtered.slice(dmPage * DM_PAGE_SIZE, (dmPage + 1) * DM_PAGE_SIZE);
+      const batchEnabled = Store.getSetting('showBulkBlock');
+      const list = dmManager.querySelector('.ob-dm-list');
+      list.textContent = '';
+
+      for (const sender of pageItems) {
+        const row = document.createElement('label');
+        row.className = 'ob-dm-sender';
+        row.setAttribute('data-ob-dm-hash', sender.hash);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox'; checkbox.className = 'ob-dm-select';
+        checkbox.checked = selectedDmHashes.has(sender.hash);
+        checkbox.style.display = batchEnabled ? '' : 'none';
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) selectedDmHashes.add(sender.hash);
+          else selectedDmHashes.delete(sender.hash);
+          renderDmManager();
+        });
+
+        const body = document.createElement('div');
+        const content = document.createElement('div'); content.className = 'ob-dm-content'; content.textContent = sender.content;
+        const meta = document.createElement('div'); meta.className = 'ob-dm-meta';
+        meta.textContent = formatDmProgress(sender.progress) + ' · 已捕获 ' + sender.count + ' 条';
+        body.append(content, meta);
+
+        const single = document.createElement('button');
+        single.type = 'button'; single.className = 'ob-dm-single'; single.textContent = '🚫';
+        single.title = '本地屏蔽此弹幕发送者'; single.setAttribute('aria-label', '本地屏蔽此弹幕发送者');
+        single.addEventListener('click', (event) => {
+          event.stopPropagation(); event.preventDefault();
+          showConfirm('弹幕发送者：' + sender.content.slice(0, 36), [makeIdentityKey('bili:dmhash', sender.hash)], single, () => {
+            selectedDmHashes.delete(sender.hash); refreshDmTool(); scanDmPanels();
+          });
+        });
+        row.append(checkbox, body, single);
+        list.appendChild(row);
+      }
+
+      const selectAllWrap = dmManager.querySelector('.ob-dm-checkall');
+      const selectAll = selectAllWrap.querySelector('input');
+      selectAllWrap.style.display = batchEnabled ? 'inline-flex' : 'none';
+      selectAll.checked = !!pageItems.length && pageItems.every((sender) => selectedDmHashes.has(sender.hash));
+      selectAll.indeterminate = !selectAll.checked && pageItems.some((sender) => selectedDmHashes.has(sender.hash));
+      selectAll.onchange = () => {
+        for (const sender of pageItems) {
+          if (selectAll.checked) selectedDmHashes.add(sender.hash);
+          else selectedDmHashes.delete(sender.hash);
+        }
+        renderDmManager();
+      };
+
+      const selected = available.filter((sender) => selectedDmHashes.has(sender.hash));
+      const batch = dmManager.querySelector('.ob-dm-batch');
+      batch.style.display = batchEnabled ? '' : 'none';
+      batch.disabled = !selected.length;
+      batch.textContent = '屏蔽选中(' + selected.length + ')';
+      batch.onclick = () => {
+        const current = availableDmSenders().filter((sender) => selectedDmHashes.has(sender.hash));
+        if (!current.length) return;
+        blockMany(
+          current.map((sender) => ({ keys: [makeIdentityKey('bili:dmhash', sender.hash)], label: '弹幕发送者' })),
+          batch,
+          '屏蔽选中的 ' + current.length + ' 位弹幕发送者'
+        );
+      };
+
+      dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 位发送者 · ' + (dmPage + 1) + '/' + pageCount;
+      const previous = dmManager.querySelector('[data-ob-page="previous"]');
+      const next = dmManager.querySelector('[data-ob-page="next"]');
+      previous.disabled = dmPage <= 0;
+      next.disabled = dmPage >= pageCount - 1;
+    }
+
+    function openDmManager() {
+      if (dmManager || !document.body) return;
+      dmManager = document.createElement('div');
+      dmManager.id = 'ob-dm-manager';
+      dmManager.innerHTML = `
+        <div class="ob-dm-box" role="dialog" aria-modal="true" aria-labelledby="ob-dm-title">
+          <div class="ob-dm-head"><h2 id="ob-dm-title">B站弹幕发送者</h2><button class="ob-dm-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+          <div class="ob-dm-toolbar">
+            <input class="ob-dm-search" type="search" placeholder="搜索已加载弹幕" aria-label="搜索已加载弹幕">
+            <label class="ob-dm-checkall"><input type="checkbox">全选当前页</label>
+          </div>
+          <div class="ob-dm-list"></div>
+          <div class="ob-dm-footer">
+            <span class="ob-dm-status"></span>
+            <span class="ob-dm-pages"><button class="ob-dm-page" data-ob-page="previous" type="button" title="上一页" aria-label="上一页">‹</button><button class="ob-dm-page" data-ob-page="next" type="button" title="下一页" aria-label="下一页">›</button></span>
+            <button class="ob-dm-batch" type="button">屏蔽选中(0)</button>
+          </div>
+        </div>`;
+      dmManager.querySelector('.ob-dm-close').onclick = closeDmManager;
+      dmManager.addEventListener('click', (event) => { if (event.target === dmManager) closeDmManager(); });
+      const search = dmManager.querySelector('.ob-dm-search');
+      search.value = dmSearch;
+      search.oninput = () => { dmSearch = search.value; dmPage = 0; renderDmManager(); };
+      dmManager.querySelector('[data-ob-page="previous"]').onclick = () => { dmPage--; renderDmManager(); };
+      dmManager.querySelector('[data-ob-page="next"]').onclick = () => { dmPage++; renderDmManager(); };
+      dmManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDmManager(); };
+      document.addEventListener('keydown', dmManagerKeyHandler);
+      document.body.appendChild(dmManager);
+      renderDmManager();
+    }
+
+    function mountDmTool() {
+      if (dmTool || !document.body) {
+        if (!document.body) setTimeout(mountDmTool, 300);
+        return;
+      }
+      dmTool = document.createElement('button');
+      dmTool.id = 'ob-dm-tool'; dmTool.type = 'button';
+      dmTool.title = '管理当前视频已加载的弹幕发送者';
+      dmTool.setAttribute('aria-label', '管理当前视频已加载的弹幕发送者');
+      dmTool.onclick = openDmManager;
+      dmTool.style.display = 'none';
+      document.body.appendChild(dmTool);
+    }
+
+    function refreshDmTool() {
+      resetDmSessionIfNeeded();
+      mountDmTool();
+      if (!dmTool) return;
+      const count = availableDmSenders().length;
+      const visible = Store.getSetting('enabled') && Store.getSetting('showQuickBlock') && count > 0;
+      dmTool.textContent = '🚫 弹幕屏蔽(' + count + ')';
+      dmTool.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
+      if (!visible && dmManager) closeDmManager();
+      else if (dmManager) renderDmManager();
     }
 
     const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
@@ -1911,8 +2179,12 @@
         });
       };
     }
-    Store.onChange(scanDmPanels);
-    setInterval(scanDmPanels, 900);
+    Store.onChange(() => { scanDmPanels(); refreshDmTool(); });
+    mountDmTool();
+    setInterval(() => {
+      scanDmPanels();
+      if (resetDmSessionIfNeeded()) refreshDmTool();
+    }, 900);
   }
 
   // ====================================================================
@@ -1998,8 +2270,8 @@
           <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>
           <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
           <label><input type="checkbox" id="ob-hover" checked> 显示悬浮拉黑按钮</label>
-          <label><input type="checkbox" id="ob-quick" checked> 在平台原生"拉黑/举报"旁显示"本地拉黑"</label>
-          <label><input type="checkbox" id="ob-bulk" checked> 显示"一键拉黑本页/全部"按钮</label>
+          <label><input type="checkbox" id="ob-quick" checked> 显示"本地拉黑"入口（含B站弹幕工具）</label>
+          <label><input type="checkbox" id="ob-bulk" checked> 显示批量拉黑入口（含弹幕勾选批量）</label>
           <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
           <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
         </div>

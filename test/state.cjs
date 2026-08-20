@@ -42,7 +42,7 @@ function addComment(uid, name) {
 }
 function addSubComment(threadUid, uid, name) {
   const thread = root.querySelector('#comment-' + threadUid);
-  const item = document.createElement('bili-sub-comment-renderer'); item.id = 'sub-' + uid;
+  const item = document.createElement('bili-comment-reply-renderer'); item.id = 'sub-' + uid;
   item.__data = { member:{ mid:String(uid), uname:name } };
   const shadow = item.attachShadow({mode:'open'});
   const link = document.createElement('a'); link.className='user-name'; link.href='//space.bilibili.com/'+uid; link.textContent=name;

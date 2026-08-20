@@ -1,6 +1,6 @@
 /* OmniBlock B站回归测试。
  * 覆盖真实页面已捕获的结构：bili-comment-thread-renderer Shadow Root 内
- * bili-comment-renderer 的 __data.member.mid、
+ * bili-comment-renderer / bili-comment-reply-renderer 的 __data.member.mid、
  * bili-comment-menu Shadow DOM 的 <ul id="options"><li>，以及 seg.so protobuf。
  * 运行：node test/quickblock.cjs
  */
@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
+const SAVE_SCREENSHOTS = process.argv.includes('--screenshot');
 
 const SHIM = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
@@ -41,7 +42,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
   }
   const comments = document.getElementById('comments');
   const commentsRoot = comments.attachShadow({mode:'open'});
-  const commentsStyle = document.createElement('style'); commentsStyle.textContent = 'bili-comment-thread-renderer{display:block;height:24px;margin:0;padding:0}'; commentsRoot.appendChild(commentsStyle);
+  const commentsStyle = document.createElement('style'); commentsStyle.textContent = 'bili-comment-thread-renderer{display:block;min-height:24px;margin:0;padding:0}'; commentsRoot.appendChild(commentsStyle);
   function makeComment(mid, uname) {
     const thread = document.createElement('bili-comment-thread-renderer');
     thread.id = 'comment-' + mid;
@@ -57,8 +58,30 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     menuRoot.appendChild(list); root.append(link, menu); threadRoot.appendChild(renderer);
     return thread;
   }
-  commentsRoot.append(makeComment(111, 'Alice'), makeComment(222, 'Bob'), makeComment(333, 'Carol'));
+  function makeReply(thread, mid, uname) {
+    const replies = document.createElement('bili-comment-replies-renderer');
+    replies.__data = thread.shadowRoot.querySelector('bili-comment-renderer').__data;
+    const repliesRoot = replies.attachShadow({mode:'open'});
+    const wrapper = document.createElement('div');
+    const renderer = document.createElement('bili-comment-reply-renderer');
+    renderer.id = 'reply-' + mid; renderer.style.display = 'block'; renderer.style.height = '20px';
+    renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
+    const root = renderer.attachShadow({mode:'open'});
+    const link = document.createElement('a'); link.className = 'user-name'; link.href = '//space.bilibili.com/' + mid; link.textContent = uname;
+    const menu = document.createElement('bili-comment-menu'); menu.__data = { member: { mid: String(mid), uname } };
+    const menuRoot = menu.attachShadow({mode:'open'});
+    const list = document.createElement('ul'); list.id = 'options';
+    for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
+    menuRoot.appendChild(list); root.append(link, menu); wrapper.appendChild(renderer); repliesRoot.appendChild(wrapper); thread.shadowRoot.appendChild(replies);
+    return renderer;
+  }
+  const first = makeComment(111, 'Alice');
+  const second = makeComment(222, 'Bob');
+  const third = makeComment(333, 'Carol');
+  commentsRoot.append(first, second, third);
+  makeReply(third, 444, 'ReplyUser');
   window.__commentRenderer = (mid) => commentsRoot.querySelector('#comment-' + mid).shadowRoot.querySelector('bili-comment-renderer');
+  window.__replyRenderer = (mid) => third.shadowRoot.querySelector('bili-comment-replies-renderer').shadowRoot.querySelector('#reply-' + mid);
 </script>
 </body></html>`;
 
@@ -108,11 +131,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await wait(1500);
 
     const count = await page.evaluate(() => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('本页评论用户'));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
       return { text: fab ? fab.textContent : '', users: window.OB.collectUsers(document).map((item) => item.keys[0]) };
     });
-    if (count.text.includes('(3)') && count.users.length === 3 && !count.users.some((key) => key.includes('9000')))
-      report.pass.push('QB-A 本页统计只计 3 位评论作者，不计 34 张推荐视频卡');
+    if (count.text.includes('(4)') && count.users.length === 4 && count.users.includes('bili:uid:444') && !count.users.some((key) => key.includes('9000')))
+      report.pass.push('QB-A 本页统计含已加载楼中楼共 4 位评论作者，不计 34 张推荐视频卡');
     else report.fail.push('QB-A 评论统计错误：' + JSON.stringify(count));
 
     const menu = await page.evaluate(() => {
@@ -124,6 +147,42 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (menu.tag === 'LI' && menu.text.includes('本地拉黑') && menu.count === 1)
       report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个合法的 LI 本地拉黑项');
     else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
+
+    const replyBlock = await page.evaluate(async () => {
+      const renderer = window.__replyRenderer('444');
+      const button = renderer && renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
+      if (!renderer || !button) return { exists: false };
+      let node = renderer;
+      let thread = null;
+      while (node) {
+        if (node.nodeType === 1 && node.tagName === 'BILI-COMMENT-THREAD-RENDERER') { thread = node; break; }
+        if (node.parentNode) node = node.parentNode;
+        else if (node.host) node = node.host;
+        else break;
+      }
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, confirm: false };
+      const named = confirm.textContent.includes('ReplyUser');
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const hidden = renderer.classList.contains('ob-hidden') && getComputedStyle(renderer).display === 'none' && renderer.getBoundingClientRect().height === 0;
+      const parentVisible = !!thread && !thread.classList.contains('ob-hidden') && getComputedStyle(thread).display !== 'none' && thread.getBoundingClientRect().height > 0;
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      return {
+        exists: true,
+        confirm: true,
+        named,
+        blockedBeforeUndo: hidden,
+        parentVisible,
+        bars: renderer.getRootNode().querySelectorAll('.ob-bar').length,
+        restored: !!undo && !window.OB.Index.isBlocked('bili:uid:444') && getComputedStyle(renderer).display !== 'none' && renderer.getBoundingClientRect().height > 0,
+      };
+    });
+    if (replyBlock.exists && replyBlock.confirm && replyBlock.named && replyBlock.blockedBeforeUndo && replyBlock.parentVisible && replyBlock.bars === 0 && replyBlock.restored)
+      report.pass.push('QB-L 真实楼中楼菜单拉黑后只隐藏该回复，撤销立即恢复');
+    else report.fail.push('QB-L 楼中楼菜单拉黑失败：' + JSON.stringify(replyBlock));
 
     const quickBlock = await page.evaluate(async () => {
       const renderer = window.__commentRenderer('111');
@@ -248,6 +307,96 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         xhr.send();
       });
     });
+    await page.waitForFunction(() => !!document.getElementById('ob-dm-tool'), null, { timeout: 2500 }).catch(() => {});
+    const dmManagerSingle = await page.evaluate(async () => {
+      const launcher = document.getElementById('ob-dm-tool');
+      if (!launcher) return { exists: false };
+      launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const panel = document.getElementById('ob-dm-manager');
+      const row = panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('hello danmaku'));
+      const button = row && row.querySelector('.ob-dm-single');
+      if (!panel || !row || !button) return { exists: true, panel: !!panel, row: !!row, button: !!button };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, panel: true, row: true, button: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      return {
+        exists: true, panel: true, row: true, button: true, confirm: true, blocked,
+        restored: !!undo && !window.OB.Index.isBlocked('bili:dmhash:678f8529'),
+        count: document.querySelectorAll('#ob-dm-manager .ob-dm-sender').length,
+      };
+    });
+    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.blocked && dmManagerSingle.restored && dmManagerSingle.count === 3)
+      report.pass.push('QB-M 独立弹幕工具列出段数据并支持单个发送者屏蔽与撤销');
+    else report.fail.push('QB-M 独立弹幕单个屏蔽入口错误：' + JSON.stringify(dmManagerSingle));
+
+    const dmManagerBatch = await page.evaluate(async () => {
+      const launcher = document.getElementById('ob-dm-tool');
+      if (!launcher) return { exists: false };
+      if (!document.getElementById('ob-dm-manager')) { launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80)); }
+      const panel = document.getElementById('ob-dm-manager');
+      const rows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
+      const targets = rows.filter((row) => row.textContent.includes('keep danmaku') || row.textContent.includes('uid mapped danmaku'));
+      for (const row of targets) {
+        const checkbox = row.querySelector('.ob-dm-select');
+        checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const button = panel && panel.querySelector('.ob-dm-batch');
+      if (!panel || targets.length !== 2 || !button) return { exists: true, panel: !!panel, targets: targets.length, button: !!button };
+      window.__writes = 0;
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, panel: true, targets: 2, button: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const keys = ['bili:dmhash:a9900557', 'bili:dmhash:0a6216d9'];
+      const persons = Object.values(window.OB.Store.persons());
+      const groups = persons.filter((person) => person.identities.some((key) => keys.includes(key)));
+      const blocked = keys.every((key) => window.OB.Index.isBlocked(key));
+      const writes = window.__writes;
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      return {
+        exists: true, panel: true, targets: 2, button: true, confirm: true, blocked,
+        separate: groups.length === 2 && groups.every((person) => person.identities.filter((key) => keys.includes(key)).length === 1),
+        writes,
+        restored: !!undo && keys.every((key) => !window.OB.Index.isBlocked(key)),
+      };
+    });
+    if (dmManagerBatch.exists && dmManagerBatch.panel && dmManagerBatch.targets === 2 && dmManagerBatch.button && dmManagerBatch.confirm && dmManagerBatch.blocked && dmManagerBatch.separate && dmManagerBatch.writes === 1 && dmManagerBatch.restored)
+      report.pass.push('QB-N 弹幕工具勾选批量屏蔽逐人存储、单次提交并可整体撤销');
+    else report.fail.push('QB-N 弹幕批量屏蔽入口错误：' + JSON.stringify(dmManagerBatch));
+
+    const originalViewport = page.viewportSize() || { width: 1280, height: 720 };
+    const layoutState = async () => page.evaluate(() => {
+      const panel = document.getElementById('ob-dm-manager');
+      const box = panel && panel.querySelector('.ob-dm-box');
+      const batch = panel && panel.querySelector('.ob-dm-batch');
+      if (!panel || !box || !batch) return { exists: false };
+      const rect = box.getBoundingClientRect();
+      const batchRect = batch.getBoundingClientRect();
+      return {
+        exists: true,
+        inside: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+        noPageOverflow: document.documentElement.scrollWidth <= innerWidth,
+        batchInside: batchRect.left >= rect.left && batchRect.right <= rect.right && batchRect.bottom <= rect.bottom,
+        listScrollable: panel.querySelector('.ob-dm-list').scrollHeight >= panel.querySelector('.ob-dm-list').clientHeight,
+      };
+    });
+    const desktopLayout = await layoutState();
+    if (SAVE_SCREENSHOTS) await page.screenshot({ path: path.join(ROOT, 'test', '_shot_dm-manager-desktop.png') });
+    await page.setViewportSize({ width: 390, height: 844 }); await wait(120);
+    const mobileLayout = await layoutState();
+    if (SAVE_SCREENSHOTS) await page.screenshot({ path: path.join(ROOT, 'test', '_shot_dm-manager-mobile.png') });
+    await page.setViewportSize(originalViewport); await wait(120);
+    if (desktopLayout.exists && desktopLayout.inside && desktopLayout.noPageOverflow && desktopLayout.batchInside && desktopLayout.listScrollable && mobileLayout.exists && mobileLayout.inside && mobileLayout.noPageOverflow && mobileLayout.batchInside && mobileLayout.listScrollable)
+      report.pass.push('QB-O 弹幕工具在桌面与 390px 手机视口内无溢出或控件越界');
+    else report.fail.push('QB-O 弹幕工具响应式布局错误：' + JSON.stringify({ desktopLayout, mobileLayout }));
+
     await page.waitForFunction(() => !!document.querySelector('#dm-panel .ob-dm-block'), null, { timeout: 5000 });
     const dm = await page.evaluate(async () => {
       const row = document.querySelector('#dm-panel .bpx-player-dm-item');

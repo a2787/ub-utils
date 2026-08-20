@@ -278,3 +278,61 @@
   `.workbuddy/memory/2026-08-20.md` 和三张 `test/shot-*.png` 脏改动未暂存、未回退。
 - 下一项最有价值的验证：在能返回发送者列表行的隔离 B站视频页复核 `mid_hash` 到行的
   匹配，确认点击本地拉黑后该真实弹幕行高度为 0，并把脱敏结构加入 `test/quickblock.cjs`。
+
+### 2026-08-21 - v0.12.0 - B站楼中楼与独立弹幕屏蔽工具
+
+**范围与改动文件**
+
+- `omniblock.user.js`：B站评论适配器接入生产页实际的
+  `bili-comment-reply-renderer`，楼中楼使用自身 `member.mid` 并只隐藏自身；页面批量入口
+  改为「拉黑已加载评论作者(N)」，统计当前已加载的根评论与楼中楼作者并按 UID 去重。
+- `omniblock.user.js`：从已拦截的 `seg.so` / `list.so` 数据建立当前视频弹幕发送者索引，
+  新增固定「弹幕屏蔽(N)」入口、搜索、单条屏蔽、勾选批量、分页和撤销；不依赖原生移动
+  弹幕举报菜单或右侧弹幕列表。SPA 切换视频时清空会话索引，最多保留 5000 位发送者。
+- `test/state.cjs`、`test/quickblock.cjs`：人工合成夹具改用捕获的真实楼中楼标签；新增菜单
+  拉黑、批量计数、弹幕单条/批量事务及 1280px/390px 布局断言。
+- `test/real-bilibili-probe.cjs`：支持 `--url=`、楼中楼安全展开、脱敏组件诊断、
+  `--verify-sub-comment` 和 `--verify-danmaku-tool`；所有动作只修改隔离内存名单并撤销。
+- `README.md`、`MAINTENANCE.md`：同步 v0.12.0 用户行为、验证证据与限制。
+
+**`real-site verified`**
+
+- 2026-08-21，隔离未登录浏览器，
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`：生产页返回 2 个
+  `BILI-COMMENT-RENDERER` 和 4 个 `BILI-COMMENT-REPLY-RENDERER`，6 个组件均解析出
+  独立身份，批量入口显示 `拉黑已加载评论作者(6)`。对子评论执行本地拉黑后，名单命中、
+  该回复高度变为 0、根线程保持可见；撤销后回复恢复。
+- 同一 URL 和会话捕获 `XMLHttpRequest(responseType=arraybuffer)` 的真实 `seg.so`；
+  「弹幕屏蔽」工具当前页列出 7 位已捕获发送者。单条屏蔽与两人勾选批量均写入独立
+  `bili:dmhash` 人物记录，确认命中后撤销恢复；未触发任何 B站官方拉黑或站内写操作。
+- 同一 URL 的原有根评论严格路径继续通过：完整线程高度从 296px 变为 0，无恢复条，
+  下一线程相对共同容器上移 296px，撤销后恢复。
+
+**`structure regression`**
+
+- `node test/run.cjs`：11/11，通过通用 UI、Shadow DOM、更新元数据和移动视口。
+- `node test/state.cjs`：6/6，通过根评论与真实标签楼中楼的边界、隐藏和恢复。
+- `node test/quickblock.cjs`：15/15，通过楼中楼菜单/计数、批量事务、弹幕工具、响应式
+  布局、右侧列表兜底与 XHR 数据段过滤。
+- `node test/adapters.cjs`：14/14；`node test/douyin.cjs`：2/2，均通过。
+- `node --check omniblock.user.js`、`node --check test/quickblock.cjs`、
+  `node --check test/real-bilibili-probe.cjs` 和 `git diff --check`：均通过。
+
+**`blocked` 与限制**
+
+- 2026-08-21 后续访问 `https://www.bilibili.com/video/BV1kS8H6VERt` 时，两个回复容器
+  仅显示“共 1 条回复”，有限重试 12 次仍未下发单条楼中楼组件；该轮楼中楼严格探针按
+  `blocked` 记录。相同会话的真实弹幕工具仍列出 100 位发送者并完成单条/批量撤销。
+- 两个生产 URL 的原生弹幕面板容器均未返回可安全匹配发送者的列表行；原生移动弹幕
+  举报菜单和行内入口仍未验证。独立弹幕工具不依赖该结构。
+- 弹幕工具只列出当前视频已经收到的数据段，每页 100 位；已进入播放器缓存的移动弹幕
+  不能追溯移除，需等待下一数据段或刷新后由过滤器完全消失。
+
+**版本与发布**
+
+- 源码已提高为 `0.12.0`。本条交接将与功能代码一同提交并推送到 `origin/master`；推送
+  后现有 GitHub raw `master` 更新 URL 提供 v0.12.0。
+- 工作区中既有的 `.workbuddy/memory/2026-08-20.md` 与三张 `test/shot-*.png` 脏改动
+  未暂存、未回退；生成的 `_shot_*.png` 诊断截图保持忽略。
+- 下一项最有价值的验证：安装 v0.12.0 后，在用户最初报告的视频上确认右下角弹幕工具
+  能列出发送者，并复核刷新前后已缓存弹幕的消失时点。

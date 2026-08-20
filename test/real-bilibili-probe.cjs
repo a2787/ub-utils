@@ -6,9 +6,16 @@
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const fs = require('fs');
 const path = require('path');
-const URL = 'https://www.bilibili.com/video/BV1eyYRz2E2v';
+const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
+const requestedUrl = urlArg ? urlArg.slice('--url='.length) : '';
+const URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$/.test(requestedUrl)
+  ? requestedUrl
+  : 'https://www.bilibili.com/video/BV1eyYRz2E2v';
 const SAVE_SCREENSHOT = process.argv.includes('--screenshot');
 const VERIFY_LOCAL_BUTTON = process.argv.includes('--verify-local');
+const VERIFY_SUB_COMMENT = process.argv.includes('--verify-sub-comment');
+const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool');
+const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const shim = `
@@ -53,11 +60,12 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
     // B站评论按需加载；只滚动和等待，不点击原生菜单或写入任何站内状态。
     for (let i = 0; i < 12; i++) {
-      await page.evaluate(() => {
+      await page.evaluate((step) => {
         const comments = document.querySelector('bili-comments');
-        if (comments) comments.scrollIntoView({ block: 'center' });
+        if (comments && step === 0) comments.scrollIntoView({ block: 'start' });
+        else if (comments) window.scrollBy(0, 850);
         else window.scrollBy(0, 900);
-      });
+      }, i);
       await sleep(1200);
       const found = await page.evaluate(() => {
         function count(root, selector) {
@@ -70,9 +78,73 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
           };
           walk(root); return total;
         }
-        return count(document, 'bili-comment-renderer');
+        return {
+          roots: count(document, 'bili-comment-renderer'),
+          children: count(document, 'bili-sub-comment-renderer,bili-comment-reply-renderer'),
+        };
       });
-      if (found) break;
+      if (found.children || found.roots >= 10) break;
+    }
+
+    if (EXPAND_REPLIES) {
+      result.replyExpansion = { attempts: 0, clicked: 0, tags: [], replyCount: 0 };
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const expansion = await page.evaluate(() => {
+          const replies = [];
+          let replyCount = 0;
+          const seen = new Set();
+          const walk = (node) => {
+            if (!node || seen.has(node)) return;
+            seen.add(node);
+            if (node.nodeType === 1) {
+              if (node.tagName === 'BILI-COMMENT-REPLIES-RENDERER') replies.push(node);
+              if (node.tagName === 'BILI-COMMENT-REPLY-RENDERER') replyCount++;
+              if (node.shadowRoot) walk(node.shadowRoot);
+            }
+            for (const child of node.children || []) walk(child);
+          };
+          walk(document);
+          if (replyCount) return { clicked: 0, tags: [], replyCount };
+          const tags = [];
+          for (const renderer of replies) {
+            const candidates = [];
+            const collect = (node) => {
+              if (!node) return;
+              if (node.nodeType === 1 && node.matches && node.matches('button,a,[role="button"],li,span')) candidates.push(node);
+              if (node.shadowRoot) collect(node.shadowRoot);
+              for (const child of node.children || []) collect(child);
+            };
+            collect(renderer);
+            const control = candidates.find((element) => {
+              const text = String(element.textContent || '').replace(/\s+/g, ' ').trim();
+              return /(?:查看|展开|更多|共\s*\d+\s*条).*回复|回复.*(?:查看|展开|更多)/.test(text);
+            });
+            if (!control) continue;
+            control.scrollIntoView({ block: 'center', inline: 'nearest' });
+            control.click(); tags.push(control.tagName);
+          }
+          return { clicked: tags.length, tags, replyCount: 0 };
+        });
+        result.replyExpansion.attempts++;
+        result.replyExpansion.clicked += expansion.clicked;
+        result.replyExpansion.tags.push(...expansion.tags);
+        result.replyExpansion.replyCount = expansion.replyCount;
+        if (expansion.replyCount) break;
+        await sleep(1400);
+        result.replyExpansion.replyCount = await page.evaluate(() => {
+          let count = 0;
+          const walk = (node) => {
+            if (!node) return;
+            if (node.nodeType === 1) {
+              if (node.tagName === 'BILI-COMMENT-REPLY-RENDERER') count++;
+              if (node.shadowRoot) walk(node.shadowRoot);
+            }
+            for (const child of node.children || []) walk(child);
+          };
+          walk(document); return count;
+        });
+        if (result.replyExpansion.replyCount) break;
+      }
     }
 
     // 在打开任何自建确认框之前记录本页批量入口。此前探针只在点过按钮后
@@ -108,7 +180,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       };
       walk(document);
       if (window.OB && typeof window.OB.refreshBulk === 'function') window.OB.refreshBulk();
-      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('本页'));
+      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
       if (!bulk) return { found: false, text: null, visible: false, modalCandidates };
       const style = getComputedStyle(bulk);
       return {
@@ -122,6 +194,150 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       await sleep(750);
     }
     result.bulkBeforeInteraction = bulkBeforeInteraction;
+
+    if (VERIFY_SUB_COMMENT) {
+      await page.waitForFunction(() => {
+        if (window.OB && typeof window.OB.setupQuickBlock === 'function') window.OB.setupQuickBlock();
+        const find = (node, selector) => {
+          if (!node) return null;
+          if (node.nodeType === 1 && node.matches && node.matches(selector)) return node;
+          if (node.shadowRoot) { const inside = find(node.shadowRoot, selector); if (inside) return inside; }
+          for (const child of node.children || []) { const inside = find(child, selector); if (inside) return inside; }
+          return null;
+        };
+        const reply = find(document, 'bili-comment-reply-renderer');
+        return !!reply && !!find(reply, '.ob-quick');
+      }, null, { timeout: 8000, polling: 250 }).catch(() => {});
+      result.subCommentBlock = await page.evaluate(async () => {
+        const find = (node, selector) => {
+          if (!node) return null;
+          if (node.nodeType === 1 && node.matches && node.matches(selector)) return node;
+          if (node.shadowRoot) { const inside = find(node.shadowRoot, selector); if (inside) return inside; }
+          for (const child of node.children || []) { const inside = find(child, selector); if (inside) return inside; }
+          return null;
+        };
+        const target = find(document, 'bili-comment-reply-renderer');
+        const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+        const info = target && adapter && adapter.extract ? adapter.extract(target) : null;
+        const button = target && find(target, '.ob-quick');
+        if (!target || !info || !info.keys || !info.keys.length || !button) {
+          return { found: !!target, identityResolved: !!(info && info.keys && info.keys.length), localButtonPresent: !!button };
+        }
+        let node = target;
+        let thread = null;
+        while (node) {
+          if (node.nodeType === 1 && node.tagName === 'BILI-COMMENT-THREAD-RENDERER') { thread = node; break; }
+          if (node.parentNode) node = node.parentNode;
+          else if (node.host) node = node.host;
+          else break;
+        }
+        button.click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const confirm = document.getElementById('ob-confirm');
+        if (!confirm) return { found: true, identityResolved: true, localButtonPresent: true, confirm: false };
+        confirm.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const blocked = info.keys.every((key) => window.OB.Index.isBlocked(key));
+        const bulkIncludesTarget = window.OB.collectUsers(document).some((candidate) =>
+          candidate.keys && candidate.keys.some((key) => info.keys.includes(key))
+        );
+        const hidden = target.classList.contains('ob-hidden') && getComputedStyle(target).display === 'none' && target.getBoundingClientRect().height === 0;
+        const threadVisible = !!thread && getComputedStyle(thread).display !== 'none' && thread.getBoundingClientRect().height > 0;
+        const toast = document.getElementById('ob-toast');
+        const undo = toast && toast.querySelector('button');
+        if (undo) {
+          undo.click();
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        return {
+          found: true,
+          identityResolved: true,
+          localButtonPresent: true,
+          confirm: true,
+          blocked,
+          bulkIncludesTarget,
+          hidden,
+          threadVisible,
+          restored: !!undo && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0,
+        };
+      });
+      const sub = result.subCommentBlock || {};
+      if (!sub.found || !sub.identityResolved || !sub.localButtonPresent || !sub.confirm || !sub.blocked || !sub.bulkIncludesTarget || !sub.hidden || !sub.threadVisible || !sub.restored) {
+        result.errors.push('验证失败：真实楼中楼本地拉黑未做到独立无占位隐藏并可撤销');
+      }
+    }
+
+    if (VERIFY_DANMAKU_TOOL) {
+      await page.waitForFunction(() => {
+        const tool = document.getElementById('ob-dm-tool');
+        return !!tool && getComputedStyle(tool).display !== 'none' && /弹幕屏蔽\(\d+\)/.test(tool.textContent || '');
+      }, null, { timeout: 8000, polling: 250 }).catch(() => {});
+      result.danmakuTool = await page.evaluate(async () => {
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const tool = document.getElementById('ob-dm-tool');
+        if (!tool || getComputedStyle(tool).display === 'none') return { found: false };
+        tool.click(); await pause(120);
+        const panel = document.getElementById('ob-dm-manager');
+        const initialRows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
+        if (!panel || initialRows.length < 3) return { found: true, panel: !!panel, senderCount: initialRows.length };
+
+        const first = initialRows[0];
+        const firstHash = first.getAttribute('data-ob-dm-hash');
+        const single = first.querySelector('.ob-dm-single');
+        single.click(); await pause(100);
+        let confirm = document.getElementById('ob-confirm');
+        if (!confirm) return { found: true, panel: true, senderCount: initialRows.length, singleConfirm: false };
+        confirm.querySelector('.ob-ok').click(); await pause(200);
+        const singleBlocked = window.OB.Index.isBlocked('bili:dmhash:' + firstHash);
+        let toast = document.getElementById('ob-toast');
+        const singleUndo = toast && toast.querySelector('button');
+        if (singleUndo) { singleUndo.click(); await pause(200); }
+        const singleRestored = !!singleUndo && !window.OB.Index.isBlocked('bili:dmhash:' + firstHash);
+
+        const currentRows = Array.from(panel.querySelectorAll('.ob-dm-sender'));
+        const batchHashes = currentRows.slice(0, 2).map((row) => row.getAttribute('data-ob-dm-hash'));
+        for (const hash of batchHashes) {
+          const row = panel.querySelector('[data-ob-dm-hash="' + hash + '"]');
+          const checkbox = row && row.querySelector('.ob-dm-select');
+          if (!checkbox) continue;
+          checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const batch = panel.querySelector('.ob-dm-batch');
+        const batchReady = batchHashes.length === 2 && batch && !batch.disabled && /\(2\)/.test(batch.textContent || '');
+        if (batchReady) batch.click();
+        await pause(100);
+        confirm = document.getElementById('ob-confirm');
+        if (confirm) { confirm.querySelector('.ob-ok').click(); await pause(200); }
+        const batchBlocked = batchReady && !!confirm && batchHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
+        const persons = Object.values(window.OB.Store.persons());
+        const batchSeparate = batchHashes.length === 2 && persons.filter((person) =>
+          person.identities.some((key) => batchHashes.some((hash) => key === 'bili:dmhash:' + hash))
+        ).length === 2;
+        toast = document.getElementById('ob-toast');
+        const batchUndo = toast && toast.querySelector('button');
+        if (batchUndo) { batchUndo.click(); await pause(200); }
+        const batchRestored = !!batchUndo && batchHashes.every((hash) => !window.OB.Index.isBlocked('bili:dmhash:' + hash));
+        const close = panel.querySelector('.ob-dm-close');
+        if (close) close.click();
+        return {
+          found: true,
+          panel: true,
+          senderCount: initialRows.length,
+          singleConfirm: true,
+          singleBlocked,
+          singleRestored,
+          batchReady,
+          batchConfirm: !!confirm,
+          batchBlocked,
+          batchSeparate,
+          batchRestored,
+        };
+      });
+      const dm = result.danmakuTool || {};
+      if (!dm.found || !dm.panel || dm.senderCount < 3 || !dm.singleConfirm || !dm.singleBlocked || !dm.singleRestored || !dm.batchReady || !dm.batchConfirm || !dm.batchBlocked || !dm.batchSeparate || !dm.batchRestored) {
+        result.errors.push('验证失败：真实弹幕段未提供可用的单条与批量本地屏蔽工具');
+      }
+    }
 
     let menuTrigger = null;
     if (SAVE_SCREENSHOT) {
@@ -268,10 +484,26 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         };
         walk(root); return out;
       }
+      function composedElements(start) {
+        const out = [];
+        let node = start;
+        while (node) {
+          if (node.nodeType === 1) out.push(node);
+          if (node.parentNode) node = node.parentNode;
+          else if (node.host) node = node.host;
+          else {
+            const root = node.getRootNode && node.getRootNode();
+            node = root && root !== node && root.host || null;
+          }
+        }
+        return out;
+      }
       // 确认框关闭后立即刷新一次，避免定时器尚未运行导致把正常隐藏状态
       // 误报为“没有一键拉黑入口”。
       if (window.OB && typeof window.OB.refreshBulk === 'function') window.OB.refreshBulk();
       const renderers = collect(document, 'bili-comment-renderer');
+      const subRenderers = collect(document, 'bili-comment-reply-renderer,bili-sub-comment-renderer');
+      const repliesRenderers = collect(document, 'bili-comment-replies-renderer');
       const menus = collect(document, 'bili-comment-menu');
       const first = renderers[0];
       const data = first && first.__data;
@@ -279,12 +511,62 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       const firstMenuItem = firstMenu && firstMenu.shadowRoot && firstMenu.shadowRoot.querySelector('li');
       const options = firstMenu && firstMenu.shadowRoot && firstMenu.shadowRoot.querySelector('#options');
       const identity = firstMenuItem && window.OB.identifyFromAnchor(firstMenuItem);
-      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('本页'));
+      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
       const video = document.querySelector('video');
+      const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+      const commentTagCounts = {};
+      for (const element of collect(document, '*')) {
+        if (!/^BILI-.*COMMENT/.test(element.tagName)) continue;
+        commentTagCounts[element.tagName] = (commentTagCounts[element.tagName] || 0) + 1;
+      }
+      const subDetails = subRenderers.slice(0, 8).map((renderer) => {
+        const data = renderer.__data;
+        const info = adapter && adapter.extract ? adapter.extract(renderer) : null;
+        const chain = composedElements(renderer);
+        const parent = chain.find((node) => node !== renderer && (node.tagName === 'BILI-COMMENT-RENDERER' || node.tagName === 'BILI-COMMENT-REPLIES-RENDERER'));
+        const parentInfo = parent && adapter && adapter.extract ? adapter.extract(parent) : null;
+        const localButtons = collect(renderer, '.ob-quick');
+        return {
+          ancestorTags: chain.slice(0, 8).map((node) => node.tagName),
+          dataKeys: data && typeof data === 'object' ? Object.keys(data).sort().slice(0, 30) : [],
+          dataShape: data && typeof data === 'object' ? {
+            directMid: !!(data.mid || data.uid || data.user_id),
+            memberMid: !!(data.member && (data.member.mid || data.member.uid)),
+            replyMid: !!(data.reply && ((data.reply.member && data.reply.member.mid) || data.reply.mid)),
+            rootMid: !!(data.root && ((data.root.member && data.root.member.mid) || data.root.mid)),
+          } : null,
+          identityResolved: !!(info && info.keys && info.keys.length),
+          sameIdentityAsParent: !!(info && parentInfo && info.keys && parentInfo.keys && info.keys[0] === parentInfo.keys[0]),
+          containerTag: info && info.container && info.container.tagName || null,
+          menuCount: collect(renderer, 'bili-comment-menu').length,
+          localButtonCount: localButtons.length,
+        };
+      });
+      const replyContainerDetails = repliesRenderers.slice(0, 8).map((renderer) => {
+        const data = renderer.__data;
+        const controls = collect(renderer, 'button,a,[role="button"],li,span')
+          .map((element) => String(element.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter((text) => text && /回复/.test(text))
+          .map((text) => text.replace(/[^\d回复查看展开更多共条]/g, ''))
+          .filter(Boolean)
+          .slice(0, 8);
+        return {
+          dataKeys: data && typeof data === 'object' ? Object.keys(data).sort().slice(0, 30) : [],
+          arrayLengths: data && typeof data === 'object' ? Object.fromEntries(
+            Object.entries(data).filter((entry) => Array.isArray(entry[1])).map((entry) => [entry[0], entry[1].length])
+          ) : {},
+          replyControlTexts: controls,
+        };
+      });
       return {
         obReady: !!window.OB,
         commentsHost: !!document.querySelector('bili-comments'),
         commentRendererCount: renderers.length,
+        commentTagCounts,
+        subCommentRendererCount: subRenderers.length,
+        identifiedSubCommentCount: subDetails.filter((item) => item.identityResolved).length,
+        subDetails,
+        replyContainerDetails,
         commentMenuCount: menus.length,
         firstMenu: firstMenuItem ? {
           rootHost: firstMenuItem.getRootNode().host && firstMenuItem.getRootNode().host.tagName,
@@ -301,6 +583,9 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
           .filter((entry) => /\/dm\/(?:wbi\/)?web\/seg\.so|\/dm\/list\.so/.test(entry.name))
           .map((entry) => ({ initiatorType: entry.initiatorType, endpoint: entry.name.replace(/[?].*$/, '') })),
         danmakuXhrTypes: window.__obXhrProbe || [],
+        danmakuPanelCount: collect(document, '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view').length,
+        danmakuRowCount: collect(document, '.bpx-player-dm-container li,.bpx-player-dm-list li,.bpx-player-dm-list-container li,.bpx-player-dm-list-view li').length,
+        danmakuLocalButtonCount: collect(document, '.ob-dm-block').length,
         player: video ? { present: true, readyState: video.readyState, durationFinite: Number.isFinite(video.duration) } : { present: false },
       };
     });
@@ -314,7 +599,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       if (!probe.commentRendererCount) failed.push('未捕获真实评论组件');
       if (!menu.localButtonPresent || !menu.identityResolved) failed.push('真实评论菜单未注入可识别身份的本地拉黑项');
       if (!probe.commentUserCount) failed.push('未识别任何评论作者');
-      if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible || !/^🚫 拉黑本页评论用户\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) failed.push('本页评论批量入口未出现');
+      if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible || !/^🚫 拉黑已加载评论作者\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) failed.push('已加载评论作者批量入口未出现');
       if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
       if (local.containerTag !== 'BILI-COMMENT-THREAD-RENDERER' || !local.hidden || local.barCount !== 0 || !local.layoutClosed) failed.push('真实评论未按完整线程无提示、零占位隐藏');
       if (!local.restored) failed.push('撤销本地拉黑后真实评论未恢复');
