@@ -42,10 +42,11 @@
 
 > 关键点：重装前我一定先把 `@version` 改大，否则 Tampermonkey 会以为「没新版本」而跳过。这个我会自动做，你不用管。
 
-**办法 B：自动更新（懒人版，需 GitHub）**
-- 把本仓库推到 GitHub（或任何可访问的 URL），我给脚本头加 `@updateURL` + `@downloadURL` 指向 raw 链接。
-- 之后我每次改完 push，Tampermonkey 会每天自动去瞄一眼，有新版就弹「更新？」，你点一下就好，完全不用手动拖。
-- 想用这招跟我说，把仓库地址发我就行（或我帮你建）。
+**办法 B：自动更新（✅ 已配置）**
+- 已配好：公开仓库 `https://github.com/a2787/ub-utils`，脚本头 `@updateURL`/`@downloadURL` 指向 raw 直连。
+- 以后我每次改完 push，Tampermonkey 会每天自动去瞄一眼，有新版就弹「更新？」，你点一下就好，完全不用手动拖。
+- 仓库名 `ub-utils`、脚本名「本地内容过滤增强」均刻意低调（不含"拉黑/黑名单"等显眼词）；出处（Pynseq MIT 署名）仍保留在 LICENSE / README / 脚本 `@author`。
+- 注：因 jsDelivr 当时抓取 GitHub 失败，暂用 GitHub 官方 raw 直连；日后 jsDelivr 恢复可切回以获国内加速。
 
 ---
 
