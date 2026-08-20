@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.7.0
+// @version       0.8.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -17,6 +17,8 @@
 // @grant         GM_addStyle
 // @grant         GM_registerMenuCommand
 // @grant         GM_addValueChangeListener
+// @grant         GM_xmlhttpRequest
+// @grant         GM_openInTab
 // @run-at        document-start
 // @sandbox       raw
 // @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
@@ -46,6 +48,10 @@
     bili: 'B站', weibo: '微博', zhihu: '知乎', tieba: '贴吧', x: 'X', douyin: '抖音',
   };
 
+  // 更新地址（与脚本头 @updateURL/@downloadURL 保持一致；用户脚本运行时无法自读元数据，故显式声明）
+  const UPDATE_URL = 'https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js';
+  const DOWNLOAD_URL = UPDATE_URL;
+
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const textOf = (el) => (el ? (el.textContent || '').trim() : '');
@@ -65,6 +71,20 @@
       }
     }
     return null;
+  }
+  // 递归遍历 root 及其所有 open shadowRoot，收集所有匹配 sel 的元素（全局影子穿透）
+  function querySelectorAllDeep(root, sel) {
+    const out = [];
+    if (!root || !root.querySelectorAll) return out;
+    const collect = (node) => {
+      let list;
+      try { list = node.querySelectorAll(sel); } catch (e) { return; }
+      for (const el of list) if (el && out.indexOf(el) === -1) out.push(el);
+      if (node.shadowRoot) collect(node.shadowRoot);
+      for (const c of node.children || []) collect(c);
+    };
+    collect(root);
+    return out;
   }
   // 沿 composedPath（含影子宿主）找到第一个匹配适配器的条目
   function findItem(target, adapter) {
@@ -395,7 +415,7 @@
       if (!Store.getSetting('enabled')) return;
       if (adapter.selectors) {
         for (const sel of adapter.selectors) {
-          for (const item of $$(sel)) {
+          for (const item of querySelectorAllDeep(document, sel)) {
             try { handleItem(adapter, item); } catch (e) {}
           }
         }
@@ -989,6 +1009,51 @@
   }
 
   // ====================================================================
+  // 6.5 检查更新（一键检测 + 触发安装）
+  // 说明：用户脚本无法运行时自替换，故"更新"= 拉取远程脚本比对版本，
+  // 有新版则打开 .user.js 链接，由 Tampermonkey 弹「更新」页（点一次即装）。
+  // 想彻底免拖文件：在 Tampermonkey 把本脚本「更新 → 模式」设为「自动」，TM 每天静默更新。
+  // ====================================================================
+  function checkUpdate() {
+    const statusEl = document.getElementById('ob-update-status');
+    const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+    setStatus('正在检查…');
+    try {
+      GM_xmlhttpRequest({
+        url: UPDATE_URL,
+        method: 'GET',
+        onload: (res) => {
+          try {
+            const txt = res.responseText || '';
+            const m = txt.match(/\/\/\s*@version\s+([\d.]+)/);
+            if (!m) { setStatus('无法解析远程版本'); return; }
+            const remote = m[1];
+            const local = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.0.0';
+            const cmp = (a, b) => {
+              const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+              for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+                const x = pa[i] || 0, y = pb[i] || 0;
+                if (x !== y) return x > y ? 1 : -1;
+              }
+              return 0;
+            };
+            if (cmp(remote, local) > 0) {
+              setStatus('发现新版本 v' + remote + '，正在打开安装…');
+              try { GM_openInTab(DOWNLOAD_URL, { active: true }); }
+              catch (e) { window.open(DOWNLOAD_URL, '_blank'); }
+            } else {
+              setStatus('已是最新 (v' + local + ')');
+            }
+          } catch (e) { setStatus('检查失败：' + (e && e.message || e)); }
+        },
+        onerror: () => setStatus('检查失败（网络问题），可稍后重试或手动拖入'),
+      });
+    } catch (e) {
+      setStatus('检查失败（GM_xmlhttpRequest 不可用）');
+    }
+  }
+
+  // ====================================================================
   // 7. 选项面板
   // ====================================================================
   function openOptions() {
@@ -1036,6 +1101,14 @@
           <button id="ob-import" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导入 JSON</button>
           <input type="file" id="ob-file" accept="application/json" style="display:none">
         </div>
+
+        <h3>更新</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="ob-update" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">检查更新</button>
+          <span id="ob-update-status" style="font-size:12px;color:#999"></span>
+        </div>
+        <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
+
         <p style="color:#999;font-size:12px;margin-top:14px">纯本地工具，不联网、不上传任何数据。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
       </div>`;
     document.body.appendChild(panel);
@@ -1093,6 +1166,7 @@
     };
     const file = panel.querySelector('#ob-file');
     panel.querySelector('#ob-import').onclick = () => file.click();
+    panel.querySelector('#ob-update').onclick = checkUpdate;
     file.onchange = () => {
       const f = file.files[0]; if (!f) return;
       const reader = new FileReader();
@@ -1110,6 +1184,7 @@
   }
 
   try { GM_registerMenuCommand('OmniBlock 设置', openOptions, 'o'); } catch (e) {}
+  try { GM_registerMenuCommand('检查更新', checkUpdate, 'u'); } catch (e) {}
 
   if (currentAdapter) {
     setupBilibiliDanmaku();
