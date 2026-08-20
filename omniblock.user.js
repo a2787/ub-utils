@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.6.0
+// @version       0.7.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。纯本地、不联网、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -53,6 +53,33 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 穿透一层 open Shadow DOM 查找（B站评论/动态在影子 DOM 内，表层 query 拿不到）
+  function deepQuery(root, sel) {
+    if (!root || !root.querySelector) return null;
+    let r = root.querySelector(sel);
+    if (r) return r;
+    if (root.shadowRoot) { r = root.shadowRoot.querySelector(sel); if (r) return r; }
+    if (root.querySelectorAll) {
+      for (const host of root.querySelectorAll('*')) {
+        if (host.shadowRoot) { r = host.shadowRoot.querySelector(sel); if (r) return r; }
+      }
+    }
+    return null;
+  }
+  // 沿 composedPath（含影子宿主）找到第一个匹配适配器的条目
+  function findItem(target, adapter) {
+    const path = (target && target.composedPath) ? target.composedPath() : [target];
+    for (const n of path) {
+      if (!n || n.nodeType !== 1 || !n.matches) continue;
+      for (const sel of adapter.selectors) {
+        if (n.matches(sel)) {
+          const info = adapter.extract(n);
+          if (info && info.keys && info.keys.length) return { el: n, info };
+        }
+      }
+    }
+    return null;
+  }
 
   // 归一化身份值：去空白、小写（平台 uid 多为数字，sec_uid 大小写敏感故保留原样）
   function normId(v) {
@@ -449,18 +476,31 @@
     setTimeout(() => { if (t.parentNode) t.remove(); }, 5000);
   }
 
-  // 在某元素上插入悬浮拉黑按钮
+  // 悬浮拉黑按钮（浮层定位，穿透 Shadow DOM 也能显示；原元素内塞不进影子树）
+  let hoverOwner = null;
+  function clearHover() {
+    if (hoverOwner) { hoverOwner.__obHover = false; hoverOwner.__obHoverBtn = null; hoverOwner = null; }
+    const old = document.querySelector('.ob-block-btn');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+  }
   function attachHoverButton(adapter, container, info) {
     if (container.__obHover) return;
-    const anchor = (adapter.actionAnchorOf && adapter.actionAnchorOf(container)) || container;
-    if (!anchor) return;
-    const btn = document.createElement('span');
+    container.__obHover = true;
+    hoverOwner = container;
+    const btn = document.createElement('div');
     btn.className = 'ob-block-btn';
     btn.textContent = '🚫 拉黑';
+    btn.style.position = 'fixed';
+    btn.style.zIndex = '2147483646';
+    const r = (container.getBoundingClientRect ? container.getBoundingClientRect() : { top: 8, right: window.innerWidth - 60 });
+    btn.style.left = Math.max(4, (r.right || window.innerWidth) - 58) + 'px';
+    btn.style.top = Math.max(4, r.top + 4) + 'px';
     btn.onclick = (e) => { e.stopPropagation(); e.preventDefault(); showConfirm(info.label, info.keys, btn); };
-    anchor.appendChild(btn);
-    container.__obHover = btn;
+    document.body.appendChild(btn);
+    container.__obHoverBtn = btn;
+    btn.addEventListener('mouseleave', clearHover);
   }
+  window.addEventListener('scroll', clearHover, true);
 
   let currentScanner = null;
 
@@ -469,33 +509,23 @@
     if (!Store.getSetting('enabled')) return;
     const adapter = currentAdapter;
     if (!adapter || !adapter.selectors) return;
-    let found = null;
-    for (const sel of adapter.selectors) {
-      const el = e.target.closest && e.target.closest(sel);
-      if (el) { const info = adapter.extract(el); if (info && info.keys.length) { found = { el, info }; break; } }
-    }
+    // 沿 composedPath 穿透 Shadow DOM 找到命中条目
+    const found = findItem(e.target, adapter);
     if (!found) return;
     e.preventDefault();   // 仅当命中条目时接管右键
     buildContextMenu(e.clientX, e.clientY, found.info, () => showConfirm(found.info.label, found.info.keys, found.el));
   }, true);
 
-  // 悬浮按钮：mouseover 时为其挂拉黑按钮（为避免卡顿，仅在命中条目时）
+  // 悬浮按钮：mouseover 时为其挂拉黑按钮（沿 composedPath 穿透 Shadow DOM）
   document.addEventListener('mouseover', (e) => {
     if (!Store.getSetting('showHoverButton') || !Store.getSetting('enabled')) return;
     const adapter = currentAdapter;
     if (!adapter || !adapter.selectors) return;
-    if (e.target.__obHoverAttached) return;
-    for (const sel of adapter.selectors) {
-      const el = e.target.closest && e.target.closest(sel);
-      if (el) {
-        const info = adapter.extract(el);
-        if (info && info.keys.length && !Index.isBlocked(info.keys)) {
-          e.target.__obHoverAttached = true;
-          attachHoverButton(adapter, el, info);
-        }
-        break;
-      }
-    }
+    const found = (e.target && e.target.composedPath) ? findItem(e.target, adapter) : null;
+    if (!found || !found.info.keys.length || Index.isBlocked(found.info.keys)) { if (hoverOwner) clearHover(); return; }
+    if (hoverOwner === found.el) return;
+    clearHover();
+    attachHoverButton(adapter, found.el, found.info);
   }, true);
 
   // ====================================================================
@@ -786,7 +816,7 @@
   // ---------- B站 ----------
   Adapters.bilibili = (function () {
     const SEL = {
-      comment: 'bili-comment-renderer, .comment-item, .reply-item, [data-comment-id]',
+      comment: 'bili-comment-renderer, bili-sub-comment-renderer, .comment-item, .reply-item, [data-comment-id]',
       dyn: '.bili-dyn-item, .bili-dynamic-card, [data-dyn-id]',
       videoCard: '.bili-video-card, .video-card, a[href*="//www.bilibili.com/video/"]',
       space: '.space-item, .list-item',
@@ -798,12 +828,13 @@
         const mid = d.mid || d.uid || (d.user && (d.user.mid || d.user.uid)) || (d.member && d.member.mid);
         if (mid) return normId(mid);
       }
-      const link = el.querySelector('a[href*="space.bilibili.com/"]');
+      // 穿透 Shadow DOM：B站评论/动态在影子树内，表层 query 拿不到
+      const link = deepQuery(el, 'a[href*="space.bilibili.com/"]');
       if (link) {
         const m = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/);
         if (m) return normId(m[1]);
       }
-      const up = el.querySelector('[data-up-mid], [data-mid], [data-uid]');
+      const up = deepQuery(el, '[data-up-mid], [data-mid], [data-uid]');
       if (up) return normId(attr(up, 'data-up-mid') || attr(up, 'data-mid') || attr(up, 'data-uid'));
       return '';
     }
@@ -820,7 +851,7 @@
       selectors: [SEL.comment, SEL.dyn, SEL.videoCard, SEL.space],
       extract(item) {
         const mid = midFromEl(item);
-        const name = textOf(item.querySelector('.user-name, .uname, [data-name]'));
+        const name = textOf(deepQuery(item, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
         const keys = [];
         if (mid) keys.push('bili:uid:' + mid);
         return { keys, label: name, container: item };
@@ -993,6 +1024,7 @@
           <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
           <label><input type="checkbox" id="ob-hover" checked> 显示悬浮拉黑按钮</label>
           <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
+          <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
         </div>
 
         <h3>名单（点击删除）</h3>
@@ -1030,6 +1062,7 @@
       panel.querySelector('#ob-enabled').checked = s.enabled;
       panel.querySelector('#ob-hover').checked = s.showHoverButton;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
+      panel.querySelector('#ob-skipcap').value = s.skipCap;
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
     }
@@ -1049,6 +1082,7 @@
     panel.querySelector('#ob-enabled').onchange = (e) => { Store.setSetting('enabled', e.target.checked); if (currentScanner) currentScanner.schedule(); };
     panel.querySelector('#ob-hover').onchange = (e) => Store.setSetting('showHoverButton', e.target.checked);
     panel.querySelector('#ob-skip').onchange = (e) => Store.setSetting('douyinAutoSkip', e.target.checked);
+    panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) Store.setSetting('skipCap', v); };
     panel.querySelector('#ob-export').onclick = () => {
       const blob = new Blob([Store.exportJSON()], { type: 'application/json' });
       const a = document.createElement('a');
@@ -1084,6 +1118,19 @@
     setTimeout(() => currentScanner && currentScanner.schedule(), 800);
     setTimeout(() => currentScanner && currentScanner.schedule(), 2500);
     setTimeout(() => currentScanner && currentScanner.schedule(), 6000);
+
+    // 常驻设置入口（⚙ 按钮）：让设置页不再藏在 Tampermonkey 菜单里
+    (function mountGear() {
+      if (!document.body) { setTimeout(mountGear, 300); return; }
+      if (document.getElementById('ob-gear')) return;
+      const gear = document.createElement('div');
+      gear.id = 'ob-gear';
+      gear.textContent = '⚙';
+      gear.title = '本地内容过滤增强 · 设置';
+      gear.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;width:40px;height:40px;border-radius:50%;background:#2b2b32;color:#fff;font-size:20px;line-height:40px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);user-select:none;';
+      gear.onclick = () => openOptions();
+      document.body.appendChild(gear);
+    })();
   }
 
   // 暴露调试接口
