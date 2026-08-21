@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.14.0
+// @version       0.15.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -463,6 +463,7 @@
     .ob-bar:hover { background: #ececf0; }
     [data-ob-blocked="1"].ob-expanded > * { max-height: none !important; overflow: visible !important; opacity: 1 !important; pointer-events: auto !important; }
     [data-ob-blocked="1"].ob-hidden { display: none !important; }
+    .ob-blocked-wrapper { min-height: 0 !important; height: auto !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important; }
 
     /* 抖音推荐流遮罩 */
     #ob-feed-cover {
@@ -766,6 +767,13 @@
     container.removeAttribute('data-ob-blocked');
     container.classList.remove('ob-hidden', 'ob-collapsed', 'ob-expanded');
     blockedContainers.delete(container);
+    let wrapper = container && container.parentElement;
+    while (wrapper && wrapper.classList && wrapper.classList.contains('ob-blocked-wrapper')) {
+      const parent = wrapper.parentElement;
+      wrapper.classList.remove('ob-blocked-wrapper');
+      if (!wrapper.getAttribute('class')) wrapper.removeAttribute('class');
+      wrapper = parent;
+    }
   }
 
   function clearBlockedContent() {
@@ -785,6 +793,27 @@
     return adapter.forceMode === 'collapse' || adapter.forceMode === 'disappear' ? adapter.forceMode : '';
   }
 
+  // 某些微博虚拟列表把高度/内边距放在评论行的包装层。只折叠被隐藏行自己的
+  // 安全祖先，不碰正文、兄弟评论或列表容器。
+  function collapseBlockedWrappers(container) {
+    if (!container || !container.classList || !container.classList.contains('ob-hidden')) return;
+    let node = container.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const style = window.getComputedStyle ? getComputedStyle(node) : null;
+      const hasMeaningfulChild = Array.from(node.children || []).some((child) => (
+        child !== container && !child.hasAttribute?.('data-ob-blocked')
+      ));
+      const hasOwnText = Array.from(node.childNodes || []).some((child) => (
+        child.nodeType === Node.TEXT_NODE && (child.textContent || '').trim()
+      ));
+      if (hasMeaningfulChild || hasOwnText) break;
+      if (!style || style.display === 'none' || style.visibility === 'hidden') break;
+      if (!(node.offsetHeight > 0 || node.scrollHeight > 0)) break;
+      node.classList.add('ob-blocked-wrapper');
+      node = node.parentElement;
+    }
+  }
+
   // 通用：处理一个"条目"——抽出身份，命中则隐藏
   function handleItem(adapter, item) {
     const info = adapter.extract(item);
@@ -792,6 +821,7 @@
     if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
     if (Index.isBlocked(info.keys)) {
       markBlocked(container, info.label, modeForItem(adapter, item));
+      collapseBlockedWrappers(container);
     } else unmark(container);
   }
 
@@ -927,7 +957,7 @@
       }
       box.remove();
       try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
-      showToast(`已拉黑：${label || normalizedKeys[0]}`, transaction && transaction.undo);
+      showToast(`已拉黑：${label || normalizedKeys[0]}`, transaction && transaction.undo || null);
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
     };
@@ -973,6 +1003,19 @@
     btn.addEventListener('mouseleave', clearHover);
   }
   window.addEventListener('scroll', clearHover, true);
+
+  function rememberFloatingDanmakuSelection(event) {
+    if (!currentAdapter || currentAdapter.id !== 'bilibili') return;
+    // 指针离开弹幕进入原生菜单时必须保留刚记住的身份；只有重新指向另一条
+    // 浮动弹幕时才更新，且该条歧义或无法解析时立即丢弃，避免沿用上一条的 hash。
+    if (!bilibiliFloatingDanmakuRow(event.target)) return;
+    const info = bilibiliFloatingDanmakuIdentity(event.target);
+    if (info) floatingDanmaku.remember(info);
+    else floatingDanmaku.forget();
+  }
+  ['pointerover', 'mouseenter', 'mousedown'].forEach((type) => {
+    document.addEventListener(type, rememberFloatingDanmakuSelection, true);
+  });
 
   let currentScanner = null;
 
@@ -1191,12 +1234,21 @@
 
   // ---------- 微博 ----------
   Adapters.weibo = (function () {
+    // 点赞/转发/粉丝弹窗里的用户锚点；只有能解析出 UID 的链接才进入批量名单。
+    const WB_MODAL_USER_SEL = [
+      'a[href*="/u/"]', 'a[href*="/n/"]', '[data-user-card]', '[data-usercard]',
+      '[usercard]', '[data-uid]', '[uid]',
+    ].join(',');
     const SEL = {
       card: '.card-wrap[action-type="feed_list_item"], .card-wrap[mid], [action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], article.woo-panel-main, .card-feed',
       comment: [
         '.card-review[comment_id]',
         '.wbpro-list > .item1',
         '.wbpro-list .list2 > .item2',
+        '.wbpro-frame [node-type="reply_list"] > .item2, .wbpro-frame [node-type="reply_list"] .item2',
+        '[node-type="reply_list"] > .item2, [node-type="reply_list"] .item2',
+        '.list_ul > .item2, .list_ul .item2',
+        '.WB_reply > .item2, .WB_reply .item2',
       ].join(','),
       userLink: 'a[href*="/u/"], a[href*="/n/"], a[nick-name], [data-user-card], [data-usercard], [usercard], [data-uid], [uid]',
       postAuthor: [
@@ -1212,19 +1264,25 @@
         'header [data-usercard]',
         ':scope > a[nick-name][href]',
       ].join(','),
-      commentAuthor: [
-        ':scope > .item1in > div:first-child a[href*="/u/"]',
-        ':scope > .item1in > .con1 > .text > a:first-child[href]',
-        ':scope > .item2in > div:first-child a[href*="/u/"]',
-        ':scope > .item2in > .con2 > .text > a:first-child[href]',
-        ':scope > .content > .txt a.name[href]',
-        ':scope > .content > .txt a[nick-name][href]',
-        ':scope > .con1 > .info a.name[href]',
-        ':scope > .con1 > .info a[nick-name][href]',
-        ':scope > .avator a[href]',
-        ':scope > .avatar a[href]',
-      ].join(','),
     };
+    // 评论作者槽按优先级逐组尝试：先取带昵称的作者链接，再退到该行头像链接。
+    // 合成一个大选择器会把正文里的“被提及用户”和作者混在一组，导致昵称丢失。
+    const COMMENT_AUTHOR_GROUPS = [
+      ':scope > .content > .txt > a.name[href]',
+      ':scope > .item1in > .con1 > .text > a:first-child[href]',
+      ':scope > .item2in > .con2 > .text > a:first-child[href]',
+      ':scope > .con > .txt > a:first-child[href]',
+      ':scope > .txt > a:first-child[href]',
+      ':scope > .content > .txt a.name[href], :scope > .content > .txt a[nick-name][href]',
+      ':scope > .con1 > .info a.name[href], :scope > .con1 > .info a[nick-name][href]',
+      ':scope a.S_func1[href*="/u/"], :scope a[name*="user"]',
+      ':scope > .item1in > div:first-child a[href*="/u/"]',
+      ':scope > .item2in > div:first-child a[href*="/u/"]',
+      ':scope > .avator a[href], :scope > .avatar a[href]',
+      ':scope > .con > .txt a[href*="/u/"]',
+      ':scope > .txt a[href*="/u/"]',
+      ':scope > div:first-child a[href*="/u/"]',
+    ];
     function uidFromLink(link) {
       if (!link) return '';
       const href = attr(link, 'href') || '';
@@ -1255,13 +1313,30 @@
       return el;
     }
     function preferredLink(links) {
-      return links.find((link) => uidFromLink(link) && (textOf(link) || attr(link, 'nick-name')))
+      const named = links.filter((link) => uidFromLink(link) && (textOf(link) || attr(link, 'nick-name')));
+      if (named.length === 1) return named[0];
+      // `.name` 是微博评论作者槽的稳定语义标记；没有唯一命名链接时不得退回提及用户。
+      const semantic = named.find((link) => link.classList && link.classList.contains('name'));
+      return semantic
         || links.find((link) => uidFromLink(link)) || null;
     }
     function findUserLink(item) {
       if (item.matches && item.matches(SEL.comment)) {
         // 评论作者必须来自评论行自己的作者槽，不能退回到提及用户或外层微博作者。
-        return preferredLink($$(SEL.commentAuthor, item));
+        let fallback = null;
+        for (const group of COMMENT_AUTHOR_GROUPS) {
+          const links = $$(group, item);
+          if (!links.length) continue;
+          const named = links.filter((link) => uidFromLink(link) && (textOf(link) || attr(link, 'nick-name')));
+          if (named.length === 1) return named[0];
+          const semantic = named.find((link) => link.classList && link.classList.contains('name'));
+          if (semantic) return semantic;
+          if (!fallback) {
+            const withUid = links.filter((link) => uidFromLink(link));
+            if (withUid.length === 1) fallback = withUid[0];
+          }
+        }
+        return fallback;
       }
       const scoped = preferredLink($$(SEL.postAuthor, item));
       if (scoped) return scoped;
@@ -1288,7 +1363,20 @@
       if (!item || !item.matches) return null;
       if (item.matches('.wbpro-list > .item1')) return item.querySelector(':scope > .item1in > .con1 > .info > .opt');
       if (item.matches('.wbpro-list .list2 > .item2')) return item.querySelector(':scope > .item2in > .con2 > .info > .opt');
-      return null;
+      // 旧版/懒加载楼中楼缺少 wbpro 包装；只挂到行内明确的操作槽，避免误改正文。
+      return item.querySelector([
+        ':scope > .item2in > .con2 > .info > .opt',
+        ':scope > .con > .info > .opt',
+        ':scope > .con > .info',
+        ':scope > .info > .opt',
+        ':scope > .info',
+      ].join(','));
+    }
+    function collectWeiboItems(root, selector) {
+      const all = querySelectorAllDeep(root, selector);
+      // 微博会把根评论和楼中楼做成嵌套结构；两者都是可独立屏蔽的评论行。
+      // querySelectorAllDeep 已去重，因此这里不能按“包含关系”丢弃子评论。
+      return all.filter((item) => !item.matches || item.matches(selector));
     }
     function clearCommentButtons() {
       for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) button.remove();
@@ -1298,7 +1386,7 @@
         if (!button.closest || !button.closest(SEL.comment)) button.remove();
       }
       const enabled = Store.getSetting('enabled') && Store.getSetting('showQuickBlock');
-      for (const item of querySelectorAllDeep(document, SEL.comment)) {
+      for (const item of collectWeiboItems(document, SEL.comment)) {
         const mount = commentActionMount(item);
         if (!mount) continue;
         let button = mount.querySelector(':scope > .ob-weibo-comment-block');
@@ -1323,7 +1411,16 @@
     function collectWeiboUsers(root) {
       const items = [];
       for (const selector of [SEL.comment, SEL.card]) {
-        for (const item of querySelectorAllDeep(root, selector)) items.push(extract(item));
+        for (const item of collectWeiboItems(root, selector)) items.push(extract(item));
+      }
+      if (root && root !== document) {
+        for (const link of querySelectorAllDeep(root, WB_MODAL_USER_SEL)) {
+          if (!isVisible(link)) continue;
+          const uid = uidFromLink(link);
+          if (!uid) continue;
+          const name = textOf(link) || attr(link, 'nick-name') || ('微博用户 ' + uid);
+          items.push({ keys: [makeIdentityKey('weibo:uid', uid)], label: name, container: link });
+        }
       }
       return items;
     }
@@ -1334,6 +1431,10 @@
       disappearSelectors: [SEL.comment],
       extract,
       collectUsers: collectWeiboUsers,
+      canBulkModal(modal) {
+        return querySelectorAllDeep(modal || document, WB_MODAL_USER_SEL)
+          .some((link) => uidFromLink(link) && isVisible(link));
+      },
       bulkFabLabel: (n) => '🚫 拉黑已加载微博/评论作者(' + n + ')',
       containerOf: (item) => findContainer(item),
       onScan: syncCommentButtons,
@@ -1539,7 +1640,8 @@
 
     function collectModalUsers(root) {
       // B站视频页的举报弹窗并不含发送者；只有实际列出空间链接的用户列表才可批量处理。
-      return querySelectorAllDeep(root, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
+      const scope = root || document;
+      return querySelectorAllDeep(scope, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
     }
 
     return {
@@ -1665,6 +1767,65 @@
   };
 
   const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
+  function cleanDmTextShared(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  function parseDmProgressShared(text) {
+    const m = String(text || '').match(/(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?/);
+    if (!m) return -1;
+    const ms = m[3] ? Number(m[3].padEnd(3, '0').slice(0, 3)) : 0;
+    return (Number(m[1]) * 60 + Number(m[2])) * 1000 + ms;
+  }
+  function resolveFloatingDanmakuHashes(content, progress) {
+    const hook = window.__omniblockFloatingDanmakuResolver;
+    return typeof hook === 'function' ? hook(content, progress) : [];
+  }
+  // 播放器浮动弹幕没有稳定公开 UID。这里只保留从 seg.so 解析出的 mid_hash，
+  // 并用“文案 + 时间”做唯一匹配；歧义或过期身份一律不注入。
+  const floatingDanmaku = {
+    identity: null,
+    timer: 0,
+    remember(info) {
+      this.identity = info && info.keys && info.keys.length ? { ...info, at: Date.now() } : null;
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => { this.identity = null; }, 5000);
+    },
+    forget() {
+      this.identity = null;
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = 0;
+    },
+    fresh() {
+      return this.identity && Date.now() - this.identity.at <= 5000 ? this.identity : null;
+    },
+  };
+
+  const FLOATING_DM_ROW_SEL = '.bpx-player-dm-multiple .dm-info-row,[data-dmid],[data-id],.bpx-player-dm-function-row,.bpx-player-dm-block';
+  const FLOATING_DM_CONTENT_SEL = '.bpx-player-dm-content,.dm-content,.content';
+  const FLOATING_DM_TIME_SEL = '.bpx-player-dm-time,.dm-time,.time';
+
+  // 只有既命中候选行、又能读出弹幕文案的节点才算“选中了一条浮动弹幕”。
+  // 这样 `[data-id]` 之类宽泛属性命中的普通节点不会清掉刚记住的身份。
+  function bilibiliFloatingDanmakuRow(target) {
+    if (!target || target.nodeType !== 1 || !target.closest) return null;
+    const row = target.closest(FLOATING_DM_ROW_SEL);
+    if (!row) return null;
+    const content = cleanDmTextShared(textOf(row.querySelector(FLOATING_DM_CONTENT_SEL)));
+    return content ? { row, content } : null;
+  }
+
+  function bilibiliFloatingDanmakuIdentity(target) {
+    const found = bilibiliFloatingDanmakuRow(target);
+    if (!found) return null;
+    const content = found.content;
+    const progress = parseDmProgressShared(textOf(found.row.querySelector(FLOATING_DM_TIME_SEL)));
+    const candidates = resolveFloatingDanmakuHashes(content, progress);
+    if (candidates.length !== 1) return null;
+    return {
+      keys: [makeIdentityKey('bili:dmhash', candidates[0])],
+      label: 'B站弹幕发送者',
+      note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。',
+    };
+  }
+
   let refreshQuickBlock = () => {};
   function setupQuickBlock() {
     const a = currentAdapter; if (!a) return;
@@ -1685,6 +1846,18 @@
       if (!t) return;
       for (const txt of cfg.anchorTexts) {
         if (t.indexOf(txt) !== -1 && isMenuItem(el)) {
+          if (a.id === 'bilibili' && t.indexOf('举报') !== -1) {
+            const dmInfo = floatingDanmaku.fresh();
+            if (!dmInfo) {
+              el.setAttribute('data-ob-qb', '1');
+              return;
+            }
+            if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
+            const btn = makeQuickBtn(dmInfo.label, el, { identify: () => dmInfo }, dmInfo.keys.join('|'));
+            el.setAttribute('data-ob-qb', '1');
+            el.insertAdjacentElement('afterend', btn);
+            return;
+          }
           // 不向稿件举报等没有发送者上下文的菜单注入无效按钮。
           const info = cfg.identify ? cfg.identify(el) : identifyFromAnchor(el);
           if (!info || !info.keys || !info.keys.length) return;
@@ -1790,9 +1963,16 @@
     }
     function tryModal(modal) {
       let btn = Array.from(modal.children || []).find((child) => child.matches && child.matches('.ob-bulk[data-ob-kind="modal"]')) || null;
+      if (modal.hasAttribute('data-ob-bulk') && !isVisible(modal)) {
+        // 弹窗被隐藏后复用（微博点赞/转发列表就是同一个节点反复显示）时，
+        // 必须先清掉上一次的控件；此时按钮可能已被前端重绘删掉。
+        if (btn) btn.remove();
+        modal.removeAttribute('data-ob-bulk');
+        return;
+      }
       const allowed = (!a.canBulkModal || a.canBulkModal(modal));
       const users = collectUsers(modal, 'modal');
-      if (!allowed || users.length < 2) {
+      if (!allowed || !users.length) {
         if (btn) btn.remove();
         modal.removeAttribute('data-ob-bulk');
         return;
@@ -2024,6 +2204,23 @@
     let dmBootstrapPromise = null;
     let dmBootstrapTimer = 0;
     function cleanDmText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function resolveFloatingDanmakuHashes(content, progress) {
+      const text = cleanDmText(content);
+      if (!text) return [];
+      const hashes = dmByContent.get(text);
+      if (!hashes || !hashes.size) return [];
+      // 播放器浮动弹幕与弹幕列表都只显示到秒，因此毫秒级精确匹配会把同一秒内的
+      // 不同发送者误判成唯一身份。这里按显示粒度（±1s）收集候选，多于一个即视为歧义。
+      if (progress < 0) return Array.from(hashes);
+      const nearby = new Set();
+      for (const [key, timedHashes] of dmByProgress) {
+        const divider = key.indexOf('\x1f');
+        if (divider < 0 || key.slice(divider + 1) !== text) continue;
+        if (Math.abs(Number(key.slice(0, divider)) - progress) > 1000) continue;
+        for (const hash of timedHashes) nearby.add(hash);
+      }
+      return nearby.size ? Array.from(nearby) : Array.from(hashes);
+    }
     function currentVideoKey() {
       const match = location.pathname.match(/^\/video\/([^/?]+)/);
       if (!match) return location.pathname;
@@ -2723,6 +2920,8 @@
       if (!visible && dmManager) closeDmManager();
       else if (dmManager) renderDmManager();
     }
+
+    window.__omniblockFloatingDanmakuResolver = resolveFloatingDanmakuHashes;
 
     const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
     const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';

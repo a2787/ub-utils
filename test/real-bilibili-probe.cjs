@@ -10,7 +10,7 @@ const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
 const requestedUrl = urlArg ? urlArg.slice('--url='.length) : '';
 const URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$/.test(requestedUrl)
   ? requestedUrl
-  : 'https://www.bilibili.com/video/BV1eyYRz2E2v';
+  : '';
 const SAVE_SCREENSHOT = process.argv.includes('--screenshot');
 const VERIFY_LOCAL_BUTTON = process.argv.includes('--verify-local');
 const VERIFY_SUB_COMMENT = process.argv.includes('--verify-sub-comment');
@@ -61,6 +61,10 @@ XMLHttpRequest.prototype.send = function (...args) {
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 (async () => {
+  if (!URL) {
+    console.error('ERROR: provide an explicit read-only target with --url=https://www.bilibili.com/video/<BV号>');
+    process.exit(2);
+  }
   const result = { url: URL, version, pageLoaded: false, errors: [], probe: null };
   let browser;
   try {

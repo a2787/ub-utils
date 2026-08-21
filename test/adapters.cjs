@@ -96,7 +96,7 @@ const WEIBO_DETAIL_FIXTURE = `
           <div class="info"><div>刚刚</div><div class="opt"></div></div>
         </div>
       </div>
-      <div class="list2">
+      <div class="list2" style="min-height: 44px; padding: 3px 0;">
         <div class="item2">
           <div class="item2in">
             <div><a href="/u/123450002"></a></div>
@@ -108,7 +108,23 @@ const WEIBO_DETAIL_FIXTURE = `
         </div>
       </div>
     </div>
+  </div>
+  <div role="dialog" aria-label="点赞用户" style="display: none;">
+    <header>点赞用户</header>
+    <a href="/u/123450003" usercard="123450003">点赞用户丙</a>
+    <a href="/u/123450004" usercard="123450004">点赞用户丁</a>
   </div>`;
+
+// 人工合成：旧版微博楼中楼行，用于覆盖懒加载/虚拟列表下缺少 wbpro 包装的结构。
+const WEIBO_LEGACY_REPLY_FIXTURE = `
+  <ul node-type="reply_list" class="list_ul">
+    <li class="item2">
+      <div class="con">
+        <div class="txt"><a href="/u/123450005" usercard="123450005">回复作者戊</a><span>回复正文</span></div>
+        <div class="info"><span>刚刚</span><span class="opt"></span></div>
+      </div>
+    </li>
+  </ul>`;
 
 (async () => {
   const report = { pass: [], fail: [], errors: [] };
@@ -159,21 +175,25 @@ const WEIBO_DETAIL_FIXTURE = `
     }
 
     const weiboPage = await browser.newPage();
-    const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + '</body></html>';
+    const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + WEIBO_LEGACY_REPLY_FIXTURE + '</body></html>';
     await weiboPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: weiboFixture }));
     await weiboPage.addInitScript({ content: shim('') + '\n' + userscript });
-    await weiboPage.goto('https://weibo.com/1234567890/TestDetail', { waitUntil: 'domcontentloaded' });
+    // 人工合成详情页 URL，仅用于本地夹具路由。
+    await weiboPage.goto('https://weibo.com/fixture-user/fixture-detail', { waitUntil: 'domcontentloaded' });
     await weiboPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1400));
     const weiboDetail = await weiboPage.evaluate(async () => {
       const adapter = window.OB.adapters.weibo;
-      const comments = Array.from(document.querySelectorAll('.item1,.item2'));
+      const comments = [
+        document.querySelector('.wbpro-list > .item1'),
+        document.querySelector('.wbpro-list .list2 > .item2'),
+      ].filter(Boolean);
       const infos = comments.map((item) => adapter.extract(item));
       const users = window.OB.collectUsers(document);
       const buttons = Array.from(document.querySelectorAll('.ob-weibo-comment-block'));
       const duplicateQuickCount = comments.reduce((count, item) => count + item.querySelectorAll('.ob-quick').length, 0);
       const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
-      const second = comments[1];
+      const second = comments.find((item) => item.matches('.wbpro-list .list2 > .item2'));
       const secondButton = second && second.querySelector('.ob-weibo-comment-block');
       if (secondButton) secondButton.click();
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -183,6 +203,33 @@ const WEIBO_DETAIL_FIXTURE = `
       await new Promise((resolve) => setTimeout(resolve, 120));
       const firstRect = comments[0] && comments[0].getBoundingClientRect();
       const secondRect = second && second.getBoundingClientRect();
+      const replyList = document.querySelector('[node-type="reply_list"]');
+      const legacyReply = replyList && replyList.querySelector('.item2');
+      const legacyButton = legacyReply && legacyReply.querySelector('.ob-weibo-comment-block');
+      if (!legacyButton) return { legacyButtonPresent: false };
+      legacyButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const legacyConfirm = document.getElementById('ob-confirm');
+      if (!legacyConfirm) return { legacyButtonPresent: true, legacyConfirm: false };
+      legacyConfirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const modal = document.querySelector('[role="dialog"][aria-label="点赞用户"]');
+      modal.style.display = '';
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      const modalButton = modal.querySelector('.ob-bulk[data-ob-kind="modal"]');
+      if (!modalButton) return { legacyButtonPresent: true, legacyConfirm: true, modalButtonPresent: false };
+      modalButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const modalConfirm = document.getElementById('ob-confirm');
+      if (!modalConfirm) return { legacyButtonPresent: true, legacyConfirm: true, modalButtonPresent: true, modalConfirm: false };
+      modalConfirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      // 弹窗批量必须在撤销之前判定：撤销会移除本次新增的点赞用户身份。
+      const likersBlocked = ['weibo:uid:123450003', 'weibo:uid:123450004'].every((key) => window.OB.Index.isBlocked(key));
+      const toast = document.getElementById('ob-toast');
+      if (toast) toast.querySelector('button').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const likersRestored = ['weibo:uid:123450003', 'weibo:uid:123450004'].every((key) => !window.OB.Index.isBlocked(key));
       return {
         selected: comments.map((item) => adapter.selectors.some((selector) => item.matches(selector))),
         keys: infos.map((info) => info && info.keys || []),
@@ -197,9 +244,26 @@ const WEIBO_DETAIL_FIXTURE = `
         firstVisible: !!firstRect && firstRect.height > 0,
         replyHidden: !!secondRect && secondRect.height === 0,
         outerPostVisible: document.querySelector('article').getBoundingClientRect().height > 0,
+        wrapperCollapsed: !!replyList && getComputedStyle(replyList).paddingTop === '0px' && replyList.getBoundingClientRect().height === 0,
+        legacyButtonPresent: true,
+        legacyConfirm: true,
+        legacyBlocked: window.OB.Index.isBlocked('weibo:uid:123450005'),
+        modalButtonPresent: true,
+        modalConfirm: true,
+        likersBlocked,
+        likersRestored,
       };
     });
     const expectedWeiboKeys = ['weibo:uid:1234567890', 'weibo:uid:123450001', 'weibo:uid:123450002'];
+    if (!Array.isArray(weiboDetail.selected)) weiboDetail.selected = [];
+    if (!Array.isArray(weiboDetail.keys)) weiboDetail.keys = [];
+    weiboDetail.keys = weiboDetail.keys.map((keys) => Array.isArray(keys) ? keys : []);
+    if (!Array.isArray(weiboDetail.keys[0])) weiboDetail.keys[0] = [];
+    if (!Array.isArray(weiboDetail.keys[1])) weiboDetail.keys[1] = [];
+    if (!Array.isArray(weiboDetail.labels)) weiboDetail.labels = [];
+    if (!Array.isArray(weiboDetail.collectedKeys)) weiboDetail.collectedKeys = [];
+    weiboDetail.confirmText = weiboDetail.confirmText || '';
+    weiboDetail.bulkText = weiboDetail.bulkText || '';
     if (weiboDetail.selected.every(Boolean)
       && weiboDetail.keys[0].includes('weibo:uid:123450001')
       && !weiboDetail.keys[0].includes('weibo:uid:999990001')
@@ -208,13 +272,18 @@ const WEIBO_DETAIL_FIXTURE = `
       && weiboDetail.labels.join('|').includes('回复作者乙')
       && weiboDetail.containersAreRows
       && expectedWeiboKeys.every((key) => weiboDetail.collectedKeys.includes(key))
-      && weiboDetail.buttonCount === 2
+      && weiboDetail.buttonCount === 3
       && weiboDetail.duplicateQuickCount === 0
-      && /微博\/评论作者\(3\)/.test(weiboDetail.bulkText || '')
+      && /微博\/评论作者\(4\)/.test(weiboDetail.bulkText || '')
       && weiboDetail.confirmText.includes('回复作者乙')
       && weiboDetail.blockedReply && weiboDetail.firstVisible && weiboDetail.replyHidden && weiboDetail.outerPostVisible) {
       report.pass.push('weibo-detail-comments: captured item1 plus referenced item2 single and bulk local blocking');
     } else report.fail.push('weibo-detail-comments: ' + JSON.stringify(weiboDetail));
+    if (weiboDetail.legacyButtonPresent && weiboDetail.legacyConfirm && weiboDetail.legacyBlocked
+      && weiboDetail.wrapperCollapsed && weiboDetail.modalButtonPresent && weiboDetail.modalConfirm
+      && weiboDetail.likersBlocked && weiboDetail.likersRestored) {
+      report.pass.push('weibo-legacy-reply-and-likers: old reply row gets local block, hidden-row wrapper collapses, and like-modal users bulk block');
+    } else report.fail.push('weibo-legacy-reply-and-likers: ' + JSON.stringify(weiboDetail));
     await weiboPage.close();
   } catch (error) {
     report.errors.push(String(error && error.message || error));

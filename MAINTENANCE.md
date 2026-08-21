@@ -89,7 +89,7 @@
 
 | 平台 | 日期与会话 | 实际观察到的证据 |
 |---|---|---|
-| B 站 `https://www.bilibili.com/video/BV1eyYRz2E2v` | 2026-08-20，隔离未登录浏览器 | 解析到 2 位评论作者；左下角可见 `拉黑本页评论用户(2)`；评论菜单顺序为 `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`；本地拉黑确认框含作者名；`seg.so` 为 `responseType=arraybuffer` 的 XHR。 |
+| B 站 `bilibili.com/video/...` | 2026-08-20，隔离未登录浏览器 | 解析到 2 位评论作者；左下角可见 `拉黑本页评论用户(2)`；评论菜单顺序为 `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`；本地拉黑确认框含作者名；`seg.so` 为 `responseType=arraybuffer` 的 XHR。 |
 | 微博 `https://weibo.com/` | 2026-08-20，隔离浏览器，虽路由到登录页仍展示公开流 | 从 `article.woo-panel-main`、`/u/<uid>`、user-card 数据解析到 6 张当前卡片和 6 个作者身份。 |
 
 **`structure regression`**
@@ -137,7 +137,7 @@
 
 | 平台 | 日期与会话 | URL 与确切结果 |
 |---|---|---|
-| B 站 | 2026-08-20，隔离未登录浏览器 | `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.11.0 解析 2 位评论作者；`拉黑本页评论用户(2)` 可见；当前 `bili-comment-menu` 顺序为 `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`；确认框含具体用户名；捕获 `seg.so` 的 `XMLHttpRequest(responseType=arraybuffer)`。 |
+| B 站 | 2026-08-20，隔离未登录浏览器 | `bilibili.com/video/...`：v0.11.0 解析 2 位评论作者；`拉黑本页评论用户(2)` 可见；当前 `bili-comment-menu` 顺序为 `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`；确认框含具体用户名；捕获 `seg.so` 的 `XMLHttpRequest(responseType=arraybuffer)`。 |
 | 微博 | 2026-08-20，隔离未登录公开流 | `https://weibo.com/` 最终路由到公开流登录外壳；当前 `article.woo-panel-main` 候选 6 个，按 `/u/<uid>` / `usercard` 成功解析身份 6/6。 |
 
 **`structure regression`**
@@ -189,7 +189,7 @@
 
 | 平台 | 日期与会话 | URL 与确切结果 |
 |---|---|---|
-| B 站 | 2026-08-20，隔离未登录浏览器 | `https://www.bilibili.com/video/BV1eyYRz2E2v`：严格探针再次解析 2 位评论作者；`拉黑本页评论用户(2)` 可见；当前菜单身份、确认框和 `seg.so` 的 `XMLHttpRequest(responseType=arraybuffer)` 均通过。 |
+| B 站 | 2026-08-20，隔离未登录浏览器 | `bilibili.com/video/...`：严格探针再次解析 2 位评论作者；`拉黑本页评论用户(2)` 可见；当前菜单身份、确认框和 `seg.so` 的 `XMLHttpRequest(responseType=arraybuffer)` 均通过。 |
 | 微博 | 2026-08-20，隔离未登录公开流 | `https://weibo.com/` 最终进入公开流登录外壳；6 个候选卡片按 `/u/<uid>` / `usercard` 解析身份 6/6。 |
 | 贴吧 | 2026-08-20，隔离未登录浏览器 | `https://tieba.baidu.com/f?kw=python` 正常加载公开主题列表；8 个真实候选中 6 个解析出 `tieba:uid`，2 个无可靠身份的候选没有生成身份。 |
 
@@ -240,7 +240,7 @@
 **`real-site verified`**
 
 - 2026-08-21，隔离未登录浏览器，
-  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.11.1 解析到 2 位评论作者；本地拉黑
+  `bilibili.com/video/...`：v0.11.1 解析到 2 位评论作者；本地拉黑
   第一条根评论后，真实 `BILI-COMMENT-THREAD-RENDERER` 高度从 417px 变为 0，
   `.ob-bar` 数量为 0，下一线程相对共同容器上移 417px；撤销后评论恢复。当前菜单仍为
   `复制评论链接 → 加入黑名单 → 本地拉黑 → 举报`，并捕获到 `seg.so` 的
@@ -303,7 +303,7 @@
 **`real-site verified`**
 
 - 2026-08-21，隔离未登录浏览器，
-  `https://www.bilibili.com/video/BV1eyYRz2E2v`：生产页返回 2 个
+  `bilibili.com/video/...`：生产页返回 2 个
   `BILI-COMMENT-RENDERER` 和 4 个 `BILI-COMMENT-REPLY-RENDERER`，6 个组件均解析出
   独立身份，批量入口显示 `拉黑已加载评论作者(6)`。对子评论执行本地拉黑后，名单命中、
   该回复高度变为 0、根线程保持可见；撤销后回复恢复。
@@ -325,7 +325,7 @@
 
 **`blocked` 与限制**
 
-- 2026-08-21 后续访问 `https://www.bilibili.com/video/BV1kS8H6VERt` 时，两个回复容器
+- 2026-08-21 后续访问另一个 `bilibili.com/video/...` 详情页时，两个回复容器
   仅显示“共 1 条回复”，有限重试 12 次仍未下发单条楼中楼组件；该轮楼中楼严格探针按
   `blocked` 记录。相同会话的真实弹幕工具仍列出 100 位发送者并完成单条/批量撤销。
 - 两个生产 URL 的原生弹幕面板容器均未返回可安全匹配发送者的列表行；原生移动弹幕
@@ -374,7 +374,7 @@
 **`real-site verified`**
 
 - 2026-08-21，隔离未登录浏览器，
-  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.12.1 页面资源中同时观察到主动
+  `bilibili.com/video/...`：v0.12.1 页面资源中同时观察到主动
   `fetch` 的 `/x/v2/dm/web/seg.so` 和播放器 `XMLHttpRequest(arraybuffer)` 的
   `/x/v2/dm/wbi/web/seg.so`；工具去重列出 7 位发送者。单条屏蔽、两人勾选批量、人物
   独立存储和两次撤销均成功，未触发 B站官方拉黑或其他站内写操作。
@@ -429,12 +429,12 @@
 **`real-site verified`**
 
 - 2026-08-21，隔离未登录浏览器，
-  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.13.0 一轮真实首段产生 6 个文案组、
+  `bilibili.com/video/...`：v0.13.0 一轮真实首段产生 6 个文案组、
   7 位发送者，其中首组包含 2 个 hash。单击该组后两人均命中名单并可一次撤销；勾选前
   两组后展开为 3 位发送者，三个人物独立存储并可整体撤销。另一轮为 7 组/7 人，也完成
   单组和两组事务。两轮均未触发平台官方拉黑或其他站内写操作。
 - 2026-08-21，隔离未登录浏览器，
-  `https://weibo.com/1467079775/ReoaRxpSH`：v0.13.0 识别 6/6 条已加载根评论并插入 6 个
+  一个公开 `weibo.com/...` 详情页：v0.13.0 识别 6/6 条已加载根评论并插入 6 个
   常驻入口；批量入口显示已加载微博/评论作者 7 人。隔离内存中拉黑一条根评论后，该行
   无占位隐藏、微博正文保持可见，撤销后评论恢复；没有触发关注、举报或官方拉黑。
 - 2026-08-21 发布前最终复核同一 B站 URL：严格探针识别 2 条根评论、4 条楼中楼、6 位
@@ -502,7 +502,7 @@
 **`real-site verified`**
 
 - 2026-08-21，隔离未登录浏览器，
-  `https://www.bilibili.com/video/BV1eyYRz2E2v`：真实首段列出 7 组弹幕和 7 位 hash 发送者；
+  `bilibili.com/video/...`：真实首段列出 7 组弹幕和 7 位 hash 发送者；
   首个尝试的真实 hash 得到数字候选，3 次匿名用户卡片请求筛得 1 个仍存在账号，页面明确
   显示「可能发送者」。在隔离内存名单中确认后 UID/hash 同时命中，撤销后同时恢复。
 - 同一轮继续识别 2 条根评论、4 条楼中楼和 6 位评论作者；弹幕单组、两组批量，以及评论
@@ -541,3 +541,67 @@
   v0.14.0。既有 `.workbuddy` 与三张 `test/shot-*.png` 脏改动不纳入发布。
 - 下一项最有价值的验证：用户在已安装 PAKKU 的浏览器中，对熟悉的弹幕发送者查询候选，
   人工核对主页后确认，并验证其后续弹幕与同 UID 评论在刷新后都完全消失。
+
+### 2026-08-22 - v0.15.0 - 悬停弹幕举报入口、微博楼中楼与公开隐私门禁
+
+**范围**
+
+B站播放器悬停弹幕的原生举报菜单入口；微博旧版/懒加载楼中楼入口、被隐藏行包装层
+收起、根评论标签解析、用户列表弹窗单人批量；公开产物中的页面标识清理。
+
+**改动文件**
+
+- `omniblock.user.js`：
+  - 新增 `bilibiliFloatingDanmakuRow` / `bilibiliFloatingDanmakuIdentity` 与 `floatingDanmaku`
+    记忆体。`pointerover/mouseenter/mousedown` 只在命中“可读出文案的浮动弹幕行”时更新
+    身份：唯一则记住 5 秒，歧义或无法解析立即 `forget()`；指针移到原生菜单等非弹幕节点时
+    保留上一次身份，避免菜单打开瞬间身份丢失。`tryInject` 遇到 B站「举报」锚点时，只在
+    存在新鲜唯一身份时注入 `🚫 B站弹幕发送者`。
+  - `resolveFloatingDanmakuHashes`（弹幕模块内）改为按显示粒度 ±1 秒聚合候选，取代原来的
+    毫秒精确匹配。旧行为会把同一秒内同文案的不同发送者判为唯一身份。
+  - 微博：评论选择器新增 `[node-type="reply_list"]`、`.list_ul`、`.WB_reply` 下的 `.item2`；
+    `commentActionMount` 为这些行提供行内操作槽兜底；评论作者解析改为 `COMMENT_AUTHOR_GROUPS`
+    按优先级逐组判定（先带昵称的作者链接，再头像链接兜底），修复根评论标签为空。
+  - `collapseBlockedWrappers` + `.ob-blocked-wrapper`：被隐藏行“只包含该行、无自身文本”的
+    祖先包装层同时收掉高度与内外边距，`unmark` 时逐层还原。
+  - 弹窗批量：`users.length < 2` 改为 `!users.length`（单人也可批量）；隐藏后复用的弹窗先
+    移除上一次控件（`btn` 可能已被前端重绘删除，故加空值保护）。
+  - `@version` 0.14.0 → 0.15.0。
+- `test/quickblock.cjs`：新增 QB-X（唯一 hash 注入、拉黑、撤销）与 QB-Y（同秒同文案歧义
+  不注入，并断言解析器在 -1 与 12000ms 两种输入下都返回 2 个候选）。
+- `test/adapters.cjs`：微博夹具补充旧版 `node-type="reply_list"` 行与点赞弹窗；断言 3 个行内
+  入口、批量计数 4、包装层收起、单人弹窗批量在撤销前判定成功且撤销后恢复。
+- `test/real-bilibili-probe.cjs`：删除内置默认 BV URL，缺少 `--url=` 时 `exit 2`。
+- `AGENTS.md`：新增公开产物页面标识禁令与「公开隐私门禁」检查命令。
+- `README.md`、`CHANGELOG.md`：同步新入口、微博行为、测试计数与证据边界。
+
+**证据**
+
+- `structure regression`：`node test/quickblock.cjs` 24/24；`node test/adapters.cjs` 16/16；
+  `node test/run.cjs` 11/11；`node test/state.cjs` 6/6；`node test/douyin.cjs` 2/2；
+  `node --check omniblock.user.js` 与 `git diff --check` 通过。
+- `blocked`：本轮未获得可用于只读探针的真实 B站/微博页面 URL（探针已按新规则要求显式
+  `--url=`），因此悬停弹幕举报入口、微博旧版楼中楼入口、包装层收起和弹窗单人批量都
+  没有在生产站点观察过。不得据本轮结果声称这些能力 `real-site verified`。
+- 旧断言可失败性：QB-Y 在修复前确实失败（菜单里注入了上一条弹幕的 `bili:dmhash`）；
+  微博标签断言在修复前因 `labels[0]` 为空而失败。两项均已在修复后转绿。
+
+**限制**
+
+- 悬停入口依赖“文案 + 显示秒”唯一匹配。同一秒内多人发送相同文案时不提供入口，只能用
+  右下角工具按文案分组批量处理；这是刻意的身份纪律，不是缺陷。
+- 悬停身份有 5 秒有效期。若原生菜单打开较慢或中途指向了另一条弹幕，需要重新悬停。
+- 微博楼中楼入口的操作槽兜底（`.con > .info`、`.info` 等）来自本地参考结构，真实旧版
+  前端可能仍有变体；点赞弹窗的用户锚点集合同理。
+- `collapseBlockedWrappers` 只在包装层没有其他有意义子元素和自身文本时生效，因此某些把
+  评论与操作栏混在同一层的前端变体仍可能残留少量间距。
+
+**版本/发布状态**
+
+见本条目结尾的发布记录（提交、tag、Release 与 raw 更新状态）。
+
+**下一项最有价值的验证**
+
+用户在真实 B站视频页悬停一条只出现一次的弹幕并打开原生举报菜单，确认菜单内出现
+「🚫 B站弹幕发送者」且拉黑后该发送者后续弹幕消失；随后在一条真实微博详情页展开楼中楼，
+确认每条回复都有「本地拉黑」，屏蔽后不留空白。

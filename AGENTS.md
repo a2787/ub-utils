@@ -72,6 +72,10 @@
   脚本和浏览器产物默认保持忽略，除非用户明确要求版本化。
 - 源码、测试、日志、提交和文档中不得写入 Cookie、凭证、私密用户数据或原始个人
   浏览数据。
+- 公开提交、Release 说明和版本化文档/测试不得包含用于验证的具体页面标识（例如
+  B站 BV 号、微博 uid/mid 或其他真实内容 ID）；只允许平台域名和明显占位符，如
+  `bilibili.com/video/...`、`weibo.com/...`。真实探针 URL 必须由维护者显式提供，
+  不得把某个具体验证页固化成默认值。暂存前必须对待发布差异做页面标识检查。
 
 ## 发布与 Git 规则
 
@@ -90,6 +94,17 @@
 7. GitHub Release 必须使用与 userscript `@version` 一致的 tag，说明中区分
    `real-site verified`、`structure regression` 和 `blocked`。成功后报告提交哈希、远端
    分支、tag 和 Release URL。
+
+## 公开隐私门禁
+
+每次暂存前运行：
+
+```powershell
+rg -n "BV[0-9A-Za-z]{8,}|weibo\.com/[0-9]{5,}/|space\.bilibili\.com/[0-9]{5,}" README.md CHANGELOG.md MAINTENANCE.md AGENTS.md omniblock.user.js test
+```
+
+命中具体页面或账号标识时必须改为泛化占位符；确属代码夹具的合成标识需在测试内
+注明“人工合成”。探针不得内置默认真实验证 URL：缺少显式 `--url=` 时应报错退出。
 
 ## 交接格式
 

@@ -425,6 +425,112 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('QB-E 举报弹窗没有无效本地拉黑或“(0)”浮层');
     else report.fail.push('QB-E 举报弹窗误注入：' + JSON.stringify(dialogState));
     await page.evaluate(() => document.getElementById('report-dialog').remove());
+    await page.evaluate(() => {
+      const deepAll = (root, selector) => {
+        const out = [];
+        const walk = (node) => {
+          if (!node || out.includes(node)) return;
+          if (node.nodeType === 1 && node.matches && node.matches(selector)) out.push(node);
+          if (node.shadowRoot) walk(node.shadowRoot);
+          for (const child of node.children || []) walk(child);
+        };
+        walk(root);
+        return out;
+      };
+      for (const button of deepAll(document, '.ob-quick')) button.remove();
+      for (const anchor of deepAll(document, '[data-ob-qb]')) anchor.removeAttribute('data-ob-qb');
+    });
+
+    // 先取得 seg.so 索引，再覆盖悬浮弹幕 -> 原生举报菜单的入口。
+    await page.evaluate(async () => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', 'https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?oid=1&segment_index=1');
+      xhr.responseType = 'arraybuffer';
+      xhr.onload = () => xhr.response;
+      xhr.onerror = () => { throw new Error('floating danmaku segment failed'); };
+      xhr.send();
+    });
+    await page.waitForFunction(() => (
+      window.__omniblockFloatingDanmakuResolver('hello danmaku', 5000).length === 1
+      && window.__omniblockFloatingDanmakuResolver('repeat danmaku', -1).length === 2
+    ), null, { timeout: 2500, polling: 100 });
+
+    await page.evaluate(() => {
+      const floating = document.createElement('div');
+      floating.className = 'bpx-player-dm-multiple';
+      floating.innerHTML = `
+        <div class="dm-info-row" id="floating-danmaku-unique">
+          <span class="dm-time">00:05</span><span class="dm-content">hello danmaku</span>
+        </div>
+        <div class="dm-info-row" id="floating-danmaku-ambiguous">
+          <span class="dm-time">00:12</span><span class="dm-content">repeat danmaku</span>
+        </div>`;
+      document.body.appendChild(floating);
+      document.getElementById('floating-danmaku-unique')
+        .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+      const menu = document.createElement('ul');
+      menu.className = 'menu';
+      menu.setAttribute('role', 'menu');
+      menu.innerHTML = '<li>举报</li>';
+      document.body.appendChild(menu);
+    });
+    await wait(1000);
+    const floatingDanmakuMenu = await page.evaluate(async () => {
+      const menu = document.querySelector('ul[role="menu"]');
+      const button = menu && menu.querySelector('.ob-quick');
+      if (!button) return { injected: false };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { injected: true, confirm: false };
+      confirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      const result = { injected: true, confirm: true, blocked, hasUndo: !!undo };
+      if (undo) {
+        undo.click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        result.restored = !window.OB.Index.isBlocked('bili:dmhash:678f8529');
+      }
+      return result;
+    });
+    if (floatingDanmakuMenu.injected && floatingDanmakuMenu.confirm && floatingDanmakuMenu.blocked && floatingDanmakuMenu.restored)
+      report.pass.push('QB-X 悬浮弹幕触发原生举报菜单时，唯一 mid_hash 可本地拉黑并可撤销');
+    else report.fail.push('QB-X 悬浮弹幕举报菜单失败：' + JSON.stringify(floatingDanmakuMenu));
+
+    await page.evaluate(() => {
+      document.getElementById('floating-danmaku-ambiguous')
+        .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+      const menu = document.querySelector('ul[role="menu"]');
+      if (menu) {
+        for (const child of Array.from(menu.children)) {
+          if (child.classList && child.classList.contains('ob-quick')) child.remove();
+          else if (child.removeAttribute) child.removeAttribute('data-ob-qb');
+        }
+        menu.setAttribute('data-test-reset', '1');
+      }
+      for (const button of document.querySelectorAll('.ob-quick')) button.remove();
+    });
+    await wait(1000);
+    const ambiguousFloatingMenu = await page.evaluate(() => ({
+      quickCount: (document.querySelector('ul[role="menu"]') || { querySelectorAll: () => [] })
+        .querySelectorAll('.ob-quick').length,
+      resolverAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', -1).length === 2,
+      secondGranularityAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', 12000).length === 2,
+      resetObserved: (document.querySelector('ul[role="menu"]') || {}).getAttribute?.('data-test-reset') === '1',
+    }));
+    if (ambiguousFloatingMenu.quickCount === 0 && ambiguousFloatingMenu.resolverAmbiguous
+      && ambiguousFloatingMenu.secondGranularityAmbiguous && ambiguousFloatingMenu.resetObserved)
+      report.pass.push('QB-Y 同秒内同文案有多个发送者时，悬浮弹幕举报菜单不注入不确定身份');
+    else report.fail.push('QB-Y 悬浮弹幕歧义身份失败：' + JSON.stringify(ambiguousFloatingMenu));
+
+    await page.evaluate(() => {
+      const menu = document.querySelector('ul[role="menu"]');
+      if (menu) menu.remove();
+      const floating = document.querySelector('.bpx-player-dm-multiple');
+      if (floating) floating.remove();
+    });
 
     await page.evaluate(() => {
       const modal = document.createElement('div'); modal.id = 'likers'; modal.setAttribute('role', 'dialog');
