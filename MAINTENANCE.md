@@ -466,8 +466,10 @@
 - B站 `mid_hash` 本身不含可靠用户名或 UID，CRC32 相同也不足以证明反向身份，因此名单
   只保留 hash 并明确说明限制；同一 hash 的后续弹幕仍会被过滤。已进入播放器缓存的弹幕
   仍需下一数据段或刷新后完全消失。
-- 版本/发布状态：源码为 `0.13.0`；功能提交、`origin/master`、`v0.13.0` tag 和 GitHub
-  Release 将按本条更新后的默认流程发布。raw `master` 更新 URL 保持不变。既有
-  `.workbuddy` 和三张 `test/shot-*.png` 脏改动不纳入发布。
+- 版本/发布状态：源码为 `0.13.0`；功能提交
+  `f6b3853b032bc9399cc2a2bf111bcf6f5f557cdf` 已推送到 `origin/master`；注释标签
+  `v0.13.0` 指向该提交并已推送；GitHub Release 已发布：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.13.0`。raw `master` 更新 URL 继续提供
+  v0.13.0。既有 `.workbuddy` 和三张 `test/shot-*.png` 脏改动未纳入发布。
 - 下一项最有价值的验证：在用户已安装 PAKKU 的原报告视频中，选择一个真实重复文案组，
   确认一次操作拉黑其全部发送者，并在刷新后观察这些 hash 的后续移动弹幕均不再出现。
