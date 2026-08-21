@@ -82,7 +82,9 @@ const cases = [
   },
 ];
 
-// item1 来自 2026-08-21 未登录真实详情页捕获；item2 来自同版本本地 Pynseq-Weibo 参考结构。
+// 2026-08-22 未登录真实详情页捕获：根评论为 `.item1 > .item1in > .con1 > .info > .opt`，
+// 楼中楼为 `.item2 > .con2 > .info > .opt`（没有 `.item2in` 中间层），
+// 并且「共 N 条回复」展开行同样匹配 `.item2` 但没有作者身份。
 const WEIBO_DETAIL_FIXTURE = `
   <article class="woo-panel-main">
     <header><a href="/u/1234567890" usercard="1234567890" nick-name="微博作者">微博作者</a></header>
@@ -98,13 +100,13 @@ const WEIBO_DETAIL_FIXTURE = `
       </div>
       <div class="list2" style="min-height: 44px; padding: 3px 0;">
         <div class="item2">
-          <div class="item2in">
-            <div><a href="/u/123450002"></a></div>
-            <div class="con2">
-              <div class="text"><a href="/u/123450002" usercard="123450002">回复作者乙</a><span>回复正文</span></div>
-              <div class="info"><div>刚刚</div><div class="opt"></div></div>
-            </div>
+          <div class="con2">
+            <div class="text"><a href="/u/123450002" usercard="123450002">回复作者乙</a><span>:</span><span>回复正文</span></div>
+            <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
           </div>
+        </div>
+        <div class="item2">
+          <div class="text"><a><i class="woo-font woo-font--caretDown"></i></a>共 39 条回复</div>
         </div>
       </div>
     </div>
@@ -193,6 +195,12 @@ const WEIBO_LEGACY_REPLY_FIXTURE = `
       const buttons = Array.from(document.querySelectorAll('.ob-weibo-comment-block'));
       const duplicateQuickCount = comments.reduce((count, item) => count + item.querySelectorAll('.ob-quick').length, 0);
       const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+      // 「共 N 条回复」展开行也匹配 .item2，但没有作者身份，不能出现入口。
+      const expandRow = Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2'))
+        .find((row) => /共\s*\d+\s*条回复/.test(row.textContent || ''));
+      const expandRowInfo = expandRow ? adapter.extract(expandRow) : null;
+      const expandRowGuard = !!expandRow && !!expandRowInfo && !expandRowInfo.keys.length
+        && !expandRow.querySelector('.ob-weibo-comment-block');
       const second = comments.find((item) => item.matches('.wbpro-list .list2 > .item2'));
       const secondButton = second && second.querySelector('.ob-weibo-comment-block');
       if (secondButton) secondButton.click();
@@ -252,6 +260,7 @@ const WEIBO_LEGACY_REPLY_FIXTURE = `
         modalConfirm: true,
         likersBlocked,
         likersRestored,
+        expandRowGuard,
       };
     });
     const expectedWeiboKeys = ['weibo:uid:1234567890', 'weibo:uid:123450001', 'weibo:uid:123450002'];
@@ -274,6 +283,7 @@ const WEIBO_LEGACY_REPLY_FIXTURE = `
       && expectedWeiboKeys.every((key) => weiboDetail.collectedKeys.includes(key))
       && weiboDetail.buttonCount === 3
       && weiboDetail.duplicateQuickCount === 0
+      && weiboDetail.expandRowGuard
       && /微博\/评论作者\(4\)/.test(weiboDetail.bulkText || '')
       && weiboDetail.confirmText.includes('回复作者乙')
       && weiboDetail.blockedReply && weiboDetail.firstVisible && weiboDetail.replyHidden && weiboDetail.outerPostVisible) {

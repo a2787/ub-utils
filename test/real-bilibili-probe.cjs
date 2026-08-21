@@ -4,11 +4,12 @@
  * 运行：node test/real-bilibili-probe.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
+const { discoverTargets, redactTarget } = require('./discover.cjs');
 const fs = require('fs');
 const path = require('path');
 const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
 const requestedUrl = urlArg ? urlArg.slice('--url='.length) : '';
-const URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$/.test(requestedUrl)
+let URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$/.test(requestedUrl)
   ? requestedUrl
   : '';
 const SAVE_SCREENSHOT = process.argv.includes('--screenshot');
@@ -16,6 +17,7 @@ const VERIFY_LOCAL_BUTTON = process.argv.includes('--verify-local');
 const VERIFY_SUB_COMMENT = process.argv.includes('--verify-sub-comment');
 const VERIFY_DANMAKU_UID = process.argv.includes('--verify-danmaku-uid');
 const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VERIFY_DANMAKU_UID;
+const VERIFY_FLOATING_DANMAKU = process.argv.includes('--verify-floating-danmaku');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
@@ -60,18 +62,56 @@ XMLHttpRequest.prototype.send = function (...args) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-(async () => {
-  if (!URL) {
-    console.error('ERROR: provide an explicit read-only target with --url=https://www.bilibili.com/video/<BV号>');
-    process.exit(2);
+// 并非每个视频都会渲染浮动弹幕（弹幕过少或被关闭时播放器不会插入节点）。
+// 需要验证浮动弹幕入口时，先用只读预检从候选里挑一个真的会渲染的目标。
+async function pickFloatingDanmakuTarget(browser, candidates) {
+  for (const candidate of candidates) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    try {
+      await page.goto(candidate, { waitUntil: 'domcontentloaded', timeout: 40000 });
+      await sleep(3500);
+      await page.evaluate(() => {
+        const video = document.querySelector('video');
+        if (video) { video.muted = true; const play = video.play(); if (play && play.catch) play.catch(() => {}); }
+      });
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await sleep(2200);
+        const rendered = await page.evaluate(() => document.querySelectorAll('.bili-danmaku-x-dm').length);
+        if (rendered > 0) return candidate;
+      }
+    } catch (error) {
+      // 单个候选失败不影响继续尝试下一个。
+    } finally {
+      await page.close().catch(() => {});
+    }
   }
-  const result = { url: URL, version, pageLoaded: false, errors: [], probe: null };
+  return '';
+}
+
+(async () => {
+  const result = { target: '', discovered: false, version, pageLoaded: false, errors: [], probe: null };
   let browser;
   try {
     browser = await launchChromium({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--mute-audio'],
     });
+    if (!URL) {
+      // 不在仓库里固化具体验证页；运行时从公开入口页发现一个只读目标。
+      const candidates = await discoverTargets(browser, 'bilibili', { limit: 6 });
+      URL = VERIFY_FLOATING_DANMAKU
+        ? (await pickFloatingDanmakuTarget(browser, candidates)) || candidates[0] || ''
+        : candidates[0] || '';
+      result.discovered = !!URL;
+    }
+    if (!URL) {
+      result.errors.push('blocked：未能从 bilibili.com 公开入口发现视频目标，也没有提供 --url=');
+      console.log(JSON.stringify(result, null, 2));
+      try { await browser.close(); } catch (e) {}
+      process.exit(2);
+    }
+    result.target = redactTarget(URL);
+    result.localTarget = URL;
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     page.on('pageerror', (error) => result.errors.push('pageerror: ' + error.message));
     result.uidCardRequestCount = 0;
@@ -377,6 +417,102 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       const dm = result.danmakuTool || {};
       if (!dm.found || !dm.panel || dm.groupCount < 3 || dm.senderCount < 3 || !dm.singleConfirm || !dm.singleBlocked || !dm.singleRestored || !dm.batchReady || !dm.batchConfirm || !dm.batchBlocked || !dm.batchSeparate || !dm.batchRestored) {
         result.errors.push('验证失败：真实弹幕段未提供可用的单条与批量本地屏蔽工具');
+      }
+    }
+
+    if (VERIFY_FLOATING_DANMAKU) {
+      // 真实播放器里的浮动弹幕层 CSS 写死 pointer-events:none，脚本靠指针坐标命中。
+      // 这里只移动鼠标并点击我们自己的浮层，不触碰 B站原生举报或任何站内写操作。
+      // 前面为加载评论已经滚到页面下方，必须先把播放器滚回视口，否则弹幕矩形在视口外。
+      const bringPlayerIntoView = async () => {
+        await page.evaluate(() => {
+          window.scrollTo(0, 0);
+          const player = document.querySelector('.bpx-player-video-area,#bilibili-player');
+          if (player && player.scrollIntoView) player.scrollIntoView({ block: 'center' });
+        });
+        await sleep(700);
+      };
+      await bringPlayerIntoView();
+      await page.evaluate(() => {
+        const video = document.querySelector('video');
+        if (video) { video.muted = true; const play = video.play(); if (play && play.catch) play.catch(() => {}); }
+      });
+      const floating = { rendered: 0, pointerEventsNone: null, candidates: 0, hovered: 0, pickShown: false };
+      for (let attempt = 0; attempt < 8 && !floating.rendered; attempt++) {
+        await sleep(2500);
+        floating.rendered = await page.evaluate(() => document.querySelectorAll('.bili-danmaku-x-dm').length);
+      }
+      if (floating.rendered) {
+        // 等待弹幕渲染期间页面可能再次被站点脚本滚动，采样前重新对齐播放器。
+        await bringPlayerIntoView();
+        floating.pointerEventsNone = await page.evaluate(() => {
+          const dm = document.querySelector('.bili-danmaku-x-dm');
+          return !!dm && getComputedStyle(dm).pointerEvents === 'none';
+        });
+        // 滚动弹幕常常一半在视口外；取矩形与视口的交集中心即可稳定命中。
+        const spots = await page.evaluate(() => Array.from(document.querySelectorAll('.bili-danmaku-x-dm'))
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            const left = Math.max(r.left, 2);
+            const right = Math.min(r.right, window.innerWidth - 2);
+            const top = Math.max(r.top, 2);
+            const bottom = Math.min(r.bottom, window.innerHeight - 2);
+            return { w: right - left, h: bottom - top, x: (left + right) / 2, y: (top + bottom) / 2 };
+          })
+          .filter((it) => it.w > 20 && it.h > 6)
+          .slice(0, 14)
+          .map((it) => ({ x: it.x, y: it.y })));
+        floating.candidates = spots.length;
+        if (!spots.length) {
+          floating.rectSamples = await page.evaluate(() => ({
+            viewport: { w: window.innerWidth, h: window.innerHeight },
+            scrollY: window.scrollY,
+            rects: Array.from(document.querySelectorAll('.bili-danmaku-x-dm')).slice(0, 5).map((el) => {
+              const r = el.getBoundingClientRect();
+              return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+            }),
+          }));
+        }
+        for (const spot of spots) {
+          floating.hovered++;
+          await page.mouse.move(spot.x - 30, spot.y + 40);
+          await sleep(90);
+          await page.mouse.move(spot.x, spot.y);
+          await sleep(260);
+          const shown = await page.evaluate(() => {
+            const pick = document.getElementById('ob-dm-pick');
+            return !!pick && getComputedStyle(pick).display !== 'none';
+          });
+          if (shown) { floating.pickShown = true; break; }
+        }
+        if (floating.pickShown) {
+          floating.transaction = await page.evaluate(async () => {
+            const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const pick = document.getElementById('ob-dm-pick');
+            pick.click(); await pause(150);
+            const confirm = document.getElementById('ob-confirm');
+            if (!confirm) return { confirm: false };
+            // 确认框把标签与身份键放在同一个 `.ob-sub` 文本里，需要从文本中提取。
+            const keys = ((confirm.textContent || '').match(/bili:dmhash:[0-9a-f]{1,8}/g) || []);
+            confirm.querySelector('.ob-ok').click(); await pause(220);
+            const key = keys[0] || '';
+            const blocked = !!key && window.OB.Index.isBlocked(key);
+            const toast = document.getElementById('ob-toast');
+            const undo = toast && toast.querySelector('button');
+            const out = { confirm: true, keyShown: !!key, blocked, hasUndo: !!undo };
+            if (undo) { undo.click(); await pause(220); out.restored = !!key && !window.OB.Index.isBlocked(key); }
+            return out;
+          });
+        }
+      }
+      result.floatingDanmaku = floating;
+      const tx = floating.transaction || {};
+      if (!floating.rendered) {
+        result.errors.push('blocked：真实播放器未渲染浮动弹幕，无法验证坐标命中入口');
+      } else if (!floating.pointerEventsNone) {
+        result.errors.push('结构变化：浮动弹幕不再是 pointer-events:none，需要重新确认命中策略');
+      } else if (!floating.pickShown || !tx.confirm || !tx.keyShown || !tx.blocked || !tx.restored) {
+        result.errors.push('验证失败：浮动弹幕坐标命中未提供可用的本地拉黑与撤销');
       }
     }
 

@@ -15,6 +15,7 @@
 | `test/douyin.cjs` | 人工合成的抖音推荐流节点复用、跳过上限和延迟守卫回归。 |
 | `test/real-bilibili-probe.cjs` | 隔离、只读的真实 B 站探针，可启用严格断言。 |
 | `test/real-platform-probe.cjs` | 其余平台的隔离、只读真实页面探针。 |
+| `test/discover.cjs` | 真实探针的目标发现器：从平台公开入口页选出只读目标并提供脱敏形式。 |
 | `test/runtime.cjs` | 浏览器测试的公共启动器；自动确定仓库根目录与可用运行时。 |
 | `README.md` | 安装、行为、平台限制和面向用户的验证表。 |
 | `CHANGELOG.md` | 按版本维护的用户可见更新日志，也是 GitHub Release 说明基线。 |
@@ -610,3 +611,96 @@ B站播放器悬停弹幕的原生举报菜单入口；微博旧版/懒加载楼
 用户在真实 B站视频页悬停一条只出现一次的弹幕并打开原生举报菜单，确认菜单内出现
 「🚫 B站弹幕发送者」且拉黑后该发送者后续弹幕消失；随后在一条真实微博详情页展开楼中楼，
 确认每条回复都有「本地拉黑」，屏蔽后不留空白。
+
+### 2026-08-22 - v0.16.0 - 真站验证纠正浮动弹幕与微博楼中楼实现
+
+**范围**
+
+按用户要求把真实站点验证改为每轮默认动作，并用真站证据推翻/修正 v0.15.0 的两处实现：
+B站播放器浮动弹幕入口、微博楼中楼行内入口。
+
+**被真站推翻的旧实现（重要）**
+
+- v0.15.0 依赖 `.bpx-player-dm-multiple .dm-info-row`、`[data-dmid]` 等选择器，并假设
+  悬停弹幕会触发 B站原生弹幕「举报」菜单，再向菜单注入一项。2026-08-22 真站捕获显示：
+  当前浮动弹幕是 `.bpx-player-row-dm-wrap > .bili-danmaku-x-dm-rotate > .bili-danmaku-x-dm`，
+  上述旧选择器在线上页面全部为 0 个；弹幕层与旋转层的 CSS 均写死 `pointer-events: none`，
+  因此弹幕永远不进入 `:hover`，`elementFromPoint` 返回的是 `video-container-v1`。逐条悬停
+  12 条弹幕、真实点击暂停后重试，`.bpx-player-dm-tip` 始终不可见（未登录会话）。
+  旧选择器已删除，不保留为“兜底”。
+- v0.15.0 假设楼中楼是 `.item2 > .item2in > .con2 > .info > .opt`。真站结构是
+  `.item2 > .con2 > .info > .opt`，没有 `.item2in`，因此大部分回复行拿不到挂载点
+  （真站上一次只有 3/6 行有入口）。
+
+**改动文件**
+
+- `omniblock.user.js`（`@version` 0.15.0 → 0.16.0）：
+  - 新增 `#ob-dm-pick` 浮层与 `setupFloatingDmPick()`：在播放器容器上监听
+    `pointermove`/`mousemove`，用 `floatingDmAtPoint()` 对 `.bili-danmaku-x-dm` 做矩形命中
+    （重叠时取面积最小者），`floatingDmIdentityFor()` 用文案 + 当前播放进度（±1s，必要时
+    回退到整条文案）收敛唯一 `mid_hash`，仅当唯一且该 hash 在 `dmSenders` 中时显示浮层。
+    命中后同时 `floatingDanmaku.remember(info)`，让登录用户可见的原生「举报」菜单复用同一身份。
+    指针离开弹幕保留 900ms，便于移到浮层上点击。
+  - 删除基于旧选择器的 `bilibiliFloatingDanmakuRow/Identity` 与全局 pointer 监听。
+  - 微博 `commentActionMount` 改为按候选序列逐个尝试（新增 `.con2 > .info > .opt`、
+    `.con1 > .info > .opt` 等），不再按行类型只认单一路径。
+  - 新增 `window.__omniblockFloatingDmProbe(x, y)` 供回归断言坐标命中契约。
+- `test/discover.cjs`（新增）：真实探针目标发现器，从 `bilibili.com` / `weibo.com` 公开入口
+  取候选并提供 `redactTarget()` 脱敏形式。仓库因此不再需要保存任何具体验证页标识。
+- `test/real-bilibili-probe.cjs`：目标改为自动发现（仍支持 `--url=`）；新增
+  `--verify-floating-danmaku`，会先预检挑出真的会渲染弹幕的视频，再滚回播放器、按视口交集
+  坐标悬停，断言 `pointer-events:none`、浮层出现、写入 `bili:dmhash:` 与撤销。报告输出
+  脱敏 `target`，具体 URL 只留在本地 `localTarget`。
+- `test/real-platform-probe.cjs`：微博目标自动发现并预检「展开后确有可识别楼中楼」的详情页；
+  新增根/回复行分别统计、展开行守卫，以及“选择与根评论作者不同的回复”后断言根评论仍可见
+  且高度只减少。
+- `test/quickblock.cjs`：QB-X/QB-Y 重写为真实结构夹具（`.bili-danmaku-x-dm` +
+  `pointer-events:none`），用真实鼠标移动触发坐标命中；QB-X 额外断言原生菜单复用同一 hash，
+  QB-Y 断言歧义时不出浮层且 `__omniblockFloatingDmProbe` 返回空身份。
+- `test/adapters.cjs`：微博夹具改为真站层级（楼中楼无 `.item2in`），并新增「共 N 条回复」
+  展开行不获得入口的断言。
+- `AGENTS.md`：新增「真实站点验证是默认动作」小节——改动平台适配必须同轮跑真站探针，
+  探针自动发现目标，发现失败才记 `blocked`；新选择器必须先经真站捕获确认，被真站证伪的
+  旧选择器必须删除而不是留作兜底；最低验证矩阵中的真站探针由“生产可访问时”改为必跑。
+- `README.md`、`CHANGELOG.md`：同步用户可见行为、验证表与命令。
+
+**证据**
+
+- `real-site verified`（2026-08-22，隔离未登录会话，目标由探针自动发现）：
+  - B站 `bilibili.com/video/...`：`rendered=10`、`pointerEventsNone=true`、`candidates=10`、
+    悬停第 2 条即 `pickShown=true`；确认框显示 `bili:dmhash:` 键，拉黑写入并撤销恢复。
+    同轮 `commentRendererCount=2`、`commentUserCount=3`、`拉黑已加载评论作者(3)`、
+    线程 249px → 0 且 `barCount=0`、撤销恢复；弹幕工具 `groupCount=100`、`senderCount=102`，
+    单组与两组批量均 `blocked`/`restored` 通过，`batchSeparate=true`。
+  - 微博 `weibo.com/...`：展开楼中楼后 `identifiedRootCount=19`/`rootButtonCount=19`、
+    `identifiedReplyCount=6`/`replyButtonCount=6`、`expandRowsWithButton=0`；拉黑一条
+    `sameAuthorAsRoot=false` 的楼中楼后该行隐藏、根评论 162px → 110px 且保持可见、
+    正文可见，撤销恢复。探针只移动鼠标、滚动、暂停播放和点击脚本自身 UI。
+- `structure regression`：`node test/run.cjs` 11/11、`node test/state.cjs` 6/6、
+  `node test/quickblock.cjs` 24/24、`node test/adapters.cjs` 16/16、`node test/douyin.cjs` 2/2；
+  `node --check` 覆盖 userscript 与全部测试/探针文件，`git diff --check` 通过。
+- 旧断言可失败性：QB-X 在改回旧实现（依赖原生菜单注入）时失败；微博 adapters 夹具改为真站
+  层级后，旧 `commentActionMount` 拿不到 `.con2 > .info > .opt`，行内入口数从 3 掉到 2。
+- `blocked`：知乎重定向到 `zhihu.com/signin`；贴吧落在「百度安全验证」滑块页（因此贴吧
+  由此前的 `real-site verified` 降级为本轮 `blocked` + 既有 `structure regression`）；
+  X 未登录只有登录页；抖音首页无可解析条目。未登录会话既看不到微博点赞/转发用户列表弹窗，
+  也不会弹出 B站自带弹幕操作条，这两条路径仍只有夹具证据。
+
+**限制**
+
+- 坐标命中依赖弹幕节点的布局矩形。B站若把浮动弹幕改成 canvas 渲染，这条入口会整体失效，
+  需要重新捕获结构。
+- 唯一性判定仍是「文案（+ 播放进度 ±1s）」。同文案多发送者时刻意不提供单条入口，
+  只能用右下角工具按文案分组批量处理。
+- 弹幕矩形随播放滚动，指针停在原地也可能因弹幕移开而失效；浮层保留 900ms 后自动消失。
+- 真站探针为无头会话，与真实浏览器（尤其安装了 PAKKU 时）仍可能有差异。
+
+**版本/发布状态**
+
+见本条目结尾的发布记录。
+
+**下一项最有价值的验证**
+
+用户在自己已登录、装有 PAKKU 的浏览器里，把鼠标移到一条弹幕上确认浮层出现并拉黑，
+刷新后确认该发送者弹幕不再出现；再打开一条微博详情页的点赞用户列表，确认弹窗批量入口
+可用（该路径目前仍只有夹具证据）。

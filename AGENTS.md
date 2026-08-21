@@ -22,6 +22,19 @@
 
 不得只凭夹具就声称某平台在真实网站可用；不得用“全绿”等汇总说法掩盖未确认项。
 
+### 真实站点验证是默认动作
+
+改动任一平台适配、入口注入或隐藏行为后，必须在同一轮内对该平台运行真实站点探针，
+不得把“没有提供验证 URL”当作跳过理由。探针默认通过 `test/discover.cjs` 从平台公开
+入口页发现只读目标；发现失败才记 `blocked`，并写明失败原因。
+
+`real-site verified` 只能用于本轮真实探针实际观察到的结果，且必须写明日期、登录状态、
+脱敏后的页面形式（如 `bilibili.com/video/...`）和确切数字。同一功能若只有夹具通过，
+只能记 `structure regression`。
+
+新增或修改的 DOM 选择器必须先由真实站点捕获确认，再写进源码。若真站证明既有选择器
+已失效，必须删除它而不是保留“兜底”，并在交接中记录被推翻的旧结构。
+
 ## 改动协议
 
 1. 修复前，必须用聚焦测试或真实站点探针复现用户报告的问题；不能直接复现时，
@@ -53,12 +66,13 @@
 | 改动范围 | 必跑检查 |
 |---|---|
 | 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
-| B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs`；生产可访问时还要运行 `node test/real-bilibili-probe.cjs --verify-local` |
-| 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs`；生产可访问时还要运行 `node test/real-platform-probe.cjs <platform>` |
+| B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
+| 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
 | 用户可见版本发布 | 所有受影响行，加上 userscript 头部版本号检查 |
 
 真实站点探针必须使用隔离、只读会话：不得登录、发帖、举报、关注、触发官方拉黑，
-也不得导出 Cookie。真实探针失败是需要记录的证据，不是降低测试标准的理由。
+也不得导出 Cookie。可以移动鼠标、滚动、暂停播放和点击脚本自身的 UI，但不得点击平台的
+举报、拉黑、关注等写入控件。真实探针失败是需要记录的证据，不是降低测试标准的理由。
 
 ## 文档规则
 
@@ -74,8 +88,10 @@
   浏览数据。
 - 公开提交、Release 说明和版本化文档/测试不得包含用于验证的具体页面标识（例如
   B站 BV 号、微博 uid/mid 或其他真实内容 ID）；只允许平台域名和明显占位符，如
-  `bilibili.com/video/...`、`weibo.com/...`。真实探针 URL 必须由维护者显式提供，
-  不得把某个具体验证页固化成默认值。暂存前必须对待发布差异做页面标识检查。
+  `bilibili.com/video/...`、`weibo.com/...`。真实探针必须在运行时发现目标或由维护者用
+  `--url=` 显式提供，不得把某个具体验证页固化进仓库。探针输出中的 `localTarget` 等
+  本地字段只用于当轮诊断，不得复制进文档、提交信息或 Release 说明。暂存前必须对待发布
+  差异做页面标识检查。
 
 ## 发布与 Git 规则
 

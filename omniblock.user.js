@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.15.0
+// @version       0.16.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -557,6 +557,17 @@
     }
     [data-ob-dm-blocked="1"] { display: none !important; }
 
+    /* 播放器内浮动弹幕的坐标命中拉黑按钮。真实弹幕层是 pointer-events:none，
+       所以按钮必须是我们自己的浮层，跟随指针显示。 */
+    #ob-dm-pick {
+      position: fixed !important; z-index: 2147483646 !important; box-sizing: border-box !important;
+      border: 0 !important; border-radius: 4px !important; padding: 3px 8px !important;
+      background: rgba(43,43,50,.94) !important; color: #fff !important; font-size: 12px !important;
+      line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35) !important; pointer-events: auto !important;
+    }
+    #ob-dm-pick:hover { background: rgba(192,57,43,.96) !important; }
+
     /* B站弹幕发送者管理工具：直接使用已解析的 seg.so 数据，不依赖原生弹幕菜单。 */
     #ob-dm-tool {
       position: fixed; right: 14px; bottom: 62px; z-index: 2147483643;
@@ -1004,19 +1015,6 @@
   }
   window.addEventListener('scroll', clearHover, true);
 
-  function rememberFloatingDanmakuSelection(event) {
-    if (!currentAdapter || currentAdapter.id !== 'bilibili') return;
-    // 指针离开弹幕进入原生菜单时必须保留刚记住的身份；只有重新指向另一条
-    // 浮动弹幕时才更新，且该条歧义或无法解析时立即丢弃，避免沿用上一条的 hash。
-    if (!bilibiliFloatingDanmakuRow(event.target)) return;
-    const info = bilibiliFloatingDanmakuIdentity(event.target);
-    if (info) floatingDanmaku.remember(info);
-    else floatingDanmaku.forget();
-  }
-  ['pointerover', 'mouseenter', 'mousedown'].forEach((type) => {
-    document.addEventListener(type, rememberFloatingDanmakuSelection, true);
-  });
-
   let currentScanner = null;
 
   // 右键：若光标在某条目上，弹出自建菜单（不触发平台原生"不感兴趣"）
@@ -1359,18 +1357,28 @@
       appendIdentityKey(keys, 'weibo:uid', uid);
       return { keys, label: name, container: findContainer(item) };
     }
+    // 2026-08-22 真站捕获：根评论是 `.item1 > .item1in > .con1 > .info > .opt`，
+    // 楼中楼是 `.item2 > .con2 > .info > .opt`（没有 `.item2in` 中间层）。
+    // 因此必须按候选逐个尝试，不能按行类型只认一条路径，否则楼中楼拿不到挂载点。
+    const COMMENT_MOUNT_CANDIDATES = [
+      ':scope > .item1in > .con1 > .info > .opt',
+      ':scope > .item2in > .con2 > .info > .opt',
+      ':scope > .con2 > .info > .opt',
+      ':scope > .con1 > .info > .opt',
+      ':scope > .con > .info > .opt',
+      ':scope > .content > .info > .opt',
+      ':scope > .con2 > .info',
+      ':scope > .con > .info',
+      ':scope > .info > .opt',
+      ':scope > .info',
+    ];
     function commentActionMount(item) {
-      if (!item || !item.matches) return null;
-      if (item.matches('.wbpro-list > .item1')) return item.querySelector(':scope > .item1in > .con1 > .info > .opt');
-      if (item.matches('.wbpro-list .list2 > .item2')) return item.querySelector(':scope > .item2in > .con2 > .info > .opt');
-      // 旧版/懒加载楼中楼缺少 wbpro 包装；只挂到行内明确的操作槽，避免误改正文。
-      return item.querySelector([
-        ':scope > .item2in > .con2 > .info > .opt',
-        ':scope > .con > .info > .opt',
-        ':scope > .con > .info',
-        ':scope > .info > .opt',
-        ':scope > .info',
-      ].join(','));
+      if (!item || !item.querySelector) return null;
+      for (const candidate of COMMENT_MOUNT_CANDIDATES) {
+        const mount = item.querySelector(candidate);
+        if (mount) return mount;
+      }
+      return null;
     }
     function collectWeiboItems(root, selector) {
       const all = querySelectorAllDeep(root, selector);
@@ -1767,19 +1775,9 @@
   };
 
   const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
-  function cleanDmTextShared(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
-  function parseDmProgressShared(text) {
-    const m = String(text || '').match(/(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?/);
-    if (!m) return -1;
-    const ms = m[3] ? Number(m[3].padEnd(3, '0').slice(0, 3)) : 0;
-    return (Number(m[1]) * 60 + Number(m[2])) * 1000 + ms;
-  }
-  function resolveFloatingDanmakuHashes(content, progress) {
-    const hook = window.__omniblockFloatingDanmakuResolver;
-    return typeof hook === 'function' ? hook(content, progress) : [];
-  }
-  // 播放器浮动弹幕没有稳定公开 UID。这里只保留从 seg.so 解析出的 mid_hash，
-  // 并用“文案 + 时间”做唯一匹配；歧义或过期身份一律不注入。
+  // 播放器浮动弹幕没有稳定公开 UID，也不接收指针事件（真站 CSS 写死
+  // `pointer-events: none`）。弹幕模块用坐标命中解析出唯一 mid_hash 后写入这里，
+  // 登录用户能弹出原生弹幕操作条时，「举报」菜单也可复用同一身份。
   const floatingDanmaku = {
     identity: null,
     timer: 0,
@@ -1797,34 +1795,6 @@
       return this.identity && Date.now() - this.identity.at <= 5000 ? this.identity : null;
     },
   };
-
-  const FLOATING_DM_ROW_SEL = '.bpx-player-dm-multiple .dm-info-row,[data-dmid],[data-id],.bpx-player-dm-function-row,.bpx-player-dm-block';
-  const FLOATING_DM_CONTENT_SEL = '.bpx-player-dm-content,.dm-content,.content';
-  const FLOATING_DM_TIME_SEL = '.bpx-player-dm-time,.dm-time,.time';
-
-  // 只有既命中候选行、又能读出弹幕文案的节点才算“选中了一条浮动弹幕”。
-  // 这样 `[data-id]` 之类宽泛属性命中的普通节点不会清掉刚记住的身份。
-  function bilibiliFloatingDanmakuRow(target) {
-    if (!target || target.nodeType !== 1 || !target.closest) return null;
-    const row = target.closest(FLOATING_DM_ROW_SEL);
-    if (!row) return null;
-    const content = cleanDmTextShared(textOf(row.querySelector(FLOATING_DM_CONTENT_SEL)));
-    return content ? { row, content } : null;
-  }
-
-  function bilibiliFloatingDanmakuIdentity(target) {
-    const found = bilibiliFloatingDanmakuRow(target);
-    if (!found) return null;
-    const content = found.content;
-    const progress = parseDmProgressShared(textOf(found.row.querySelector(FLOATING_DM_TIME_SEL)));
-    const candidates = resolveFloatingDanmakuHashes(content, progress);
-    if (candidates.length !== 1) return null;
-    return {
-      keys: [makeIdentityKey('bili:dmhash', candidates[0])],
-      label: 'B站弹幕发送者',
-      note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。',
-    };
-  }
 
   let refreshQuickBlock = () => {};
   function setupQuickBlock() {
@@ -2923,6 +2893,130 @@
 
     window.__omniblockFloatingDanmakuResolver = resolveFloatingDanmakuHashes;
 
+    // ---- 播放器内浮动弹幕：坐标命中 + 自有拉黑浮层 ----
+    // 2026-08-22 真站捕获：当前浮动弹幕是 `.bili-danmaku-x-dm`，位于
+    // `.bpx-player-row-dm-wrap > .bili-danmaku-x-dm-rotate` 内，且这两层 CSS 写死
+    // `pointer-events: none`，因此弹幕自身永远不会进入 :hover，也收不到指针事件。
+    // 我们只能在播放器容器上监听指针坐标，再用弹幕矩形做命中判定。
+    const FLOATING_DM_SEL = '.bili-danmaku-x-dm';
+    const FLOATING_DM_LAYER_SEL = '.bpx-player-row-dm-wrap,.bili-danmaku-x-dm-rotate';
+    const FLOATING_DM_PLAYER_SEL = '.bpx-player-video-area,.bpx-player-container,#bilibili-player';
+    let dmPickButton = null;
+    let dmPickTarget = null;
+    let dmPickHideTimer = 0;
+
+    function floatingDmIdentityFor(node) {
+      const content = cleanDmText(textOf(node));
+      if (!content) return null;
+      // 浮动弹幕节点不带时间；用当前播放进度做 ±1s 粒度的候选收敛。
+      const video = document.querySelector('video');
+      const progress = video && Number.isFinite(video.currentTime) ? Math.round(video.currentTime * 1000) : -1;
+      let candidates = resolveFloatingDanmakuHashes(content, progress);
+      if (candidates.length !== 1 && progress >= 0) {
+        // 弹幕从右向左滚动，出现时间早于当前进度；放宽到整条内容匹配。
+        candidates = resolveFloatingDanmakuHashes(content, -1);
+      }
+      if (candidates.length !== 1) return null;
+      const hash = candidates[0];
+      if (!dmSenders.has(hash)) return null;
+      return {
+        keys: [makeIdentityKey('bili:dmhash', hash)],
+        label: 'B站弹幕发送者',
+        note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。代表弹幕：' + content,
+      };
+    }
+
+    function hideDmPick() {
+      if (dmPickHideTimer) { clearTimeout(dmPickHideTimer); dmPickHideTimer = 0; }
+      dmPickTarget = null;
+      if (dmPickButton) dmPickButton.style.setProperty('display', 'none', 'important');
+    }
+
+    function ensureDmPickButton() {
+      if (dmPickButton && dmPickButton.isConnected) return dmPickButton;
+      if (!document.body) return null;
+      dmPickButton = document.createElement('button');
+      dmPickButton.id = 'ob-dm-pick';
+      dmPickButton.type = 'button';
+      dmPickButton.textContent = '🚫 拉黑该弹幕发送者';
+      dmPickButton.title = '按该弹幕的 mid_hash 本地屏蔽发送者';
+      dmPickButton.setAttribute('aria-label', '本地拉黑该弹幕发送者');
+      dmPickButton.style.setProperty('display', 'none', 'important');
+      dmPickButton.addEventListener('mouseenter', () => {
+        if (dmPickHideTimer) { clearTimeout(dmPickHideTimer); dmPickHideTimer = 0; }
+      });
+      dmPickButton.addEventListener('click', (event) => {
+        event.stopPropagation(); event.preventDefault();
+        const info = dmPickTarget && floatingDmIdentityFor(dmPickTarget);
+        if (!info) { hideDmPick(); return; }
+        blockMany([info], dmPickButton, '屏蔽该弹幕发送者', () => { scanDmPanels(); refreshDmTool(); });
+        hideDmPick();
+      });
+      document.body.appendChild(dmPickButton);
+      return dmPickButton;
+    }
+
+    function floatingDmAtPoint(x, y) {
+      let best = null;
+      for (const node of document.querySelectorAll(FLOATING_DM_SEL)) {
+        const rect = node.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+        if (x < rect.left - 2 || x > rect.right + 2 || y < rect.top - 2 || y > rect.bottom + 2) continue;
+        // 命中多条重叠弹幕时取矩形更小的那条，最接近指针实际指向。
+        if (!best || rect.width * rect.height < best.area) best = { node, area: rect.width * rect.height, rect };
+      }
+      return best;
+    }
+
+    function onPlayerPointerMove(event) {
+      if (!isVideoPage()) return;
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) { hideDmPick(); return; }
+      if (dmPickButton && event.target === dmPickButton) return;
+      const player = event.target && event.target.closest && event.target.closest(FLOATING_DM_PLAYER_SEL);
+      if (!player) { hideDmPick(); return; }
+      const hit = floatingDmAtPoint(event.clientX, event.clientY);
+      if (!hit) {
+        // 指针刚离开弹幕时留一点时间让用户移到按钮上。
+        if (dmPickTarget && !dmPickHideTimer) dmPickHideTimer = setTimeout(hideDmPick, 900);
+        return;
+      }
+      const info = floatingDmIdentityFor(hit.node);
+      if (!info) { hideDmPick(); return; }
+      const button = ensureDmPickButton();
+      if (!button) return;
+      if (dmPickHideTimer) { clearTimeout(dmPickHideTimer); dmPickHideTimer = 0; }
+      dmPickTarget = hit.node;
+      // 登录用户悬停时 B站会弹出自己的弹幕操作条（含「举报」）。把身份同时交给
+      // 快捷入口，使那条原生菜单也能复用同一 mid_hash。
+      floatingDanmaku.remember(info);
+      button.style.setProperty('display', 'inline-flex', 'important');
+      const width = button.offsetWidth || 150;
+      const left = Math.min(Math.max(4, hit.rect.left), Math.max(4, window.innerWidth - width - 4));
+      const top = hit.rect.top - 26 >= 4 ? hit.rect.top - 26 : hit.rect.bottom + 6;
+      button.style.setProperty('left', Math.round(left) + 'px', 'important');
+      button.style.setProperty('top', Math.round(top) + 'px', 'important');
+    }
+
+    function setupFloatingDmPick() {
+      document.addEventListener('pointermove', onPlayerPointerMove, true);
+      document.addEventListener('mousemove', onPlayerPointerMove, true);
+      window.addEventListener('scroll', hideDmPick, true);
+      document.addEventListener('pointerdown', (event) => {
+        if (dmPickButton && event.target === dmPickButton) return;
+        if (!event.target || !event.target.closest || !event.target.closest(FLOATING_DM_PLAYER_SEL)) hideDmPick();
+      }, true);
+      Store.onChange(() => {
+        if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) hideDmPick();
+      });
+    }
+    // 供回归测试断言真实结构契约，不改变运行行为。
+    window.__omniblockFloatingDmProbe = (x, y) => {
+      const hit = floatingDmAtPoint(x, y);
+      if (!hit) return null;
+      const info = floatingDmIdentityFor(hit.node);
+      return { text: cleanDmText(textOf(hit.node)), keys: info ? info.keys : [] };
+    };
+
     const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
     const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';
     function addDmBlockButton(row, hash) {
@@ -3068,6 +3162,7 @@
     });
     mountDmTool();
     refreshDmTool();
+    setupFloatingDmPick();
     scheduleDmBootstrap(1200);
     setInterval(() => {
       scanDmPanels();

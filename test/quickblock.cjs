@@ -455,19 +455,52 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && window.__omniblockFloatingDanmakuResolver('repeat danmaku', -1).length === 2
     ), null, { timeout: 2500, polling: 100 });
 
+    // 结构来自 2026-08-22 真实 B站视频页捕获：浮动弹幕是
+    // `.bpx-player-video-area > .bpx-player-row-dm-wrap > .bili-danmaku-x-dm-rotate > .bili-danmaku-x-dm`，
+    // 且弹幕层 CSS 写死 pointer-events:none，因此脚本必须靠指针坐标命中而不是 hover。
     await page.evaluate(() => {
-      const floating = document.createElement('div');
-      floating.className = 'bpx-player-dm-multiple';
-      floating.innerHTML = `
-        <div class="dm-info-row" id="floating-danmaku-unique">
-          <span class="dm-time">00:05</span><span class="dm-content">hello danmaku</span>
-        </div>
-        <div class="dm-info-row" id="floating-danmaku-ambiguous">
-          <span class="dm-time">00:12</span><span class="dm-content">repeat danmaku</span>
+      const area = document.createElement('div');
+      area.className = 'bpx-player-video-area';
+      area.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:400px;';
+      area.innerHTML = `
+        <video id="floating-video"></video>
+        <div class="bpx-player-row-dm-wrap" style="position:absolute;inset:0;pointer-events:none;">
+          <div class="bili-danmaku-x-dm-rotate" style="position:absolute;inset:0;pointer-events:none;">
+            <div class="bili-danmaku-x-dm" id="floating-danmaku-unique"
+                 style="position:absolute;left:100px;top:60px;width:180px;height:26px;pointer-events:none;">hello danmaku</div>
+            <div class="bili-danmaku-x-dm" id="floating-danmaku-ambiguous"
+                 style="position:absolute;left:100px;top:160px;width:180px;height:26px;pointer-events:none;">repeat danmaku</div>
+          </div>
         </div>`;
-      document.body.appendChild(floating);
-      document.getElementById('floating-danmaku-unique')
-        .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+      document.body.appendChild(area);
+    });
+    await wait(200);
+    const layerContract = await page.evaluate(() => {
+      const dm = document.getElementById('floating-danmaku-unique');
+      const rect = dm.getBoundingClientRect();
+      return {
+        pointerEventsNone: getComputedStyle(dm).pointerEvents === 'none',
+        // 真站同样如此：坐标落在弹幕上时 elementFromPoint 返回的不是弹幕本身。
+        elementAtPointIsNotDanmaku: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) !== dm,
+      };
+    });
+
+    const hoverFloating = async (id) => {
+      const point = await page.evaluate((target) => {
+        const dm = document.getElementById(target);
+        const rect = dm.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }, id);
+      await page.mouse.move(point.x - 40, point.y + 60);
+      await wait(80);
+      await page.mouse.move(point.x, point.y);
+      await wait(250);
+      return point;
+    };
+
+    await hoverFloating('floating-danmaku-unique');
+    // 登录用户悬停时 B站会弹出自己的弹幕操作条；这里验证同一身份也能供原生菜单复用。
+    await page.evaluate(() => {
       const menu = document.createElement('ul');
       menu.className = 'menu';
       menu.setAttribute('role', 'menu');
@@ -475,61 +508,67 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       document.body.appendChild(menu);
     });
     await wait(1000);
-    const floatingDanmakuMenu = await page.evaluate(async () => {
+    const floatingDanmakuPick = await page.evaluate(async () => {
+      const pick = document.getElementById('ob-dm-pick');
+      const visible = !!pick && getComputedStyle(pick).display !== 'none';
+      if (!visible) return { visible: false };
       const menu = document.querySelector('ul[role="menu"]');
-      const button = menu && menu.querySelector('.ob-quick');
-      if (!button) return { injected: false };
-      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const menuQuick = !!(menu && menu.querySelector('.ob-quick'));
+      pick.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
       const confirm = document.getElementById('ob-confirm');
-      if (!confirm) return { injected: true, confirm: false };
+      if (!confirm) return { visible: true, menuQuick, confirm: false };
       confirm.querySelector('.ob-ok').click();
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
+      const hiddenAfterBlock = getComputedStyle(document.getElementById('ob-dm-pick')).display === 'none';
       const toast = document.getElementById('ob-toast');
       const undo = toast && toast.querySelector('button');
-      const result = { injected: true, confirm: true, blocked, hasUndo: !!undo };
+      const result = { visible: true, menuQuick, confirm: true, blocked, hiddenAfterBlock, hasUndo: !!undo };
       if (undo) {
         undo.click();
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         result.restored = !window.OB.Index.isBlocked('bili:dmhash:678f8529');
       }
       return result;
     });
-    if (floatingDanmakuMenu.injected && floatingDanmakuMenu.confirm && floatingDanmakuMenu.blocked && floatingDanmakuMenu.restored)
-      report.pass.push('QB-X 悬浮弹幕触发原生举报菜单时，唯一 mid_hash 可本地拉黑并可撤销');
-    else report.fail.push('QB-X 悬浮弹幕举报菜单失败：' + JSON.stringify(floatingDanmakuMenu));
-
-    await page.evaluate(() => {
-      document.getElementById('floating-danmaku-ambiguous')
-        .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
-      const menu = document.querySelector('ul[role="menu"]');
-      if (menu) {
-        for (const child of Array.from(menu.children)) {
-          if (child.classList && child.classList.contains('ob-quick')) child.remove();
-          else if (child.removeAttribute) child.removeAttribute('data-ob-qb');
-        }
-        menu.setAttribute('data-test-reset', '1');
-      }
-      for (const button of document.querySelectorAll('.ob-quick')) button.remove();
-    });
-    await wait(1000);
-    const ambiguousFloatingMenu = await page.evaluate(() => ({
-      quickCount: (document.querySelector('ul[role="menu"]') || { querySelectorAll: () => [] })
-        .querySelectorAll('.ob-quick').length,
-      resolverAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', -1).length === 2,
-      secondGranularityAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', 12000).length === 2,
-      resetObserved: (document.querySelector('ul[role="menu"]') || {}).getAttribute?.('data-test-reset') === '1',
-    }));
-    if (ambiguousFloatingMenu.quickCount === 0 && ambiguousFloatingMenu.resolverAmbiguous
-      && ambiguousFloatingMenu.secondGranularityAmbiguous && ambiguousFloatingMenu.resetObserved)
-      report.pass.push('QB-Y 同秒内同文案有多个发送者时，悬浮弹幕举报菜单不注入不确定身份');
-    else report.fail.push('QB-Y 悬浮弹幕歧义身份失败：' + JSON.stringify(ambiguousFloatingMenu));
+    if (layerContract.pointerEventsNone && layerContract.elementAtPointIsNotDanmaku
+      && floatingDanmakuPick.visible && floatingDanmakuPick.menuQuick && floatingDanmakuPick.confirm
+      && floatingDanmakuPick.blocked && floatingDanmakuPick.hiddenAfterBlock && floatingDanmakuPick.restored)
+      report.pass.push('QB-X 指针落在 pointer-events:none 的浮动弹幕上时，坐标命中给出拉黑浮层，原生举报菜单复用同一 mid_hash，可拉黑并撤销');
+    else report.fail.push('QB-X 浮动弹幕坐标命中失败：' + JSON.stringify({ ...layerContract, ...floatingDanmakuPick }));
 
     await page.evaluate(() => {
       const menu = document.querySelector('ul[role="menu"]');
       if (menu) menu.remove();
-      const floating = document.querySelector('.bpx-player-dm-multiple');
-      if (floating) floating.remove();
+      for (const button of document.querySelectorAll('.ob-quick')) button.remove();
+    });
+    await hoverFloating('floating-danmaku-ambiguous');
+    await wait(600);
+    const ambiguousFloating = await page.evaluate(() => {
+      const pick = document.getElementById('ob-dm-pick');
+      return {
+        pickHidden: !pick || getComputedStyle(pick).display === 'none',
+        resolverAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', -1).length === 2,
+        secondGranularityAmbiguous: window.__omniblockFloatingDanmakuResolver('repeat danmaku', 12000).length === 2,
+        probeNoIdentity: (() => {
+          const dm = document.getElementById('floating-danmaku-ambiguous');
+          const rect = dm.getBoundingClientRect();
+          const probe = window.__omniblockFloatingDmProbe(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          return !!probe && probe.text === 'repeat danmaku' && probe.keys.length === 0;
+        })(),
+      };
+    });
+    if (ambiguousFloating.pickHidden && ambiguousFloating.resolverAmbiguous
+      && ambiguousFloating.secondGranularityAmbiguous && ambiguousFloating.probeNoIdentity)
+      report.pass.push('QB-Y 同文案对应多个发送者时，浮动弹幕坐标命中不提供拉黑入口');
+    else report.fail.push('QB-Y 浮动弹幕歧义身份失败：' + JSON.stringify(ambiguousFloating));
+
+    await page.evaluate(() => {
+      const area = document.querySelector('.bpx-player-video-area');
+      if (area) area.remove();
+      const pick = document.getElementById('ob-dm-pick');
+      if (pick) pick.style.setProperty('display', 'none', 'important');
     });
 
     await page.evaluate(() => {

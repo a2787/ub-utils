@@ -84,8 +84,8 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   弹幕的举报菜单或右侧原生列表，并兼容 PAKKU 接管播放器弹幕请求的加载顺序。每组旁边
   的 `UID?` 会查询可能发送者；打开候选主页核对后点「确认并拉黑」，名单才会同时保存
   hash 与 UID，此后该 UID 的评论和对应 hash 的弹幕都会隐藏。
-- 也可以直接在播放器里悬停一条弹幕、打开原生「举报」菜单，菜单内会多出「🚫 B站弹幕
-  发送者」；仅在这条弹幕能唯一对应一个发送者时出现。
+- 也可以直接把鼠标移到播放器里正在飘的一条弹幕上，弹幕上方会浮出「🚫 拉黑该弹幕
+  发送者」，点一下即可；仅在这条弹幕能唯一对应一个发送者时出现。
 - 微博详情页当前已加载的每条评论操作区都有 **「本地拉黑」**；屏蔽后只让该评论无占位
   消失，包括旧版/懒加载结构的楼中楼；被隐藏行的包装层高度也会一起收掉，不留空白。
   左下角批量入口同时统计当前微博作者和已加载评论作者，点赞/转发等用户列表弹窗里
@@ -123,14 +123,17 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   名单才显示昵称、UID 与 hash，并同时覆盖该 UID 的评论。只按 hash 屏蔽时，评论仍需另行
   屏蔽；同一 hash 的后续弹幕则会继续过滤。
   右侧原生弹幕列表若能与数据段安全对应，仍会补充行内「本地拉黑」，但它不是主要入口。
-- **B站播放器里悬停弹幕**：把鼠标移到播放中的弹幕上打开原生「举报」菜单时，菜单里会
-  多出一条「🚫 B站弹幕发送者」，不必再去弹幕列表里翻同一条。只有该弹幕的文案与显示
-  时间在已解析数据段中唯一对应一个 `mid_hash` 时才会出现；同一秒里有多条相同文案时
-  身份不唯一，脚本不注入这个入口，改由右下角工具按文案分组批量处理。
+- **B站播放器里悬停弹幕**：把鼠标移到播放中的弹幕上，弹幕旁边会浮出「🚫 拉黑该弹幕
+  发送者」，不必再去弹幕列表里翻同一条。B站的弹幕层本身不接收鼠标事件（CSS 写死
+  `pointer-events: none`），所以脚本按指针坐标判断你指向的是哪一条，而不依赖网站是否
+  弹出原生弹幕操作条。只有该弹幕的文案在已解析数据段中唯一对应一个 `mid_hash` 时才会
+  出现；同一文案有多个发送者时身份不唯一，脚本不提供这个入口，改由右下角工具按文案
+  分组批量处理。若你已登录且网站弹出了自带的弹幕「举报」菜单，那条菜单也会复用同一身份。
 - **微博评论**：当前详情页的单条评论操作区常驻「本地拉黑」，使用该行自己的 UID；
-  除新版 `wbpro` 结构外，也覆盖 `node-type="reply_list"` / `.list_ul` / `.WB_reply` 这类
-  旧版或懒加载楼中楼行。评论中的回复对象或 `@提及` 不会被当作评论作者，找不到可靠
-  身份的行不会出现入口。
+  根评论与楼中楼都覆盖（真站结构分别是 `.item1 > .item1in > .con1 > .info > .opt` 和
+  `.item2 > .con2 > .info > .opt`），也兼容 `node-type="reply_list"` / `.list_ul` /
+  `.WB_reply` 这类旧版结构。评论中的回复对象或 `@提及` 不会被当作评论作者；「共 N 条
+  回复」这类展开行没有作者身份，不会出现入口。
 - 入口靠**菜单文字 + 可验证身份上下文**匹配；没有身份时宁可不显示，也不放一个点击后报错的入口。
 - 两个开关都在设置面板里：`本地拉黑入口` 同时控制 B站弹幕工具；`批量拉黑入口`
   同时控制工具内的勾选批量按钮。
@@ -183,27 +186,28 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 
 | 平台 | 当前可验证结果 | 当前限制与未验证范围 |
 |---|---|---|
-| B站 | `real-site verified`：2026-08-21 隔离未登录访问一个公开 `bilibili.com/video/...` 详情页，v0.14.0 的真实弹幕 hash 产生数字候选，匿名账号校验后展示「可能发送者」；隔离内存中确认后 UID/hash 同时命中，撤销后同时恢复。同轮识别 2 条根评论、4 条楼中楼和 6 位作者，弹幕单组/两组批量及评论零占位隐藏均通过。 | v0.15.0 新增的悬停弹幕举报菜单入口目前只有 `structure regression`（唯一身份注入 + 同秒歧义不注入）；`blocked`：本轮未提供真实视频 URL，未在生产播放器复核。UID 候选碰撞边界同为 `structure regression`。普通弹幕段不直接提供 UID，反查只覆盖 1–10 位数字且无法自动消除 CRC32 碰撞；真实 PAKKU 扩展共存尚未验证，已进播放器缓存的弹幕需下一段或刷新后才完全消失。 |
-| 微博 | `real-site verified`：2026-08-21 隔离未登录访问一个公开 `weibo.com/...` 详情页，识别 6/6 条已加载根评论并显示 6 个常驻入口；批量入口统计发帖人和评论作者共 7 人。隔离内存中拉黑一条评论后只隐藏该行、正文保留，撤销恢复。 | v0.15.0 的楼中楼入口、被隐藏行包装层收起和单人弹窗批量均为 `structure regression`；`blocked`：本轮未提供真实微博 URL，未在生产页复核。已登录虚拟列表和其他微博前端变体仍需逐结构验证。 |
-| 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：隔离浏览器被重定向到登录页。 |
-| 贴吧 | `real-site verified`：2026-08-20 隔离未登录访问公开主题列表，8 个真实候选中 6 个解析出 UID，另外 2 个因无可靠身份保持原样；主楼层 `data-field` 另有 `structure regression`。 | `blocked`：该入口没有提供可核验的单条楼中楼结构；集合容器已明确不扫描，主楼层和楼中楼仍需真实帖子页复核。 |
+| B站 | `real-site verified`：2026-08-22 隔离未登录访问自动发现的公开 `bilibili.com/video/...` 页。播放器渲染 10 条浮动弹幕，全部为 `pointer-events: none`；指针坐标命中后浮层出现，拉黑写入 `bili:dmhash:` 并可撤销。同轮识别 2 条根评论、3 位评论作者、`拉黑已加载评论作者(3)`，评论零占位隐藏与撤销通过；弹幕工具列出 100 组/102 位发送者，单组与两组批量事务均成功。 | UID 候选碰撞边界为 `structure regression`。普通弹幕段不直接提供 UID，反查只覆盖 1–10 位数字且无法自动消除 CRC32 碰撞；真实 PAKKU 扩展共存尚未验证，已进播放器缓存的弹幕需下一段或刷新后才完全消失。未登录会话下 B站不弹出自带弹幕操作条，因此复用原生「举报」菜单那条路径仍是 `structure regression`。 |
+| 微博 | `real-site verified`：2026-08-22 隔离未登录访问自动发现的公开 `weibo.com/...` 详情页并展开楼中楼。19/19 条根评论与 6/6 条已加载楼中楼全部解析出身份并显示行内入口，「共 N 条回复」展开行不获得入口。拉黑一条与根评论作者不同的楼中楼后：该行零占位消失、根评论保持可见且高度从 162px 收到 110px、正文保留，撤销后恢复。 | 已登录虚拟列表、其他微博前端变体和更深层回复仍需逐结构验证；`blocked`：未登录会话看不到点赞/转发用户列表弹窗，单人弹窗批量仍只有 `structure regression`。 |
+| 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：2026-08-22 隔离浏览器仍被重定向到 `zhihu.com/signin`。 |
+| 贴吧 | `structure regression`：`data-field` 中的 `user_id` 身份契约通过；集合容器不扫描。 | `blocked`：2026-08-22 隔离浏览器落在「百度安全验证」滑块页，无法复核真实列表或帖子页（2026-08-20 曾在公开列表页观察到 8 个候选中 6 个解析出 UID）。 |
 | X | `structure regression`：人工合成 `article[data-testid="tweet"]` 与 `/handle` 契约通过。 | `blocked`：未登录状态只有登录页。 |
-| 抖音 | `structure regression`：人工合成评论、搜索卡、个人作品列表身份契约和推荐流安全阀回归通过。 | `blocked`：隔离浏览器落在验证码中间页，评论、弹幕和推荐流仍需正常会话复核。 |
+| 抖音 | `structure regression`：人工合成评论、搜索卡、个人作品列表身份契约和推荐流安全阀回归通过。 | `blocked`：2026-08-22 隔离浏览器打开 `douyin.com` 首页后没有可解析条目，评论、弹幕和推荐流仍需正常会话复核。 |
 
 可重复运行的检查：
 
 ```powershell
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
-node test/quickblock.cjs          # B站楼中楼、弹幕分组、悬停举报入口、UID 候选、PAKKU 与 XHR 共 24 项回归
+node test/quickblock.cjs          # B站楼中楼、弹幕分组、浮动弹幕坐标命中、UID 候选、PAKKU 与 XHR 共 24 项回归
 node test/adapters.cjs            # 五个平台身份契约及微博详情/楼中楼/弹窗批量共 16 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
-node test/real-bilibili-probe.cjs --verify-local # 隔离真实 B站页严格只读探针
-node test/real-bilibili-probe.cjs --url=https://www.bilibili.com/video/<BV号> --verify-sub-comment --verify-danmaku-tool
-node test/real-platform-probe.cjs <platform>      # 其余平台隔离真实页只读探针
-node test/real-platform-probe.cjs weibo --url=https://weibo.com/<uid>/<mid> --verify-local
+node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku
+node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
+node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
 ```
 
+两个真实探针默认从平台公开入口页自动发现只读目标（`test/discover.cjs`），所以仓库里
+不保存任何具体验证页标识；需要指定页面时仍可加 `--url=`。
 参考实现：B站 UID 候选算法对照 [pakku.js](https://github.com/xmcp/pakku.js)；微博和抖音
 策略持续对照 [Pynseq-Weibo](https://github.com/DanielZenFlow/Pynseq-Weibo) 与
 [Pynseq-Douyin](https://github.com/DanielZenFlow/Pynseq-Douyin)；知乎的本地屏蔽行为对照

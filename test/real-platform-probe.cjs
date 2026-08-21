@@ -3,6 +3,7 @@
  * 运行：node test/real-platform-probe.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
+const { discoverTargets, redactTarget } = require('./discover.cjs');
 const fs = require('fs');
 const path = require('path');
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
@@ -43,6 +44,62 @@ const showDetails = process.argv.includes('--detail');
 const verifyLocal = process.argv.includes('--verify-local');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// 已加载楼中楼是否存在取决于具体微博，不是脚本行为。需要验证楼中楼入口时，
+// 先用只读预检从候选里挑一个真的展开出楼中楼的详情页。
+const WB_ROOT_SEL = '.wbpro-list > .item1';
+const WB_REPLY_SEL = '.wbpro-list .list2 > .item2';
+async function loadWeiboDetail(page, url) {
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+  await sleep(6000);
+  for (let i = 0; i < 4; i++) {
+    await page.evaluate(() => window.scrollBy(0, 1200));
+    await sleep(1100);
+  }
+  const clicked = await page.evaluate(async ({ rootSel, replySel }) => {
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    let count = 0;
+    // 真站结构：展开行是 `.item2 > .text`，其中是带 caretDown 图标的 <a>。
+    const rows = Array.from(document.querySelectorAll(replySel + ', ' + rootSel + ' .item2'))
+      .filter((row) => /共\s*\d+\s*条回复/.test(row.textContent || ''))
+      .slice(0, 3);
+    for (const row of rows) {
+      const trigger = row.querySelector('a') || row.querySelector('.text') || row;
+      trigger.click(); count++; await pause(1600);
+    }
+    return count;
+  }, { rootSel: WB_ROOT_SEL, replySel: WB_REPLY_SEL });
+  await sleep(2000);
+  return clicked;
+}
+async function countWeiboRows(page) {
+  return page.evaluate(({ rootSel, replySel }) => {
+    const adapter = window.OB && window.OB.adapters.weibo;
+    const identified = (sel) => Array.from(document.querySelectorAll(sel)).filter((row) => {
+      const info = adapter && adapter.extract(row);
+      return !!(info && info.keys && info.keys.length);
+    }).length;
+    return { roots: identified(rootSel), replies: identified(replySel) };
+  }, { rootSel: WB_ROOT_SEL, replySel: WB_REPLY_SEL });
+}
+async function pickWeiboDetailTarget(browser, candidates) {
+  let fallback = '';
+  for (const candidate of candidates) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    try {
+      await page.addInitScript({ content: shim + '\n' + userscript });
+      await loadWeiboDetail(page, candidate);
+      const counts = await countWeiboRows(page);
+      if (counts.replies > 0) return candidate;
+      if (counts.roots > 0 && !fallback) fallback = candidate;
+    } catch (error) {
+      // 单个候选失败不影响继续尝试下一个。
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+  return fallback;
+}
+
 (async () => {
   const report = { version, targets: [] };
   let browser;
@@ -52,14 +109,28 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--mute-audio'],
     });
     for (const target of selectedTargets) {
+      // 微博的评论/楼中楼验证必须在真实详情页进行；不在仓库里固化具体 uid/mid，
+      // 因此未显式给 `--url=` 时从公开首页发现一个只读目标。
+      let url = target.url;
+      let discovered = false;
+      if (target.id === 'weibo' && verifyLocal && !safeRequestedUrl) {
+        const candidates = await discoverTargets(browser, 'weibo', { limit: 6 });
+        const found = await pickWeiboDetailTarget(browser, candidates);
+        if (found) { url = found; discovered = true; }
+      }
       const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-      const result = { id: target.id, requestedUrl: target.url, loaded: false, errors: [] };
+      const result = { id: target.id, target: redactTarget(url), discovered, localTarget: url, loaded: false, errors: [] };
       page.on('pageerror', (error) => result.errors.push('pageerror: ' + error.message));
       await page.addInitScript({ content: shim + '\n' + userscript });
       try {
-        const response = await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
         result.loaded = !!response && response.ok();
-        await sleep(target.id === 'weibo' && safeRequestedUrl ? 8000 : 5000);
+        const onDetail = target.id === 'weibo' && (!!safeRequestedUrl || discovered);
+        await sleep(onDetail ? 2000 : 5000);
+        if (onDetail) {
+          // 评论与楼中楼按需加载；只滚动和展开，不写任何站内状态。
+          result.expandedReplies = await loadWeiboDetail(page, url);
+        }
         result.page = await page.evaluate(({ id, showDetails }) => {
           const adapter = window.OB && window.OB.adapters[id];
           const entries = [];
@@ -84,12 +155,28 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const platform = id === 'weibo' ? (() => {
             const comments = Array.from(document.querySelectorAll('.wbpro-list > .item1, .wbpro-list .list2 > .item2'));
             const commentInfos = comments.map((item) => adapter && adapter.extract(item));
+            const rootRows = comments.filter((item) => item.matches('.wbpro-list > .item1'));
+            const replyRows = comments.filter((item) => item.matches('.wbpro-list .list2 > .item2'));
+            const identified = (rows) => rows.filter((row) => {
+              const info = adapter && adapter.extract(row);
+              return !!(info && info.keys && info.keys.length);
+            });
+            const withButton = (rows) => rows.filter((row) => !!row.querySelector('.ob-weibo-comment-block'));
             const users = window.OB && window.OB.collectUsers(document) || [];
             const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
             return {
               commentCount: comments.length,
               identifiedCommentCount: commentInfos.filter((info) => info && info.keys && info.keys.length).length,
               inlineButtonCount: document.querySelectorAll('.ob-weibo-comment-block').length,
+              rootRowCount: rootRows.length,
+              identifiedRootCount: identified(rootRows).length,
+              rootButtonCount: withButton(identified(rootRows)).length,
+              replyRowCount: replyRows.length,
+              identifiedReplyCount: identified(replyRows).length,
+              replyButtonCount: withButton(identified(replyRows)).length,
+              // 「共 N 条回复」展开行同样匹配 .item2，但没有作者身份，不应出现入口。
+              expandRowsWithButton: replyRows.filter((row) => /共\s*\d+\s*条回复/.test(row.textContent || '')
+                && !!row.querySelector('.ob-weibo-comment-block')).length,
               duplicateInlineQuickCount: document.querySelectorAll('.item1 > .item1in > .con1 > .info > .opt > .ob-quick, .item2 > .item2in > .con2 > .info > .opt > .ob-quick').length,
               collectedUserCount: users.length,
               bulkLabel: bulk && bulk.textContent || '',
@@ -115,12 +202,31 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           result.localBlock = await page.evaluate(async () => {
             const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             const adapter = window.OB && window.OB.adapters.weibo;
-            const row = document.querySelector('.wbpro-list > .item1, .wbpro-list .list2 > .item2');
+            // 优先验证楼中楼行：它是本轮修复的目标，且必须独立隐藏而不影响根评论。
+            // 必须挑选作者与所属根评论不同的回复，否则根评论会因为同一身份一起隐藏，
+            // 那属于正确行为，却无法证明“只隐藏该行”。
+            const keyOf = (node) => {
+              const info = node && adapter && adapter.extract(node);
+              return (info && info.keys && info.keys[0]) || '';
+            };
+            const rows = Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2, .wbpro-list > .item1'));
+            const row = rows.find((item) => {
+              if (!item.matches('.wbpro-list .list2 > .item2')) return false;
+              if (!item.querySelector('.ob-weibo-comment-block')) return false;
+              const root = item.closest('.wbpro-list > .item1');
+              const replyKey = keyOf(item);
+              return !!replyKey && (!root || keyOf(root) !== replyKey);
+            }) || rows.find((item) => item.matches('.wbpro-list .list2 > .item2')
+              && !!item.querySelector('.ob-weibo-comment-block')) || rows[0];
             const button = row && row.querySelector('.ob-weibo-comment-block');
             const info = adapter && row && adapter.extract(row);
             const key = info && info.keys && info.keys[0];
             const post = document.querySelector('article');
+            const rootThread = row && row.closest('.wbpro-list > .item1');
+            const rootKey = rootThread && rootThread !== row ? keyOf(rootThread) : '';
+            const rootBefore = rootThread && rootThread !== row ? rootThread.getBoundingClientRect().height : 0;
             if (!row || !button || !key) return { found: false, row: !!row, button: !!button, identity: !!key };
+            const isReplyRow = row.matches('.wbpro-list .list2 > .item2');
             button.click(); await pause(100);
             const confirm = document.getElementById('ob-confirm');
             const named = !!confirm && !!info.label && confirm.textContent.includes(info.label);
@@ -129,15 +235,50 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             const blocked = window.OB.Index.isBlocked(key);
             const hidden = row.classList.contains('ob-hidden') && (getComputedStyle(row).display === 'none' || row.getBoundingClientRect().height === 0);
             const postVisible = !!post && getComputedStyle(post).display !== 'none' && post.getBoundingClientRect().height > 0;
+            // 屏蔽楼中楼时根评论必须保持可见，且高度只应减少（不留空位）。
+            const rootAfter = rootThread && rootThread !== row ? rootThread.getBoundingClientRect().height : 0;
+            const rootDiagnostics = rootThread && rootThread !== row ? {
+              connected: rootThread.isConnected,
+              display: getComputedStyle(rootThread).display,
+              cls: String(rootThread.className).slice(0, 90),
+              blockedAttr: rootThread.getAttribute('data-ob-blocked'),
+              wrapper: rootThread.classList.contains('ob-blocked-wrapper'),
+              childCount: rootThread.children.length,
+              childInfo: Array.from(rootThread.children).map((el) => ({
+                cls: String(el.className).slice(0, 50),
+                h: Math.round(el.getBoundingClientRect().height),
+                wrapper: el.classList.contains('ob-blocked-wrapper'),
+                hidden: el.classList.contains('ob-hidden'),
+              })),
+            } : null;
+            const sameAuthorAsRoot = !!rootKey && rootKey === key;
+            const rootKept = !rootThread || rootThread === row || sameAuthorAsRoot
+              ? true
+              : rootAfter > 0 && rootAfter < rootBefore;
             const toast = document.getElementById('ob-toast');
             const undo = toast && toast.querySelector('button');
             if (undo) { undo.click(); await pause(220); }
             const restored = !!undo && !window.OB.Index.isBlocked(key) && getComputedStyle(row).display !== 'none' && row.getBoundingClientRect().height > 0;
-            return { found: true, confirm: true, named, blocked, hidden, postVisible, restored };
+            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored };
           });
           const local = result.localBlock || {};
-          if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.restored) {
+          const platform = (result.page && result.page.platform) || {};
+          if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
             result.errors.push('验证失败：微博详情评论本地拉黑、隔离隐藏或撤销不完整');
+          }
+          if (onDetail) {
+            if (platform.identifiedRootCount && platform.rootButtonCount !== platform.identifiedRootCount) {
+              result.errors.push('验证失败：部分可识别根评论没有行内本地拉黑入口');
+            }
+            if (platform.identifiedReplyCount && platform.replyButtonCount !== platform.identifiedReplyCount) {
+              result.errors.push('验证失败：部分可识别楼中楼没有行内本地拉黑入口');
+            }
+            if (!platform.identifiedReplyCount) {
+              result.errors.push('blocked：本轮真实页没有可识别的已加载楼中楼');
+            }
+            if (platform.expandRowsWithButton) {
+              result.errors.push('验证失败：「共 N 条回复」展开行错误地获得了拉黑入口');
+            }
           }
         }
       } catch (error) {
