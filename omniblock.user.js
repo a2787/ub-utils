@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.12.1
+// @version       0.13.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -483,6 +483,14 @@
       z-index: 2147483646 !important;
     }
     .ob-bulk:hover { background: #a93226 !important; }
+    /* 微博当前详情页评论操作区内的常驻入口。 */
+    .ob-weibo-comment-block {
+      flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 22px !important;
+      border: 1px solid #e2a39c !important; border-radius: 4px !important; padding: 1px 6px !important;
+      background: transparent !important; color: #c0392b !important; font-size: 11px !important;
+      line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
+    }
+    .ob-weibo-comment-block:hover { background: #fdeceb !important; }
     /* B站右侧弹幕列表里的本地发送者屏蔽入口 */
     .ob-dm-block {
       flex: 0 0 auto !important; margin-left: 8px !important; padding: 2px 6px !important;
@@ -490,6 +498,13 @@
       color: #c0392b !important; font-size: 11px !important; line-height: 18px !important; cursor: pointer !important;
     }
     .ob-dm-block:hover { background: #fdeceb !important; }
+    [data-ob-dm-action="1"] {
+      position: relative !important; box-sizing: border-box !important; padding-right: 76px !important;
+    }
+    [data-ob-dm-action="1"] > .ob-dm-block {
+      position: absolute !important; right: 4px !important; top: 50% !important;
+      transform: translateY(-50%) !important; margin: 0 !important; z-index: 1 !important;
+    }
     [data-ob-dm-blocked="1"] { display: none !important; }
 
     /* B站弹幕发送者管理工具：直接使用已解析的 seg.so 数据，不依赖原生弹幕菜单。 */
@@ -577,6 +592,7 @@
     #ob-panel .ob-item { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f2f2f2; align-items: center; }
     #ob-panel .ob-item:last-child { border-bottom: 0; }
     #ob-panel .ob-item .ob-meta { color: #999; font-size: 11px; word-break: break-all; }
+    #ob-panel .ob-item .ob-note { color: #777; font-size: 11px; margin-top: 2px; word-break: break-word; }
     #ob-panel .ob-del { color: #c0392b; cursor: pointer; border: 0; background: transparent; font-size: 12px; white-space: nowrap; }
     #ob-panel .ob-close { float: right; cursor: pointer; border: 0; background: transparent; font-size: 18px; color: #999; }
     #ob-gear {
@@ -1098,7 +1114,11 @@
   Adapters.weibo = (function () {
     const SEL = {
       card: '.card-wrap[action-type="feed_list_item"], .card-wrap[mid], [action-type="feed_list_item"], .WB_feed_type, article[class*="vue-card"], article.woo-panel-main, .card-feed',
-      comment: '.card-review[comment_id]',
+      comment: [
+        '.card-review[comment_id]',
+        '.wbpro-list > .item1',
+        '.wbpro-list .list2 > .item2',
+      ].join(','),
       userLink: 'a[href*="/u/"], a[href*="/n/"], a[nick-name], [data-user-card], [data-usercard], [usercard], [data-uid], [uid]',
       postAuthor: [
         '.card-feed .content > .info a.name[href]',
@@ -1114,6 +1134,10 @@
         ':scope > a[nick-name][href]',
       ].join(','),
       commentAuthor: [
+        ':scope > .item1in > div:first-child a[href*="/u/"]',
+        ':scope > .item1in > .con1 > .text > a:first-child[href]',
+        ':scope > .item2in > div:first-child a[href*="/u/"]',
+        ':scope > .item2in > .con2 > .text > a:first-child[href]',
         ':scope > .content > .txt a.name[href]',
         ':scope > .content > .txt a[nick-name][href]',
         ':scope > .con1 > .info a.name[href]',
@@ -1173,20 +1197,68 @@
       }
       return byUid.size === 1 ? preferredLink(Array.from(byUid.values())) : null;
     }
+    function extract(item) {
+      const link = findUserLink(item);
+      const uid = uidFromLink(link);
+      const name = textOf(link) || attr(link, 'nick-name');
+      const keys = [];
+      appendIdentityKey(keys, 'weibo:uid', uid);
+      return { keys, label: name, container: findContainer(item) };
+    }
+    function commentActionMount(item) {
+      if (!item || !item.matches) return null;
+      if (item.matches('.wbpro-list > .item1')) return item.querySelector(':scope > .item1in > .con1 > .info > .opt');
+      if (item.matches('.wbpro-list .list2 > .item2')) return item.querySelector(':scope > .item2in > .con2 > .info > .opt');
+      return null;
+    }
+    function clearCommentButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) button.remove();
+    }
+    function syncCommentButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) {
+        if (!button.closest || !button.closest(SEL.comment)) button.remove();
+      }
+      const enabled = Store.getSetting('enabled') && Store.getSetting('showQuickBlock');
+      for (const item of querySelectorAllDeep(document, SEL.comment)) {
+        const mount = commentActionMount(item);
+        if (!mount) continue;
+        let button = mount.querySelector(':scope > .ob-weibo-comment-block');
+        const info = extract(item);
+        if (!enabled || !info.keys.length || Index.isBlocked(info.keys)) {
+          if (button) button.remove();
+          continue;
+        }
+        if (button) continue;
+        button = document.createElement('button');
+        button.type = 'button'; button.className = 'ob-weibo-comment-block'; button.textContent = '本地拉黑';
+        button.title = '本地拉黑此评论作者'; button.setAttribute('aria-label', '本地拉黑此评论作者');
+        button.addEventListener('click', (event) => {
+          event.stopPropagation(); event.preventDefault();
+          const current = extract(item);
+          if (!current.keys.length) return;
+          showConfirm(current.label, current.keys, button);
+        });
+        mount.insertBefore(button, mount.firstChild);
+      }
+    }
+    function collectWeiboUsers(root) {
+      const items = [];
+      for (const selector of [SEL.comment, SEL.card]) {
+        for (const item of querySelectorAllDeep(root, selector)) items.push(extract(item));
+      }
+      return items;
+    }
     return {
       id: 'weibo',
       match: (h) => /(^|\.)weibo\.com$/.test(h.hostname) || /(^|\.)weibo\.cn$/.test(h.hostname),
       selectors: [SEL.comment, SEL.card],
       disappearSelectors: [SEL.comment],
-      extract(item) {
-        const link = findUserLink(item);
-        const uid = uidFromLink(link);
-        const name = textOf(link) || attr(link, 'nick-name');
-        const keys = [];
-        appendIdentityKey(keys, 'weibo:uid', uid);
-        return { keys, label: name, container: findContainer(item) };
-      },
+      extract,
+      collectUsers: collectWeiboUsers,
+      bulkFabLabel: (n) => '🚫 拉黑已加载微博/评论作者(' + n + ')',
       containerOf: (item) => findContainer(item),
+      onScan: syncCommentButtons,
+      onDisabled: clearCommentButtons,
     };
   })();
 
@@ -1523,7 +1595,7 @@
       for (const anchor of querySelectorAllDeep(document, '[data-ob-qb]')) anchor.removeAttribute('data-ob-qb');
     }
     function tryInject(el) {
-      if (!el || el.nodeType !== 1 || (el.classList && el.classList.contains('ob-quick'))) return;
+      if (!el || el.nodeType !== 1 || (el.classList && Array.from(el.classList).some((name) => name.startsWith('ob-')))) return;
       // Lit/Vue 菜单重绘可能删掉我们的兄弟节点但保留原生 li；此时允许下一轮补回。
       if (el.hasAttribute('data-ob-qb')) {
         if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
@@ -1592,12 +1664,12 @@
     return !el.getClientRects || el.getClientRects().length > 0;
   }
 
-  function blockMany(list, anchorEl, confirmLabel) {
+  function blockMany(list, anchorEl, confirmLabel, onBlocked) {
     if (!list.length) { showToast('没有可拉黑的用户'); return; }
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
-    showConfirm(confirmLabel || ('拉黑全部 ' + list.length + ' 位用户'), keys, anchorEl, null, () => {
-      const results = Store.addIdentityGroups(list.map((info) => ({ keys: info.keys, label: info.label })));
+    showConfirm(confirmLabel || ('拉黑全部 ' + list.length + ' 位用户'), keys, anchorEl, onBlocked, () => {
+      const results = Store.addIdentityGroups(list.map((info) => ({ keys: info.keys, label: info.label, note: info.note })));
       const addedKeys = [];
       for (const result of results) {
         for (const key of result.addedKeys) if (!addedKeys.includes(key)) addedKeys.push(key);
@@ -1784,8 +1856,9 @@
     const dmByContent = new Map();
     const dmByProgress = new Map();
     const dmSenders = new Map();
+    const dmContentGroups = new Map();
     const dmSeenElements = new Set();
-    const selectedDmHashes = new Set();
+    const selectedDmGroups = new Set();
     const DM_PAGE_SIZE = 100;
     const DM_SENDER_LIMIT = 5000;
     let dmTool = null;
@@ -1823,7 +1896,7 @@
       if (!dmVideoKey) { dmVideoKey = key; return false; }
       if (key === dmVideoKey) return false;
       dmVideoKey = key;
-      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmSeenElements.clear(); selectedDmHashes.clear();
+      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmContentGroups.clear(); dmSeenElements.clear(); selectedDmGroups.clear();
       dmSearch = ''; dmPage = 0;
       resetDmBootstrap();
       if (dmManager) closeDmManager();
@@ -1840,6 +1913,15 @@
       dmSeenElements.add(fingerprint);
       const hashes = dmByContent.get(content) || new Set();
       hashes.add(elem.hash); dmByContent.set(content, hashes);
+      let group = dmContentGroups.get(content);
+      if (!group) {
+        if (dmContentGroups.size >= DM_SENDER_LIMIT) dmContentGroups.delete(dmContentGroups.keys().next().value);
+        group = { content, hashes: new Set(), progress: elem.progress, messageCount: 0 };
+        dmContentGroups.set(content, group);
+      }
+      group.hashes.add(elem.hash);
+      group.messageCount++;
+      if (group.progress < 0 || (elem.progress >= 0 && elem.progress < group.progress)) group.progress = elem.progress;
       if (elem.progress >= 0) {
         const key = String(elem.progress) + '\x1f' + content;
         const progressHashes = dmByProgress.get(key) || new Set();
@@ -1849,7 +1931,7 @@
       if (!sender) {
         if (dmSenders.size >= DM_SENDER_LIMIT) {
           const oldest = dmSenders.keys().next().value;
-          dmSenders.delete(oldest); selectedDmHashes.delete(oldest);
+          dmSenders.delete(oldest);
         }
         sender = { hash: elem.hash, content, progress: elem.progress, count: 0 };
         dmSenders.set(elem.hash, sender);
@@ -2102,6 +2184,36 @@
         .sort((a, b) => (a.progress < 0 ? Number.MAX_SAFE_INTEGER : a.progress) - (b.progress < 0 ? Number.MAX_SAFE_INTEGER : b.progress));
     }
 
+    function availableDmGroups() {
+      resetDmSessionIfNeeded();
+      const blocked = blockedHashes();
+      return Array.from(dmContentGroups.values())
+        .map((group) => ({
+          content: group.content,
+          progress: group.progress,
+          messageCount: group.messageCount,
+          hashes: Array.from(group.hashes).filter((hash) => dmSenders.has(hash) && !blocked.has(hash)),
+        }))
+        .filter((group) => group.hashes.length)
+        .sort((a, b) => (a.progress < 0 ? Number.MAX_SAFE_INTEGER : a.progress) - (b.progress < 0 ? Number.MAX_SAFE_INTEGER : b.progress));
+    }
+
+    function dmIdentityRecords(groups) {
+      const contentByHash = new Map();
+      for (const group of groups || []) {
+        for (const hash of group.hashes || []) if (!contentByHash.has(hash)) contentByHash.set(hash, group.content);
+      }
+      const records = [];
+      for (const [hash, content] of contentByHash) {
+        records.push({
+          keys: [makeIdentityKey('bili:dmhash', hash)],
+          label: 'B站弹幕发送者',
+          note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。代表弹幕：' + content,
+        });
+      }
+      return records;
+    }
+
     function closeDmManager() {
       if (dmManager) dmManager.remove();
       dmManager = null;
@@ -2111,11 +2223,11 @@
 
     function renderDmManager() {
       if (!dmManager || !dmManager.isConnected) return;
-      const available = availableDmSenders();
-      const availableHashes = new Set(available.map((sender) => sender.hash));
-      for (const hash of Array.from(selectedDmHashes)) if (!availableHashes.has(hash)) selectedDmHashes.delete(hash);
+      const available = availableDmGroups();
+      const availableGroupKeys = new Set(available.map((group) => group.content));
+      for (const content of Array.from(selectedDmGroups)) if (!availableGroupKeys.has(content)) selectedDmGroups.delete(content);
       const term = cleanDmText(dmSearch).toLowerCase();
-      const filtered = term ? available.filter((sender) => sender.content.toLowerCase().includes(term)) : available;
+      const filtered = term ? available.filter((group) => group.content.toLowerCase().includes(term)) : available;
       const pageCount = Math.max(1, Math.ceil(filtered.length / DM_PAGE_SIZE));
       dmPage = clamp(dmPage, 0, pageCount - 1);
       const pageItems = filtered.slice(dmPage * DM_PAGE_SIZE, (dmPage + 1) * DM_PAGE_SIZE);
@@ -2135,35 +2247,39 @@
         list.appendChild(empty);
       }
 
-      for (const sender of pageItems) {
+      for (const group of pageItems) {
         const row = document.createElement('label');
         row.className = 'ob-dm-sender';
-        row.setAttribute('data-ob-dm-hash', sender.hash);
+        row.setAttribute('data-ob-dm-content', group.content);
+        row.setAttribute('data-ob-dm-hashes', group.hashes.join(','));
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox'; checkbox.className = 'ob-dm-select';
-        checkbox.checked = selectedDmHashes.has(sender.hash);
+        checkbox.checked = selectedDmGroups.has(group.content);
         checkbox.style.display = batchEnabled ? '' : 'none';
         checkbox.addEventListener('change', () => {
-          if (checkbox.checked) selectedDmHashes.add(sender.hash);
-          else selectedDmHashes.delete(sender.hash);
+          if (checkbox.checked) selectedDmGroups.add(group.content);
+          else selectedDmGroups.delete(group.content);
           renderDmManager();
         });
 
         const body = document.createElement('div');
-        const content = document.createElement('div'); content.className = 'ob-dm-content'; content.textContent = sender.content;
+        const content = document.createElement('div'); content.className = 'ob-dm-content'; content.textContent = group.content;
         const meta = document.createElement('div'); meta.className = 'ob-dm-meta';
-        meta.textContent = formatDmProgress(sender.progress) + ' · 已捕获 ' + sender.count + ' 条';
+        meta.textContent = group.hashes.length + ' 位发送者 · 捕获 ' + group.messageCount + ' 条 · ' + formatDmProgress(group.progress);
         body.append(content, meta);
 
         const single = document.createElement('button');
         single.type = 'button'; single.className = 'ob-dm-single'; single.textContent = '🚫';
-        single.title = '本地屏蔽此弹幕发送者'; single.setAttribute('aria-label', '本地屏蔽此弹幕发送者');
+        single.title = '本地屏蔽发送此文案的全部用户'; single.setAttribute('aria-label', '本地屏蔽发送此文案的全部用户');
         single.addEventListener('click', (event) => {
           event.stopPropagation(); event.preventDefault();
-          showConfirm('弹幕发送者：' + sender.content.slice(0, 36), [makeIdentityKey('bili:dmhash', sender.hash)], single, () => {
-            selectedDmHashes.delete(sender.hash); refreshDmTool(); scanDmPanels();
-          });
+          blockMany(
+            dmIdentityRecords([group]),
+            single,
+            '屏蔽该文案的 ' + group.hashes.length + ' 位发送者',
+            () => { selectedDmGroups.delete(group.content); refreshDmTool(); scanDmPanels(); }
+          );
         });
         row.append(checkbox, body, single);
         list.appendChild(row);
@@ -2172,32 +2288,36 @@
       const selectAllWrap = dmManager.querySelector('.ob-dm-checkall');
       const selectAll = selectAllWrap.querySelector('input');
       selectAllWrap.style.display = batchEnabled ? 'inline-flex' : 'none';
-      selectAll.checked = !!pageItems.length && pageItems.every((sender) => selectedDmHashes.has(sender.hash));
-      selectAll.indeterminate = !selectAll.checked && pageItems.some((sender) => selectedDmHashes.has(sender.hash));
+      selectAll.checked = !!pageItems.length && pageItems.every((group) => selectedDmGroups.has(group.content));
+      selectAll.indeterminate = !selectAll.checked && pageItems.some((group) => selectedDmGroups.has(group.content));
       selectAll.onchange = () => {
-        for (const sender of pageItems) {
-          if (selectAll.checked) selectedDmHashes.add(sender.hash);
-          else selectedDmHashes.delete(sender.hash);
+        for (const group of pageItems) {
+          if (selectAll.checked) selectedDmGroups.add(group.content);
+          else selectedDmGroups.delete(group.content);
         }
         renderDmManager();
       };
 
-      const selected = available.filter((sender) => selectedDmHashes.has(sender.hash));
+      const selected = available.filter((group) => selectedDmGroups.has(group.content));
+      const selectedRecords = dmIdentityRecords(selected);
       const batch = dmManager.querySelector('.ob-dm-batch');
       batch.style.display = batchEnabled ? '' : 'none';
       batch.disabled = !selected.length;
-      batch.textContent = '屏蔽选中(' + selected.length + ')';
+      batch.textContent = '屏蔽选中(' + selected.length + '组 / ' + selectedRecords.length + '人)';
       batch.onclick = () => {
-        const current = availableDmSenders().filter((sender) => selectedDmHashes.has(sender.hash));
+        const current = availableDmGroups().filter((group) => selectedDmGroups.has(group.content));
         if (!current.length) return;
+        const records = dmIdentityRecords(current);
         blockMany(
-          current.map((sender) => ({ keys: [makeIdentityKey('bili:dmhash', sender.hash)], label: '弹幕发送者' })),
+          records,
           batch,
-          '屏蔽选中的 ' + current.length + ' 位弹幕发送者'
+          '屏蔽选中的 ' + records.length + ' 位弹幕发送者',
+          () => { for (const group of current) selectedDmGroups.delete(group.content); }
         );
       };
 
-      dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 位发送者 · ' + (dmPage + 1) + '/' + pageCount;
+      const filteredSenderCount = new Set(filtered.flatMap((group) => group.hashes)).size;
+      dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 组弹幕 · ' + filteredSenderCount + ' 位发送者 · ' + (dmPage + 1) + '/' + pageCount;
       const retry = dmManager.querySelector('.ob-dm-retry');
       retry.style.display = !dmSenders.size && dmBootstrapStatus !== 'loading' ? '' : 'none';
       retry.disabled = dmBootstrapStatus === 'loading';
@@ -2213,10 +2333,10 @@
       dmManager.id = 'ob-dm-manager';
       dmManager.innerHTML = `
         <div class="ob-dm-box" role="dialog" aria-modal="true" aria-labelledby="ob-dm-title">
-          <div class="ob-dm-head"><h2 id="ob-dm-title">B站弹幕发送者</h2><button class="ob-dm-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+          <div class="ob-dm-head"><h2 id="ob-dm-title">B站弹幕内容</h2><button class="ob-dm-close" type="button" title="关闭" aria-label="关闭">×</button></div>
           <div class="ob-dm-toolbar">
             <input class="ob-dm-search" type="search" placeholder="搜索已加载弹幕" aria-label="搜索已加载弹幕">
-            <label class="ob-dm-checkall"><input type="checkbox">全选当前页</label>
+            <label class="ob-dm-checkall"><input type="checkbox">全选当前页文案</label>
             <button class="ob-dm-retry" type="button">重新读取</button>
           </div>
           <div class="ob-dm-list"></div>
@@ -2270,13 +2390,18 @@
     const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
     const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';
     function addDmBlockButton(row, hash) {
+      row.setAttribute('data-ob-dm-action', '1');
       if (row.querySelector && row.querySelector(':scope > .ob-dm-block')) return;
       const btn = document.createElement('button');
       btn.className = 'ob-dm-block'; btn.type = 'button'; btn.textContent = '本地拉黑';
       btn.title = '按该弹幕的 mid_hash 本地屏蔽发送者';
       btn.addEventListener('click', (e) => {
         e.stopPropagation(); e.preventDefault();
-        showConfirm('该弹幕发送者', [makeIdentityKey('bili:dmhash', hash)], btn, scanDmPanels);
+        blockMany([{
+          keys: [makeIdentityKey('bili:dmhash', hash)],
+          label: 'B站弹幕发送者',
+          note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。',
+        }], btn, '屏蔽该弹幕发送者', scanDmPanels);
       });
       row.appendChild(btn);
     }
@@ -2292,6 +2417,7 @@
             setInlineHidden(row, false);
             row.removeAttribute('data-ob-dm-blocked');
             if (existingButton) existingButton.remove();
+            row.removeAttribute('data-ob-dm-action');
             continue;
           }
           const hash = hashFromDmRow(row);
@@ -2299,18 +2425,23 @@
             setInlineHidden(row, false);
             row.removeAttribute('data-ob-dm-blocked');
             if (existingButton) existingButton.remove();
+            row.removeAttribute('data-ob-dm-action');
             continue;
           }
           if (blocked.has(hash)) {
             row.setAttribute('data-ob-dm-blocked', '1');
             setInlineHidden(row, true);
             if (existingButton) existingButton.remove();
+            row.removeAttribute('data-ob-dm-action');
             continue;
           }
           setInlineHidden(row, false);
           row.removeAttribute('data-ob-dm-blocked');
           if (showButton) addDmBlockButton(row, hash);
-          else if (existingButton) existingButton.remove();
+          else {
+            if (existingButton) existingButton.remove();
+            row.removeAttribute('data-ob-dm-action');
+          }
         }
       }
     }
@@ -2457,6 +2588,15 @@
   // ====================================================================
   // 7. 选项面板
   // ====================================================================
+  function formatIdentityForDisplay(key) {
+    const value = String(key || '');
+    let match = value.match(/^bili:uid:(\d+)$/);
+    if (match) return 'B站 UID：' + match[1];
+    match = value.match(/^bili:dmhash:([0-9a-f]{8})$/i);
+    if (match) return 'B站弹幕 hash：' + match[1].toLowerCase() + '（同一发送者的后续弹幕均会屏蔽）';
+    return value;
+  }
+
   function openOptions() {
     let panel = $('#ob-panel');
     if (panel) { panel.remove(); return; }
@@ -2532,8 +2672,13 @@
         row.className = 'ob-item';
         const details = document.createElement('div');
         const name = document.createElement('div'); name.textContent = p.label || '未命名';
-        const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).join('  ');
-        details.append(name, identities); row.appendChild(details);
+        const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).map(formatIdentityForDisplay).join('  ');
+        details.append(name, identities);
+        if (p.note) {
+          const note = document.createElement('div'); note.className = 'ob-note'; note.textContent = p.note;
+          details.appendChild(note);
+        }
+        row.appendChild(details);
         const del = document.createElement('button');
         del.className = 'ob-del'; del.textContent = '删除';
         del.onclick = () => { Store.removePerson(id); refresh(); if (currentScanner) currentScanner.schedule(); };

@@ -17,6 +17,7 @@
 | `test/real-platform-probe.cjs` | 其余平台的隔离、只读真实页面探针。 |
 | `test/runtime.cjs` | 浏览器测试的公共启动器；自动确定仓库根目录与可用运行时。 |
 | `README.md` | 安装、行为、平台限制和面向用户的验证表。 |
+| `CHANGELOG.md` | 按版本维护的用户可见更新日志，也是 GitHub Release 说明基线。 |
 
 ## 验证词汇
 
@@ -38,13 +39,17 @@
 1. 阅读 `AGENTS.md`、`README.md` 和本文件，检查脏工作区。
 2. 复现问题，并在修复前或同时补上聚焦回归。
 3. 运行 `AGENTS.md` 中的最低验证矩阵。
-4. 安装体验变化时更新 README；证据或限制变化时在下方追加有日期的交接记录。
-5. 发布前提高 userscript `@version`，运行 `git diff --check`，显式暂存后审阅
-   `git diff --cached`。
-6. 完成要求的验证后，默认提交本次明确范围内的改动，并把当前分支推送到已配置的
-   `origin`，无需逐次请求用户授权；用户明确要求暂停、仅修改或不推送时除外。新增或
-   更换远端、创建 GitHub Release、修改 Tampermonkey 更新 URL 等实质不同的发布操作
-   仍须另行取得用户明确授权。成功后报告提交、远端分支和更新 URL 的实际发布状态。
+4. 安装体验变化时更新 README；每个版本更新 `CHANGELOG.md`；证据或限制变化时在下方
+   追加有日期的交接记录。
+5. 发布前提高 userscript `@version`，确认 changelog 与行为一致，运行 `git diff --check`，
+   显式暂存后审阅 `git diff --cached`。
+6. 完成要求的验证后，提交明确范围内的改动并推送当前分支；随后创建与 `@version`
+   一致的 `vX.Y.Z` tag、推送 tag，并以 changelog 当前版本和三类证据边界创建 GitHub
+   Release。用户明确要求暂停、仅修改、不推送或不发布时除外。
+7. GitHub Release 是固定 tag、默认不覆盖的版本快照和更新说明；raw `master` 仍是
+   Tampermonkey 的移动自动更新地址。新增或更换远端、修改更新 URL、覆盖既有
+   tag/Release 必须另行授权。
+   发布成功后报告提交、远端分支、tag、Release URL 和 raw 更新状态。
 
 生成的 `test/_*` 探针、截图和 JSON 证据默认只留在本地。它们可用于诊断，但不得被
 意外提交。
@@ -391,3 +396,78 @@
   GitHub raw `master` 更新 URL 随后提供 v0.12.1。既有 `.workbuddy` 与三张测试截图不纳入提交。
 - 下一项最有价值的验证：用户在已安装 PAKKU 的原报告视频刷新后，确认右下角立即出现
   「弹幕屏蔽(N)」，并观察屏蔽一位发送者后其后续移动弹幕不再出现。
+
+### 2026-08-21 - v0.13.0 - 弹幕文案组、微博评论入口与 GitHub Release
+
+**范围与改动文件**
+
+- `omniblock.user.js`：B站弹幕管理器按规范化文案聚合，单组和勾选批量均展开、去重组内
+  全部 `mid_hash` 后逐人保存；设置名单明确展示弹幕 hash、持续过滤作用及昵称/UID 不可用
+  的限制，不从不可逆 hash 反向猜测 UID。原生弹幕列表行预留右侧按钮空间。userscript
+  版本提高为 `0.13.0`。
+- `omniblock.user.js`：微博当前详情页捕获的 `.wbpro-list > .item1` 根评论增加常驻本地
+  拉黑入口；批量统计同时收集发帖人、根评论和已展开回复作者。评论作者严格来自自身作者
+  槽，集合、提及用户和外层发帖人不能冒充该评论作者。
+- `test/quickblock.cjs`、`test/adapters.cjs`：新增重复弹幕两 hash、组选中展开、名单身份说明、
+  原生列表布局，以及微博详情评论单条/批量人工夹具。微博 `item1` 基于当日真实捕获，
+  `item2` 来自仓库内固定提交的 Pynseq-Weibo 参考结构，后者不标作真实站点验证。
+- `test/real-bilibili-probe.cjs`、`test/real-platform-probe.cjs`：真实探针按文案组内全部 hash
+  验证；微博探针支持安全 `--url=` 和隔离内存中的单条评论拉黑/撤销。
+- `README.md`、`AGENTS.md`、`MAINTENANCE.md`、`CHANGELOG.md`：同步用户行为、逐平台验证
+  规则，以及默认 tag + GitHub Release 发布流程。
+
+**问题复现**
+
+- 修复前原有基线为 `node test/quickblock.cjs` 19/19、`node test/adapters.cjs` 14/14。
+  加入用户报告对应断言后，旧实现的 B站结果为 15 通过/5 失败：相同文案仍显示 6 条发送者
+  行而非 5 个文案组，单击只保存一个 hash，选中重复文案得到 3 行而非 2 组，名单没有
+  hash 作用说明，原生列表行没有操作区属性。微博结果为 14 通过/1 失败：当前
+  `item1/item2` 均未被完整选中，详情页只收集发帖人，评论常驻入口为 0。
+- 安全边界复核时先只更新断言，当前实现由 20/20 变为 19/20：一个弹幕 hash 因 CRC32
+  与已加载评论 UID 相同而被错误合并为该评论作者；移除反向身份推测后恢复 20/20。
+
+**`real-site verified`**
+
+- 2026-08-21，隔离未登录浏览器，
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`：v0.13.0 一轮真实首段产生 6 个文案组、
+  7 位发送者，其中首组包含 2 个 hash。单击该组后两人均命中名单并可一次撤销；勾选前
+  两组后展开为 3 位发送者，三个人物独立存储并可整体撤销。另一轮为 7 组/7 人，也完成
+  单组和两组事务。两轮均未触发平台官方拉黑或其他站内写操作。
+- 2026-08-21，隔离未登录浏览器，
+  `https://weibo.com/1467079775/ReoaRxpSH`：v0.13.0 识别 6/6 条已加载根评论并插入 6 个
+  常驻入口；批量入口显示已加载微博/评论作者 7 人。隔离内存中拉黑一条根评论后，该行
+  无占位隐藏、微博正文保持可见，撤销后评论恢复；没有触发关注、举报或官方拉黑。
+- 2026-08-21 发布前最终复核同一 B站 URL：严格探针识别 2 条根评论、4 条楼中楼、6 位
+  评论作者和 7 组/7 位弹幕发送者；评论零占位隐藏、弹幕单组及两组批量屏蔽均命中，且
+  撤销恢复。该轮 `node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool`
+  无错误退出。
+
+**`structure regression`**
+
+- `node test/run.cjs`：11/11；`node test/state.cjs`：6/6；
+  `node test/douyin.cjs`：2/2。
+- `node test/quickblock.cjs`：20/20，覆盖重复文案单组两人、选中两组展开为三人、逐人事务、
+  不反向猜测 UID 的 hash 身份边界、名单说明、原生列表布局和 PAKKU 双注入顺序。
+- `node test/adapters.cjs`：15/15，新增微博根评论/楼中楼作者隔离、常驻入口、三人批量计数、
+  单条零占位隐藏和正文保留。
+- `node --check` 对 userscript 和四个受影响测试脚本均通过；`git diff --check` 通过。
+
+**`blocked`**
+
+- 同一严格命令早前两次都完成弹幕组事务，但评论区只保留 `BILI-COMMENTS-SPINNER`，
+  没有下发评论组件，因此当时按 `blocked` 记录；发布前最终复核已完整成功。这里保留
+  早前失败事实，用于说明生产评论数据仍可能间歇不可用。
+- B站生产页原生弹幕面板仍为 0 条可安全识别发送者行，因此行内按钮防重叠只有
+  `structure regression`。隔离会话未安装真实 PAKKU，真实扩展共存同样未确认。
+- 微博真实详情页没有展开的 `.item2` 楼中楼；该路径目前只有仓库内参考结构回归。
+
+**限制与发布**
+
+- B站 `mid_hash` 本身不含可靠用户名或 UID，CRC32 相同也不足以证明反向身份，因此名单
+  只保留 hash 并明确说明限制；同一 hash 的后续弹幕仍会被过滤。已进入播放器缓存的弹幕
+  仍需下一数据段或刷新后完全消失。
+- 版本/发布状态：源码为 `0.13.0`；功能提交、`origin/master`、`v0.13.0` tag 和 GitHub
+  Release 将按本条更新后的默认流程发布。raw `master` 更新 URL 保持不变。既有
+  `.workbuddy` 和三张 `test/shot-*.png` 脏改动不纳入发布。
+- 下一项最有价值的验证：在用户已安装 PAKKU 的原报告视频中，选择一个真实重复文案组，
+  确认一次操作拉黑其全部发送者，并在刷新后观察这些 hash 的后续移动弹幕均不再出现。

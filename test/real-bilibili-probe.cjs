@@ -279,40 +279,40 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         tool.click(); await pause(120);
         const panel = document.getElementById('ob-dm-manager');
         const initialRows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
-        if (!panel || initialRows.length < 3) return { found: true, panel: !!panel, senderCount: initialRows.length };
+        if (!panel || initialRows.length < 3) return { found: true, panel: !!panel, groupCount: initialRows.length };
 
         const first = initialRows[0];
-        const firstHash = first.getAttribute('data-ob-dm-hash');
+        const firstHashes = (first.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean);
         const single = first.querySelector('.ob-dm-single');
         single.click(); await pause(100);
         let confirm = document.getElementById('ob-confirm');
-        if (!confirm) return { found: true, panel: true, senderCount: initialRows.length, singleConfirm: false };
+        if (!confirm) return { found: true, panel: true, groupCount: initialRows.length, singleConfirm: false };
         confirm.querySelector('.ob-ok').click(); await pause(200);
-        const singleBlocked = window.OB.Index.isBlocked('bili:dmhash:' + firstHash);
+        const singleBlocked = !!firstHashes.length && firstHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
         let toast = document.getElementById('ob-toast');
         const singleUndo = toast && toast.querySelector('button');
         if (singleUndo) { singleUndo.click(); await pause(200); }
-        const singleRestored = !!singleUndo && !window.OB.Index.isBlocked('bili:dmhash:' + firstHash);
+        const singleRestored = !!singleUndo && firstHashes.every((hash) => !window.OB.Index.isBlocked('bili:dmhash:' + hash));
 
         const currentRows = Array.from(panel.querySelectorAll('.ob-dm-sender'));
-        const batchHashes = currentRows.slice(0, 2).map((row) => row.getAttribute('data-ob-dm-hash'));
-        for (const hash of batchHashes) {
-          const row = panel.querySelector('[data-ob-dm-hash="' + hash + '"]');
+        const batchRows = currentRows.slice(0, 2);
+        const batchHashes = Array.from(new Set(batchRows.flatMap((row) => (row.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean))));
+        for (const row of batchRows) {
           const checkbox = row && row.querySelector('.ob-dm-select');
           if (!checkbox) continue;
           checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles: true }));
         }
         const batch = panel.querySelector('.ob-dm-batch');
-        const batchReady = batchHashes.length === 2 && batch && !batch.disabled && /\(2\)/.test(batch.textContent || '');
+        const batchReady = batchRows.length === 2 && !!batchHashes.length && batch && !batch.disabled && /2组/.test(batch.textContent || '');
         if (batchReady) batch.click();
         await pause(100);
         confirm = document.getElementById('ob-confirm');
         if (confirm) { confirm.querySelector('.ob-ok').click(); await pause(200); }
         const batchBlocked = batchReady && !!confirm && batchHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
         const persons = Object.values(window.OB.Store.persons());
-        const batchSeparate = batchHashes.length === 2 && persons.filter((person) =>
+        const batchSeparate = !!batchHashes.length && persons.filter((person) =>
           person.identities.some((key) => batchHashes.some((hash) => key === 'bili:dmhash:' + hash))
-        ).length === 2;
+        ).length === batchHashes.length;
         toast = document.getElementById('ob-toast');
         const batchUndo = toast && toast.querySelector('button');
         if (batchUndo) { batchUndo.click(); await pause(200); }
@@ -322,7 +322,11 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         return {
           found: true,
           panel: true,
-          senderCount: initialRows.length,
+          groupCount: initialRows.length,
+          senderCount: new Set(initialRows.flatMap((row) => (row.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean))).size,
+          multiSenderGroupCount: initialRows.filter((row) => (row.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean).length > 1).length,
+          singleSenderCount: firstHashes.length,
+          batchSenderCount: batchHashes.length,
           singleConfirm: true,
           singleBlocked,
           singleRestored,
@@ -334,7 +338,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         };
       });
       const dm = result.danmakuTool || {};
-      if (!dm.found || !dm.panel || dm.senderCount < 3 || !dm.singleConfirm || !dm.singleBlocked || !dm.singleRestored || !dm.batchReady || !dm.batchConfirm || !dm.batchBlocked || !dm.batchSeparate || !dm.batchRestored) {
+      if (!dm.found || !dm.panel || dm.groupCount < 3 || dm.senderCount < 3 || !dm.singleConfirm || !dm.singleBlocked || !dm.singleRestored || !dm.batchReady || !dm.batchConfirm || !dm.batchBlocked || !dm.batchSeparate || !dm.batchRestored) {
         result.errors.push('验证失败：真实弹幕段未提供可用的单条与批量本地屏蔽工具');
       }
     }

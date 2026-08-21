@@ -27,9 +27,20 @@ const targets = [
   { id: 'x', url: 'https://x.com/home' },
   { id: 'douyin', url: 'https://www.douyin.com/' },
 ];
-const requestedIds = new Set(process.argv.slice(2));
-const selectedTargets = requestedIds.size ? targets.filter((target) => requestedIds.has(target.id)) : targets;
+const args = process.argv.slice(2);
+const requestedIds = new Set(args.filter((arg) => !arg.startsWith('--')));
+const requestedUrlArg = args.find((arg) => arg.startsWith('--url='));
+const requestedUrl = requestedUrlArg ? requestedUrlArg.slice('--url='.length) : '';
+const safeRequestedUrl = (() => {
+  try {
+    const parsed = new URL(requestedUrl);
+    return parsed.protocol === 'https:' && /(^|\.)weibo\.com$/.test(parsed.hostname) ? parsed.href : '';
+  } catch (error) { return ''; }
+})();
+const selectedTargets = (requestedIds.size ? targets.filter((target) => requestedIds.has(target.id)) : targets)
+  .map((target) => target.id === 'weibo' && safeRequestedUrl ? { ...target, url: safeRequestedUrl } : target);
 const showDetails = process.argv.includes('--detail');
+const verifyLocal = process.argv.includes('--verify-local');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
@@ -48,7 +59,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       try {
         const response = await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 40000 });
         result.loaded = !!response && response.ok();
-        await sleep(5000);
+        await sleep(target.id === 'weibo' && safeRequestedUrl ? 8000 : 5000);
         result.page = await page.evaluate(({ id, showDetails }) => {
           const adapter = window.OB && window.OB.adapters[id];
           const entries = [];
@@ -64,12 +75,26 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
               }
             }
           }
-          const detailSelectors = ['article', '[action-type="feed_list_item"]', '.WB_feed_type', 'article[class*="vue-card"]', '.card-feed', '[data-user-card]', '[data-usercard]', '[usercard]', '[data-uid]', 'a[href*="/u/"]', 'a[href*="/n/"]'];
+          const detailSelectors = ['article', '[action-type="feed_list_item"]', '.WB_feed_type', 'article[class*="vue-card"]', '.card-feed', '.wbpro-list > .item1', '.wbpro-list .list2 > .item2', '[data-user-card]', '[data-usercard]', '[usercard]', '[data-uid]', 'a[href*="/u/"]', 'a[href*="/n/"]'];
           const detail = showDetails ? detailSelectors.map((selector) => ({
             selector,
             count: document.querySelectorAll(selector).length,
             samples: Array.from(document.querySelectorAll(selector)).slice(0, 3).map((el) => ({ tag: el.tagName, id: el.id, className: el.className, href: el.getAttribute('href'), usercard: el.getAttribute('data-user-card') || el.getAttribute('data-usercard') || el.getAttribute('usercard') || el.getAttribute('data-uid'), text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120) })),
           })) : undefined;
+          const platform = id === 'weibo' ? (() => {
+            const comments = Array.from(document.querySelectorAll('.wbpro-list > .item1, .wbpro-list .list2 > .item2'));
+            const commentInfos = comments.map((item) => adapter && adapter.extract(item));
+            const users = window.OB && window.OB.collectUsers(document) || [];
+            const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+            return {
+              commentCount: comments.length,
+              identifiedCommentCount: commentInfos.filter((info) => info && info.keys && info.keys.length).length,
+              inlineButtonCount: document.querySelectorAll('.ob-weibo-comment-block').length,
+              duplicateInlineQuickCount: document.querySelectorAll('.item1 > .item1in > .con1 > .info > .opt > .ob-quick, .item2 > .item2in > .con2 > .info > .opt > .ob-quick').length,
+              collectedUserCount: users.length,
+              bulkLabel: bulk && bulk.textContent || '',
+            };
+          })() : undefined;
           return {
             finalUrl: location.href,
             title: document.title,
@@ -80,8 +105,41 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             samples: entries.slice(0, 5),
             pageText: (document.body && document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 220),
             detail,
+            platform,
           };
         }, { id: target.id, showDetails });
+        if (target.id === 'weibo' && verifyLocal) {
+          if (result.page && result.page.platform && result.page.platform.duplicateInlineQuickCount) {
+            result.errors.push('验证失败：微博评论常驻入口旁重复注入了快捷按钮');
+          }
+          result.localBlock = await page.evaluate(async () => {
+            const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const adapter = window.OB && window.OB.adapters.weibo;
+            const row = document.querySelector('.wbpro-list > .item1, .wbpro-list .list2 > .item2');
+            const button = row && row.querySelector('.ob-weibo-comment-block');
+            const info = adapter && row && adapter.extract(row);
+            const key = info && info.keys && info.keys[0];
+            const post = document.querySelector('article');
+            if (!row || !button || !key) return { found: false, row: !!row, button: !!button, identity: !!key };
+            button.click(); await pause(100);
+            const confirm = document.getElementById('ob-confirm');
+            const named = !!confirm && !!info.label && confirm.textContent.includes(info.label);
+            if (!confirm) return { found: true, confirm: false };
+            confirm.querySelector('.ob-ok').click(); await pause(220);
+            const blocked = window.OB.Index.isBlocked(key);
+            const hidden = row.classList.contains('ob-hidden') && (getComputedStyle(row).display === 'none' || row.getBoundingClientRect().height === 0);
+            const postVisible = !!post && getComputedStyle(post).display !== 'none' && post.getBoundingClientRect().height > 0;
+            const toast = document.getElementById('ob-toast');
+            const undo = toast && toast.querySelector('button');
+            if (undo) { undo.click(); await pause(220); }
+            const restored = !!undo && !window.OB.Index.isBlocked(key) && getComputedStyle(row).display !== 'none' && row.getBoundingClientRect().height > 0;
+            return { found: true, confirm: true, named, blocked, hidden, postVisible, restored };
+          });
+          const local = result.localBlock || {};
+          if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.restored) {
+            result.errors.push('验证失败：微博详情评论本地拉黑、隔离隐藏或撤销不完整');
+          }
+        }
       } catch (error) {
         result.errors.push(String(error && error.message || error));
       }

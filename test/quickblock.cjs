@@ -29,9 +29,14 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
 <div id="related"></div>
 <bili-comments id="comments"></bili-comments>
 <section class="bpx-player-dm-container" id="dm-panel">
-  <li class="bpx-player-dm-item" data-progress="5000"><span>00:05</span><span>hello danmaku</span></li>
-  <li class="bpx-player-dm-item" data-progress="9000"><span>00:09</span><span>keep danmaku</span></li>
+  <li class="bpx-player-dm-item" data-progress="5000"><span class="dm-time">00:05</span><span class="dm-text">hello danmaku</span></li>
+  <li class="bpx-player-dm-item" data-progress="9000"><span class="dm-time">00:09</span><span class="dm-text">keep danmaku</span></li>
 </section>
+<style>
+  #dm-panel .bpx-player-dm-item { box-sizing:border-box; display:flex; align-items:center; gap:8px; width:320px; height:32px; margin:0; }
+  #dm-panel .dm-time { flex:0 0 42px; }
+  #dm-panel .dm-text { min-width:0; flex:1 1 auto; overflow:hidden; white-space:nowrap; }
+</style>
 <script>
   const related = document.getElementById('related');
   for (let i = 0; i < 34; i++) {
@@ -103,6 +108,9 @@ const SEGMENT = Buffer.concat([
   dmElem('678f8529', 'hello danmaku', 5000),
   dmElem('a9900557', 'keep danmaku', 9000),
   dmElem('0a6216d9', 'uid mapped danmaku', 11000),
+  dmElem('11223344', 'repeat danmaku', 12000),
+  dmElem('55667788', 'repeat danmaku', 12100),
+  dmElem('fd09ed1d', 'known comment user danmaku', 13000),
 ]);
 
 // 人工合成：PAKKU 先于 OmniBlock 安装时的公开 pakku_open/pakku_send 回调契约。
@@ -256,12 +264,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (close) close.click();
       return { exists: true, visible, text: tool.textContent, rows };
     });
-    if (pakkuIntercept.intercepted === 1 && pakkuIntercept.blockedRemoved && pakkuIntercept.unblockedKept && pakkuFallback.exists && pakkuFallback.visible && pakkuFallback.rows === 3)
+    if (pakkuIntercept.intercepted === 1 && pakkuIntercept.blockedRemoved && pakkuIntercept.unblockedKept && pakkuFallback.exists && pakkuFallback.visible && pakkuFallback.rows === 5)
       report.pass.push('QB-P PAKKU 等价包装器截走首段 XHR 后，工具仍主动读取且伪造响应先应用本地屏蔽');
     else report.fail.push('QB-P PAKKU/首段时序兼容失败：' + JSON.stringify({ pakkuIntercept, pakkuFallback }));
 
     const allDmBlocked = await page.evaluate(() => {
-      const keys = ['bili:dmhash:678f8529', 'bili:dmhash:a9900557', 'bili:dmhash:0a6216d9'];
+      const keys = [
+        'bili:dmhash:678f8529', 'bili:dmhash:a9900557', 'bili:dmhash:0a6216d9',
+        'bili:dmhash:11223344', 'bili:dmhash:55667788', 'bili:dmhash:fd09ed1d',
+      ];
       window.OB.Store.addIdentityGroups(keys.map((key) => ({ keys: [key], label: 'all blocked fixture' })));
       try {
         const tool = document.getElementById('ob-dm-tool');
@@ -468,26 +479,33 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (!launcher) return { exists: false };
       launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const panel = document.getElementById('ob-dm-manager');
-      const row = panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('hello danmaku'));
+      const row = panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('repeat danmaku'));
       const button = row && row.querySelector('.ob-dm-single');
       if (!panel || !row || !button) return { exists: true, panel: !!panel, row: !!row, button: !!button };
+      const groupedMeta = row.textContent.includes('2 位发送者');
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, panel: true, row: true, button: true, confirm: false };
+      const confirmsTwo = /2 位发送者/.test(confirm.textContent || '');
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
-      const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
+      const keys = ['bili:dmhash:11223344', 'bili:dmhash:55667788'];
+      const blocked = keys.every((key) => window.OB.Index.isBlocked(key));
+      window.OB.openOptions();
+      const settingsItems = Array.from(document.querySelectorAll('#ob-list .ob-item')).filter((item) => /11223344|55667788/.test(item.textContent));
+      const settingsReadable = settingsItems.length === 2 && settingsItems.every((item) => /B站弹幕 hash/.test(item.textContent) && /同一发送者/.test(item.textContent) && /repeat danmaku/.test(item.textContent));
+      window.OB.openOptions();
       const toast = document.getElementById('ob-toast');
       const undo = toast && toast.querySelector('button');
       if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       return {
-        exists: true, panel: true, row: true, button: true, confirm: true, blocked,
-        restored: !!undo && !window.OB.Index.isBlocked('bili:dmhash:678f8529'),
+        exists: true, panel: true, row: true, button: true, confirm: true, groupedMeta, confirmsTwo, blocked, settingsReadable,
+        restored: !!undo && keys.every((key) => !window.OB.Index.isBlocked(key)),
         count: document.querySelectorAll('#ob-dm-manager .ob-dm-sender').length,
       };
     });
-    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.blocked && dmManagerSingle.restored && dmManagerSingle.count === 3)
-      report.pass.push('QB-M 独立弹幕工具列出段数据并支持单个发送者屏蔽与撤销');
-    else report.fail.push('QB-M 独立弹幕单个屏蔽入口错误：' + JSON.stringify(dmManagerSingle));
+    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.groupedMeta && dmManagerSingle.confirmsTwo && dmManagerSingle.blocked && dmManagerSingle.settingsReadable && dmManagerSingle.restored && dmManagerSingle.count === 5)
+      report.pass.push('QB-M 相同弹幕按文案聚合，单击屏蔽组内全部发送者并在名单解释 hash 作用');
+    else report.fail.push('QB-M 弹幕文案聚合单条屏蔽错误：' + JSON.stringify(dmManagerSingle));
 
     const dmManagerBatch = await page.evaluate(async () => {
       const launcher = document.getElementById('ob-dm-tool');
@@ -495,7 +513,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (!document.getElementById('ob-dm-manager')) { launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80)); }
       const panel = document.getElementById('ob-dm-manager');
       const rows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
-      const targets = rows.filter((row) => row.textContent.includes('keep danmaku') || row.textContent.includes('uid mapped danmaku'));
+      const targets = rows.filter((row) => row.textContent.includes('repeat danmaku') || row.textContent.includes('uid mapped danmaku'));
       for (const row of targets) {
         const checkbox = row.querySelector('.ob-dm-select');
         checkbox.checked = true; checkbox.dispatchEvent(new Event('change', { bubbles: true }));
@@ -506,8 +524,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, panel: true, targets: 2, button: true, confirm: false };
+      const confirmsThree = /3 位弹幕发送者/.test(confirm.textContent || '');
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
-      const keys = ['bili:dmhash:a9900557', 'bili:dmhash:0a6216d9'];
+      const keys = ['bili:dmhash:11223344', 'bili:dmhash:55667788', 'bili:dmhash:0a6216d9'];
       const persons = Object.values(window.OB.Store.persons());
       const groups = persons.filter((person) => person.identities.some((key) => keys.includes(key)));
       const blocked = keys.every((key) => window.OB.Index.isBlocked(key));
@@ -516,15 +535,48 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const undo = toast && toast.querySelector('button');
       if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       return {
-        exists: true, panel: true, targets: 2, button: true, confirm: true, blocked,
-        separate: groups.length === 2 && groups.every((person) => person.identities.filter((key) => keys.includes(key)).length === 1),
+        exists: true, panel: true, targets: 2, button: true, confirm: true, confirmsThree, blocked,
+        separate: groups.length === 3 && groups.every((person) => person.identities.filter((key) => keys.includes(key)).length === 1),
         writes,
         restored: !!undo && keys.every((key) => !window.OB.Index.isBlocked(key)),
       };
     });
-    if (dmManagerBatch.exists && dmManagerBatch.panel && dmManagerBatch.targets === 2 && dmManagerBatch.button && dmManagerBatch.confirm && dmManagerBatch.blocked && dmManagerBatch.separate && dmManagerBatch.writes === 1 && dmManagerBatch.restored)
-      report.pass.push('QB-N 弹幕工具勾选批量屏蔽逐人存储、单次提交并可整体撤销');
+    if (dmManagerBatch.exists && dmManagerBatch.panel && dmManagerBatch.targets === 2 && dmManagerBatch.button && dmManagerBatch.confirm && dmManagerBatch.confirmsThree && dmManagerBatch.blocked && dmManagerBatch.separate && dmManagerBatch.writes === 1 && dmManagerBatch.restored)
+      report.pass.push('QB-N 弹幕工具勾选文案组后展开、去重全部发送者，逐人存储并整体撤销');
     else report.fail.push('QB-N 弹幕批量屏蔽入口错误：' + JSON.stringify(dmManagerBatch));
+
+    const dmHashIdentityBoundary = await page.evaluate(async () => {
+      const panel = document.getElementById('ob-dm-manager');
+      const row = panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('known comment user danmaku'));
+      const button = row && row.querySelector('.ob-dm-single');
+      if (!panel || !row || !button) return { exists: false };
+      button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      if (!confirm) return { exists: true, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const person = Object.values(window.OB.Store.persons()).find((item) => item.identities.includes('bili:dmhash:fd09ed1d'));
+      window.OB.openOptions();
+      const settingsRow = Array.from(document.querySelectorAll('#ob-list .ob-item')).find((item) => item.textContent.includes('fd09ed1d'));
+      const settingsText = settingsRow && settingsRow.textContent || '';
+      window.OB.openOptions();
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      return {
+        exists: true,
+        confirm: true,
+        label: person && person.label,
+        identities: person && person.identities || [],
+        settingsText,
+        restored: !!undo && !window.OB.Index.isBlocked('bili:uid:222') && !window.OB.Index.isBlocked('bili:dmhash:fd09ed1d'),
+      };
+    });
+    if (dmHashIdentityBoundary.exists && dmHashIdentityBoundary.confirm && dmHashIdentityBoundary.label === 'B站弹幕发送者'
+      && !dmHashIdentityBoundary.identities.includes('bili:uid:222') && dmHashIdentityBoundary.identities.includes('bili:dmhash:fd09ed1d')
+      && !/B站 UID：222/.test(dmHashIdentityBoundary.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmHashIdentityBoundary.settingsText)
+      && /未提供昵称\/UID/.test(dmHashIdentityBoundary.settingsText) && dmHashIdentityBoundary.restored) {
+      report.pass.push('QB-T 弹幕 hash 即使与已加载评论 UID 的 CRC32 相同，也保持 hash 身份且明确昵称/UID 不可用');
+    } else report.fail.push('QB-T 弹幕 hash 身份边界错误：' + JSON.stringify(dmHashIdentityBoundary));
 
     const originalViewport = page.viewportSize() || { width: 1280, height: 720 };
     const layoutState = async () => page.evaluate(() => {
@@ -557,12 +609,19 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const row = document.querySelector('#dm-panel .bpx-player-dm-item');
       const button = row.querySelector('.ob-dm-block');
       if (!button) return { exists: false };
+      const content = row.querySelector('.dm-text');
+      const buttonRect = button.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      const layoutReserved = row.getAttribute('data-ob-dm-action') === '1'
+        && parseFloat(getComputedStyle(row).paddingRight) >= buttonRect.width
+        && contentRect.right <= buttonRect.left;
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, confirm: false };
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 80));
       return {
         exists: true,
+        layoutReserved,
         confirm: true,
         blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'),
         hidden: row.getAttribute('data-ob-dm-blocked') === '1',
@@ -570,7 +629,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         bars: document.querySelectorAll('#dm-panel .ob-bar').length,
       };
     });
-    if (dm.exists && dm.confirm && dm.blocked && dm.hidden && dm.visuallyHidden && dm.bars === 0) report.pass.push('QB-H 弹幕列表按 mid_hash 拉黑后无提示、零占位消失（XHR 段数据）');
+    if (dm.exists && dm.layoutReserved && dm.confirm && dm.blocked && dm.hidden && dm.visuallyHidden && dm.bars === 0) report.pass.push('QB-H 弹幕列表为行内按钮预留空间，按 mid_hash 拉黑后无提示、零占位消失');
     else report.fail.push('QB-H 弹幕列表拉黑失败：' + JSON.stringify(dm));
 
     const dmUndo = await page.evaluate(async () => {
@@ -649,15 +708,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await pakkuBeforePage.waitForFunction(() => {
       const tool = document.getElementById('ob-dm-tool');
-      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(3)');
+      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(6)');
     }, null, { timeout: 2500, polling: 100 }).catch(() => {});
     const pakkuBeforeTool = await pakkuBeforePage.evaluate(() => {
       const tool = document.getElementById('ob-dm-tool');
       return { visible: !!tool && getComputedStyle(tool).display !== 'none', text: tool && tool.textContent };
     });
     await pakkuBeforePage.close();
-    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(3)'))
-      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 3 位发送者');
+    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(6)'))
+      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 6 位发送者');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
   } catch (error) {
     report.fail.push('FATAL: ' + (error && error.message || error));

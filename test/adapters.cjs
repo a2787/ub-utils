@@ -82,6 +82,34 @@ const cases = [
   },
 ];
 
+// item1 来自 2026-08-21 未登录真实详情页捕获；item2 来自同版本本地 Pynseq-Weibo 参考结构。
+const WEIBO_DETAIL_FIXTURE = `
+  <article class="woo-panel-main">
+    <header><a href="/u/1234567890" usercard="1234567890" nick-name="微博作者">微博作者</a></header>
+  </article>
+  <div class="wbpro-list">
+    <div class="item1">
+      <div class="woo-box-flex item1in">
+        <div><a href="/u/123450001"><div usercard="123450001"></div></a></div>
+        <div class="con1">
+          <div class="text"><a href="/u/123450001" usercard="123450001">评论作者甲</a><span>评论正文</span><a href="/u/999990001">被提及用户</a></div>
+          <div class="info"><div>刚刚</div><div class="opt"></div></div>
+        </div>
+      </div>
+      <div class="list2">
+        <div class="item2">
+          <div class="item2in">
+            <div><a href="/u/123450002"></a></div>
+            <div class="con2">
+              <div class="text"><a href="/u/123450002" usercard="123450002">回复作者乙</a><span>回复正文</span></div>
+              <div class="info"><div>刚刚</div><div class="opt"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
 (async () => {
   const report = { pass: [], fail: [], errors: [] };
   const browser = await launchChromium({
@@ -129,6 +157,65 @@ const cases = [
       } else report.fail.push(label + ': ' + JSON.stringify(result));
       await page.close();
     }
+
+    const weiboPage = await browser.newPage();
+    const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + '</body></html>';
+    await weiboPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: weiboFixture }));
+    await weiboPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await weiboPage.goto('https://weibo.com/1234567890/TestDetail', { waitUntil: 'domcontentloaded' });
+    await weiboPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    const weiboDetail = await weiboPage.evaluate(async () => {
+      const adapter = window.OB.adapters.weibo;
+      const comments = Array.from(document.querySelectorAll('.item1,.item2'));
+      const infos = comments.map((item) => adapter.extract(item));
+      const users = window.OB.collectUsers(document);
+      const buttons = Array.from(document.querySelectorAll('.ob-weibo-comment-block'));
+      const duplicateQuickCount = comments.reduce((count, item) => count + item.querySelectorAll('.ob-quick').length, 0);
+      const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+      const second = comments[1];
+      const secondButton = second && second.querySelector('.ob-weibo-comment-block');
+      if (secondButton) secondButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (confirm) confirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const firstRect = comments[0] && comments[0].getBoundingClientRect();
+      const secondRect = second && second.getBoundingClientRect();
+      return {
+        selected: comments.map((item) => adapter.selectors.some((selector) => item.matches(selector))),
+        keys: infos.map((info) => info && info.keys || []),
+        labels: infos.map((info) => info && info.label || ''),
+        containersAreRows: infos.every((info, index) => info && info.container === comments[index]),
+        collectedKeys: users.flatMap((info) => info.keys),
+        buttonCount: buttons.length,
+        duplicateQuickCount,
+        bulkText: bulk && bulk.textContent,
+        confirmText,
+        blockedReply: window.OB.Index.isBlocked('weibo:uid:123450002'),
+        firstVisible: !!firstRect && firstRect.height > 0,
+        replyHidden: !!secondRect && secondRect.height === 0,
+        outerPostVisible: document.querySelector('article').getBoundingClientRect().height > 0,
+      };
+    });
+    const expectedWeiboKeys = ['weibo:uid:1234567890', 'weibo:uid:123450001', 'weibo:uid:123450002'];
+    if (weiboDetail.selected.every(Boolean)
+      && weiboDetail.keys[0].includes('weibo:uid:123450001')
+      && !weiboDetail.keys[0].includes('weibo:uid:999990001')
+      && weiboDetail.keys[1].includes('weibo:uid:123450002')
+      && weiboDetail.labels.join('|').includes('评论作者甲')
+      && weiboDetail.labels.join('|').includes('回复作者乙')
+      && weiboDetail.containersAreRows
+      && expectedWeiboKeys.every((key) => weiboDetail.collectedKeys.includes(key))
+      && weiboDetail.buttonCount === 2
+      && weiboDetail.duplicateQuickCount === 0
+      && /微博\/评论作者\(3\)/.test(weiboDetail.bulkText || '')
+      && weiboDetail.confirmText.includes('回复作者乙')
+      && weiboDetail.blockedReply && weiboDetail.firstVisible && weiboDetail.replyHidden && weiboDetail.outerPostVisible) {
+      report.pass.push('weibo-detail-comments: captured item1 plus referenced item2 single and bulk local blocking');
+    } else report.fail.push('weibo-detail-comments: ' + JSON.stringify(weiboDetail));
+    await weiboPage.close();
   } catch (error) {
     report.errors.push(String(error && error.message || error));
   }
