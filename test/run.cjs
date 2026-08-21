@@ -97,9 +97,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
-  const metadataReady = /\/\/\s*@grant\s+GM_info\b/.test(USERSCRIPT) && /\/\/\s*@connect\s+raw\.githubusercontent\.com\b/.test(USERSCRIPT);
-  if (metadataReady) report.pass.push('J 更新元数据：已声明 GM_info 与更新域名权限');
-  else report.fail.push('J 更新元数据缺少 GM_info 或 @connect 声明');
+  const metadataReady = /\/\/\s*@grant\s+GM_info\b/.test(USERSCRIPT)
+    && /\/\/\s*@connect\s+raw\.githubusercontent\.com\b/.test(USERSCRIPT)
+    && /\/\/\s*@connect\s+api\.bilibili\.com\b/.test(USERSCRIPT)
+    && /\/\/\s*@license\s+GPL-3\.0-only\b/.test(USERSCRIPT);
+  if (metadataReady) report.pass.push('J 更新、B站候选查询权限与 GPLv3 元数据声明完整');
+  else report.fail.push('J 更新、B站候选查询权限或 GPLv3 元数据声明缺失');
   const browser = await launchChromium({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],

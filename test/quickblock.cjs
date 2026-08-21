@@ -20,7 +20,27 @@ window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('
 window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
 window.GM_info = { script: { name:'本地内容过滤增强', version:'${LOCAL_VERSION}', namespace:'https://github.com/a2787/ub-utils' } };
-window.GM_xmlhttpRequest = (o) => { try { if(o.onerror) o.onerror(new Error('no net in test')); } catch(e){} };
+window.__cardCalls = [];
+window.GM_xmlhttpRequest = (o) => {
+  let uid = '';
+  try {
+    const parsed = new URL(String(o && o.url || ''));
+    if (parsed.pathname === '/x/web-interface/card') uid = parsed.searchParams.get('mid') || '';
+  } catch(e) {}
+  if (!uid) { try { if(o.onerror) o.onerror(new Error('no net in test')); } catch(e){} return { abort(){} }; }
+  window.__cardCalls.push(uid);
+  const cards = {
+    '222': { mid:'222', name:'Candidate Bob', level_info:{ current_level:6 } },
+    '33': { mid:'33', name:'Candidate 33', level_info:{ current_level:6 } },
+  };
+  setTimeout(() => {
+    const card = cards[uid] || null;
+    if (o.onload) o.onload({ status:200, responseText:JSON.stringify(card
+      ? { code:0, data:{ card } }
+      : { code:-404, data:null }) });
+  }, 0);
+  return { abort(){} };
+};
 window.GM_openInTab = () => {};
 `;
 fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-qb.js');
@@ -577,6 +597,101 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && /未提供昵称\/UID/.test(dmHashIdentityBoundary.settingsText) && dmHashIdentityBoundary.restored) {
       report.pass.push('QB-T 弹幕 hash 即使与已加载评论 UID 的 CRC32 相同，也保持 hash 身份且明确昵称/UID 不可用');
     } else report.fail.push('QB-T 弹幕 hash 身份边界错误：' + JSON.stringify(dmHashIdentityBoundary));
+
+    const dmUidCandidate = await page.evaluate(async () => {
+      const panel = document.getElementById('ob-dm-manager');
+      const findRow = () => panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('known comment user danmaku'));
+      let row = findRow();
+      const query = row && row.querySelector('.ob-dm-uid-query');
+      if (!panel || !row || !query) return { exists: false, panel: !!panel, row: !!row, query: !!query };
+      window.__cardCalls.length = 0;
+      query.click();
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        row = findRow();
+        if (row && row.querySelector('.ob-dm-uid-candidate')) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const candidate = row && row.querySelector('.ob-dm-uid-candidate');
+      const link = candidate && candidate.querySelector('a');
+      const choose = candidate && candidate.querySelector('.ob-dm-uid-link');
+      const beforeConfirm = !window.OB.Index.isBlocked('bili:uid:222') && !window.OB.Index.isBlocked('bili:dmhash:fd09ed1d');
+      if (!candidate || !choose) return {
+        exists: true, candidate: !!candidate, choose: !!choose, text: row.textContent,
+        calls: window.__cardCalls.slice(), beforeConfirm,
+      };
+      choose.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (!confirm) return { exists: true, candidate: true, choose: true, confirm: false, confirmText };
+      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const person = Object.values(window.OB.Store.persons()).find((item) => item.identities.includes('bili:uid:222'));
+      window.OB.openOptions();
+      const settingsRow = Array.from(document.querySelectorAll('#ob-list .ob-item')).find((item) => item.textContent.includes('B站 UID：222'));
+      const settingsText = settingsRow && settingsRow.textContent || '';
+      window.OB.openOptions();
+      const blockedBoth = !!person && window.OB.Index.isBlocked('bili:uid:222') && window.OB.Index.isBlocked('bili:dmhash:fd09ed1d');
+      const identities = person ? person.identities.slice() : [];
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      return {
+        exists: true,
+        candidate: true,
+        candidateText: candidate.textContent,
+        candidateHref: link && link.href,
+        beforeConfirm,
+        confirm: true,
+        confirmText,
+        calls: window.__cardCalls.slice(),
+        label: person && person.label,
+        identities,
+        settingsText,
+        blockedBoth,
+        restored: !!undo && !window.OB.Index.isBlocked('bili:uid:222') && !window.OB.Index.isBlocked('bili:dmhash:fd09ed1d'),
+      };
+    });
+    if (dmUidCandidate.exists && dmUidCandidate.candidate && /可能发送者/.test(dmUidCandidate.candidateText)
+      && /Candidate Bob/.test(dmUidCandidate.candidateText) && /UID\s*222/.test(dmUidCandidate.candidateText)
+      && /space\.bilibili\.com\/222/.test(dmUidCandidate.candidateHref || '') && dmUidCandidate.beforeConfirm
+      && dmUidCandidate.confirm && /可能发送者/.test(dmUidCandidate.confirmText)
+      && dmUidCandidate.calls.length === 1 && dmUidCandidate.calls[0] === '222'
+      && dmUidCandidate.label === 'Candidate Bob'
+      && dmUidCandidate.identities.includes('bili:uid:222') && dmUidCandidate.identities.includes('bili:dmhash:fd09ed1d')
+      && /B站 UID：222/.test(dmUidCandidate.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmUidCandidate.settingsText)
+      && dmUidCandidate.blockedBoth && dmUidCandidate.restored) {
+      report.pass.push('QB-U UID 反查只展示可能发送者，手动确认后才合并 hash/UID 并可整体撤销');
+    } else report.fail.push('QB-U 弹幕 UID 候选确认错误：' + JSON.stringify(dmUidCandidate));
+
+    const dmUidCollision = await page.evaluate(async () => {
+      const panel = document.getElementById('ob-dm-manager');
+      const findRow = () => panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('uid mapped danmaku'));
+      let row = findRow();
+      const query = row && row.querySelector('.ob-dm-uid-query');
+      if (!row || !query) return { exists: false };
+      window.__cardCalls.length = 0;
+      query.click();
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        row = findRow();
+        const button = row && row.querySelector('.ob-dm-uid-query');
+        if (row && button && !button.disabled && row.querySelector('.ob-dm-uid-results')) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const candidates = row ? Array.from(row.querySelectorAll('.ob-dm-uid-candidate')).map((item) => item.textContent) : [];
+      const calls = window.__cardCalls.slice().sort();
+      const untouched = !window.OB.Index.isBlocked('bili:uid:33') && !window.OB.Index.isBlocked('bili:uid:6130768180');
+      const close = row && row.querySelector('.ob-dm-uid-query');
+      if (close) close.click();
+      return { exists: true, candidates, calls, untouched };
+    });
+    if (dmUidCollision.exists && dmUidCollision.candidates.length === 1
+      && /Candidate 33/.test(dmUidCollision.candidates[0]) && /UID\s*33/.test(dmUidCollision.candidates[0])
+      && !/6130768180/.test(dmUidCollision.candidates.join(' '))
+      && dmUidCollision.calls.length === 2 && dmUidCollision.calls.includes('33') && dmUidCollision.calls.includes('6130768180')
+      && dmUidCollision.untouched) {
+      report.pass.push('QB-V CRC32 碰撞候选逐个校验，剔除不存在账号且查询本身不写入 UID');
+    } else report.fail.push('QB-V 弹幕 UID 碰撞校验错误：' + JSON.stringify(dmUidCollision));
 
     const originalViewport = page.viewportSize() || { width: 1280, height: 720 };
     const layoutState = async () => page.evaluate(() => {

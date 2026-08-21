@@ -473,3 +473,68 @@
   v0.13.0。既有 `.workbuddy` 和三张 `test/shot-*.png` 脏改动未纳入发布。
 - 下一项最有价值的验证：在用户已安装 PAKKU 的原报告视频中，选择一个真实重复文案组，
   确认一次操作拉黑其全部发送者，并在刷新后观察这些 hash 的后续移动弹幕均不再出现。
+
+### 2026-08-21 - v0.14.0 - B站弹幕 UID 候选与 GPLv3
+
+**范围与改动文件**
+
+- `omniblock.user.js`：弹幕文案组新增 `UID?` 候选查询。按 PAKKU 的 GPLv3 CRC32 反查
+  算法搜索 1–10 位数字 UID，再通过不携带登录 Cookie 的 B站用户卡片请求剔除不存在账号；
+  所有结果均标作「可能发送者」，不会自动写入 UID。用户打开候选主页核对并确认后，
+  `bili:dmhash:<hash>` 与 `bili:uid:<uid>` 才合并到同一人物，后续同时覆盖弹幕和评论。
+- `test/quickblock.cjs`、`test/run.cjs`、`test/real-bilibili-probe.cjs`：新增候选计算、碰撞
+  多候选逐一校验、查询不改名单、人工关联及撤销、联网权限和真实页面匿名请求断言。
+- `README.md`、`CHANGELOG.md`：同步用户可见流程、隐私边界、CRC32 限制和版本说明。
+- `LICENSE`、`THIRD_PARTY_NOTICES.md`：项目从本版本起改用 `GPL-3.0-only`，记录 PAKKU
+  固定源码提交与改写范围，并保留 Pynseq-Weibo、Pynseq-Douyin 的完整 MIT 声明。
+
+**问题复现与方案边界**
+
+- 修复前原有 `node test/quickblock.cjs` 20 项均通过；加入用户报告对应的 `QB-U` 后，旧版
+  因没有 UID 查询入口而单独失败。v0.13.0 只能保存 `mid_hash`，因此只屏蔽同一 hash 的
+  后续弹幕，不能据此隐藏该发送者以 UID 标识的评论。
+- 当前普通弹幕协议的 `mid_hash` 是 `CRC32(String(uid))`，计算中没有视频 `cid` 或随机盐，
+  因而在协议不变时同一 UID 跨视频得到同一 hash；这不代表反向关系唯一。CRC32 只有
+  32 位，可能有多个数字 UID 碰撞，所以账号存在性校验也不能把候选证明为真实发送者。
+- 查询、只按 hash 拉黑或未确认候选都不会创建 `bili:uid`。只有用户人工确认后才建立
+  UID/hash 关联；该决定避免把不可逆身份伪装成已知 UID，也避免误伤碰撞账号的评论。
+
+**`real-site verified`**
+
+- 2026-08-21，隔离未登录浏览器，
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`：真实首段列出 7 组弹幕和 7 位 hash 发送者；
+  首个尝试的真实 hash 得到数字候选，3 次匿名用户卡片请求筛得 1 个仍存在账号，页面明确
+  显示「可能发送者」。在隔离内存名单中确认后 UID/hash 同时命中，撤销后同时恢复。
+- 同一轮继续识别 2 条根评论、4 条楼中楼和 6 位评论作者；弹幕单组、两组批量，以及评论
+  无占位隐藏与撤销均通过。探针没有触发 B站官方拉黑、举报或其他站内写操作。
+
+**`structure regression`**
+
+- `node test/run.cjs`：11/11；`node test/state.cjs`：6/6；
+  `node test/quickblock.cjs`：22/22；`node test/adapters.cjs`：15/15；
+  `node test/douyin.cjs`：2/2，均通过。
+- `node --check omniblock.user.js`、`node --check test/quickblock.cjs`、
+  `node --check test/real-bilibili-probe.cjs`、`node --check test/run.cjs` 和
+  `git diff --check`：均通过。
+- `QB-U/QB-V` 覆盖单候选人工确认、CRC32 多候选逐个账号校验、无效账号剔除、查询不写
+  UID、UID/hash 同人物存储、名单昵称/UID/hash 展示和整体撤销。PAKKU 算法夹具基于
+  `xmcp/pakku.js` 提交 `2cb6f52aba70d6b685aaff9a1c03aabec7f299b2`，不标作真实扩展验证。
+
+**`blocked`、限制与发布**
+
+- 发布前一轮 `node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool`
+  中，弹幕工具单条/批量事务通过，但评论区只返回 `BILI-COMMENTS-SPINNER` 且没有评论
+  组件，因此该轮评论验证按 `blocked` 记录；随后完整重试成功。这说明 B站评论数据仍
+  可能间歇不下发。
+- 反查只搜索 1–10 位数字 UID；超过 10 位的账号无法找到。CRC32 碰撞无法自动消除，账号
+  主页与昵称也不足以由程序证明弹幕归属，所以本功能只能提供候选并要求人工确认。
+- 隔离真实站点探针没有安装 PAKKU，真实扩展共存仍为 `blocked`；现有证据是 PAKKU 公开
+  XHR 契约的双注入顺序 `structure regression`。B站未来若改变 `mid_hash` 协议，跨视频
+  稳定性与反查均需重新验证。
+- 用户卡片请求仅在主动点击 `UID?` 后发出，使用 `GM_xmlhttpRequest` 的匿名模式，不发送
+  本地名单或原始浏览数据；B站仍能看到正常网络请求的 IP 和被查询 UID。
+- 版本/发布状态：userscript 为 `0.14.0`，许可证为 `GPL-3.0-only`；此前已经发布的版本
+  仍保留其发布时的 MIT 许可。本条将与功能代码一同提交，随后推送 `origin/master`、创建
+  `v0.14.0` 标签和 GitHub Release。既有 `.workbuddy` 与三张 `test/shot-*.png` 脏改动不纳入发布。
+- 下一项最有价值的验证：用户在已安装 PAKKU 的浏览器中，对熟悉的弹幕发送者查询候选，
+  人工核对主页后确认，并验证其后续弹幕与同 UID 评论在刷新后都完全消失。

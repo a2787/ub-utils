@@ -3,6 +3,34 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 0.14.0 - 2026-08-21
+
+### 新增
+
+- B站弹幕分组新增 `UID?`：按 `mid_hash` 反查 1–10 位数字 UID 候选，再匿名请求 B站
+  用户卡片接口剔除不存在账号。候选始终标为「可能发送者」，并提供主页链接供人工判断。
+- 用户确认某个候选后，名单把该弹幕 hash 与所选 UID 记录为同一人物；后续既过滤对应
+  hash 的弹幕，也隐藏该 UID 的评论。仅查询、只按 hash 拉黑或未确认候选都不会写入 UID。
+
+### 变更
+
+- 项目整体许可证从 MIT 改为 GPLv3-only，以许可兼容方式采用 PAKKU 的 GPLv3 UID 反查
+  实现；Pynseq-Weibo 与 Pynseq-Douyin 的原 MIT 版权和许可声明继续保留在
+  `THIRD_PARTY_NOTICES.md`。
+- userscript 新增 `api.bilibili.com` 连接权限。只有用户主动查询 UID 候选时才使用，
+  请求不携带登录 Cookie，也不发送本地黑名单或原始浏览数据。
+
+### 验证边界
+
+- `real-site verified`：2026-08-21 隔离未登录访问
+  `https://www.bilibili.com/video/BV1eyYRz2E2v`；真实弹幕 hash 产生数字候选，匿名用户卡片
+  校验后展示「可能发送者」。在隔离内存名单中确认候选后 UID 与 hash 同时命中，撤销后
+  两者同时恢复；同轮原有弹幕单组、两组批量和评论无占位隐藏也通过。
+- `structure regression`：22 项 B站聚焦回归覆盖单候选确认、CRC32 多候选逐个账号校验、
+  不存在账号剔除、查询不写 UID、手动关联、设置名单昵称/UID/hash 与整体撤销。
+- `blocked`：普通弹幕协议仍不直接提供 UID。反查只覆盖 1–10 位数字 UID，CRC32 碰撞和
+  超过 10 位的新账号无法自动判定真实发送者；真实 PAKKU 扩展共存仍未在隔离探针安装。
+
 ## 0.13.0 - 2026-08-21
 
 ### 新增

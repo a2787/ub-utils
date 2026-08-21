@@ -14,7 +14,8 @@ const URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$
 const SAVE_SCREENSHOT = process.argv.includes('--screenshot');
 const VERIFY_LOCAL_BUTTON = process.argv.includes('--verify-local');
 const VERIFY_SUB_COMMENT = process.argv.includes('--verify-sub-comment');
-const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool');
+const VERIFY_DANMAKU_UID = process.argv.includes('--verify-danmaku-uid');
+const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VERIFY_DANMAKU_UID;
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
@@ -26,7 +27,22 @@ window.GM_deleteValue = (k) => { delete window.__gm[k]; };
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
-window.GM_xmlhttpRequest = () => {};
+window.GM_xmlhttpRequest = (options) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => { controller.abort(); if(options.ontimeout) options.ontimeout(); }, Number(options.timeout) || 30000);
+  window.fetch(options.url, { method:options.method || 'GET', credentials:'omit', signal:controller.signal })
+    .then(async (response) => {
+      const responseText = await response.text();
+      clearTimeout(timeout);
+      if(options.onload) options.onload({ status:response.status, responseText });
+    })
+    .catch((error) => {
+      clearTimeout(timeout);
+      if(error && error.name === 'AbortError') return;
+      if(options.onerror) options.onerror(error);
+    });
+  return { abort(){ controller.abort(); clearTimeout(timeout); } };
+};
 window.GM_openInTab = () => {};
 window.GM_info = { script:{ version:'${version}' } };
 `;
@@ -54,6 +70,23 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     page.on('pageerror', (error) => result.errors.push('pageerror: ' + error.message));
+    result.uidCardRequestCount = 0;
+    result.uidCardRouteErrors = [];
+    await page.route('https://api.bilibili.com/x/web-interface/card**', async (route) => {
+      try {
+        const uid = new globalThis.URL(route.request().url()).searchParams.get('mid') || '';
+        if (/^\d+$/.test(uid)) result.uidCardRequestCount++;
+        const requestHeaders = { ...route.request().headers() };
+        delete requestHeaders.cookie;
+        const response = await route.fetch({ headers: requestHeaders });
+        const headers = { ...response.headers(), 'access-control-allow-origin': '*' };
+        delete headers['set-cookie'];
+        await route.fulfill({ response, headers });
+      } catch (error) {
+        result.uidCardRouteErrors.push(String(error && error.message || error));
+        await route.abort('failed');
+      }
+    });
     await page.addInitScript({ content: shim + '\n' + userscript + '\n' + xhrProbe });
     const response = await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
     result.pageLoaded = !!response && response.ok();
@@ -340,6 +373,100 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       const dm = result.danmakuTool || {};
       if (!dm.found || !dm.panel || dm.groupCount < 3 || dm.senderCount < 3 || !dm.singleConfirm || !dm.singleBlocked || !dm.singleRestored || !dm.batchReady || !dm.batchConfirm || !dm.batchBlocked || !dm.batchSeparate || !dm.batchRestored) {
         result.errors.push('验证失败：真实弹幕段未提供可用的单条与批量本地屏蔽工具');
+      }
+    }
+
+    if (VERIFY_DANMAKU_UID) {
+      result.danmakuUid = await page.evaluate(async () => {
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const tool = document.getElementById('ob-dm-tool');
+        if (!tool || getComputedStyle(tool).display === 'none') return { found: false };
+        tool.click(); await pause(120);
+        const panel = document.getElementById('ob-dm-manager');
+        if (!panel) return { found: true, panel: false };
+        const attempted = [];
+        const lookupStates = [];
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const rows = Array.from(panel.querySelectorAll('.ob-dm-sender'));
+          const row = rows.find((item) => {
+            const content = item.getAttribute('data-ob-dm-content') || '';
+            const hashes = (item.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean);
+            return hashes.length === 1 && !attempted.includes(content);
+          });
+          if (!row) break;
+          const content = row.getAttribute('data-ob-dm-content') || '';
+          attempted.push(content);
+          const query = row.querySelector('.ob-dm-uid-query');
+          if (!query) continue;
+          query.click();
+          const deadline = Date.now() + 20000;
+          let current = null;
+          while (Date.now() < deadline) {
+            current = Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) =>
+              (item.getAttribute('data-ob-dm-content') || '') === content
+            );
+            const currentQuery = current && current.querySelector('.ob-dm-uid-query');
+            const results = current && current.querySelector('.ob-dm-uid-results');
+            if (currentQuery && !currentQuery.disabled && results && !/正在计算|等待查询/.test(results.textContent || '')) break;
+            await pause(100);
+          }
+          const candidate = current && current.querySelector('.ob-dm-uid-candidate');
+          const errorSection = current && current.querySelector('[data-ob-dm-uid-error]');
+          lookupStates.push({
+            candidateCount: current ? current.querySelectorAll('.ob-dm-uid-candidate').length : 0,
+            failed: !!errorSection,
+            error: errorSection && errorSection.getAttribute('data-ob-dm-uid-error') || '',
+          });
+          if (!candidate) {
+            const close = current && current.querySelector('.ob-dm-uid-query');
+            if (close && !close.disabled && close.getAttribute('aria-expanded') === 'true') close.click();
+            continue;
+          }
+          const profile = candidate.querySelector('a');
+          const choose = candidate.querySelector('.ob-dm-uid-link');
+          const uidMatch = String(profile && profile.href || '').match(/space\.bilibili\.com\/(\d+)/);
+          const section = candidate.closest('.ob-dm-uid-hash');
+          const hashMatch = String(section && section.querySelector('.ob-dm-uid-hash-label') && section.querySelector('.ob-dm-uid-hash-label').textContent || '').match(/([0-9a-f]{8})/i);
+          if (!choose || !uidMatch || !hashMatch) continue;
+          const uid = uidMatch[1];
+          const hash = hashMatch[1].toLowerCase();
+          choose.click(); await pause(100);
+          const confirm = document.getElementById('ob-confirm');
+          const confirmText = confirm && confirm.textContent || '';
+          if (!confirm) return { found: true, panel: true, attempted: attempted.length, candidateFound: true, confirm: false };
+          confirm.querySelector('.ob-ok').click(); await pause(250);
+          const person = Object.values(window.OB.Store.persons()).find((item) =>
+            item.identities.includes('bili:uid:' + uid) && item.identities.includes('bili:dmhash:' + hash)
+          );
+          const blockedBoth = window.OB.Index.isBlocked('bili:uid:' + uid) && window.OB.Index.isBlocked('bili:dmhash:' + hash);
+          const toast = document.getElementById('ob-toast');
+          const undo = toast && toast.querySelector('button');
+          if (undo) { undo.click(); await pause(250); }
+          const close = panel.querySelector('.ob-dm-close');
+          if (close) close.click();
+          return {
+            found: true,
+            panel: true,
+            attempted: attempted.length,
+            lookupStates,
+            candidateFound: true,
+            candidateMarked: /可能发送者/.test(candidate.textContent || ''),
+            uidResolved: /^\d+$/.test(uid),
+            hashResolved: /^[0-9a-f]{8}$/.test(hash),
+            confirm: true,
+            confirmMarked: /可能发送者/.test(confirmText),
+            linked: !!person,
+            blockedBoth,
+            restored: !!undo && !window.OB.Index.isBlocked('bili:uid:' + uid) && !window.OB.Index.isBlocked('bili:dmhash:' + hash),
+          };
+        }
+        const close = panel.querySelector('.ob-dm-close');
+        if (close) close.click();
+        return { found: true, panel: true, attempted: attempted.length, candidateFound: false, lookupStates };
+      });
+      const uid = result.danmakuUid || {};
+      if (!uid.found || !uid.panel || !uid.candidateFound || !uid.candidateMarked || !uid.uidResolved || !uid.hashResolved || !uid.confirm || !uid.confirmMarked || !uid.linked || !uid.blockedBoth || !uid.restored || !result.uidCardRequestCount) {
+        result.errors.push('验证失败：真实弹幕 hash 未完成 UID 候选校验、手动关联与撤销');
       }
     }
 

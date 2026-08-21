@@ -1,8 +1,9 @@
 # OmniBlock 拉黑不上限（6 平台统一本地黑名单）
 
 一个浏览器用户脚本：**一份本地黑名单，在 6 个平台已适配的内容条目中隐藏指定用户**。
-无数量上限，名单与浏览数据只保存在本机、不会上传。脚本运行时只有在你主动点击
-“检查更新”时才会请求 GitHub；Tampermonkey 自身的例行更新请求取决于它的更新设置。
+无数量上限，名单与浏览数据只保存在本机、不会上传。主动点击“检查更新”时会请求
+GitHub；在 B站弹幕工具里主动点击 `UID?` 时，会匿名请求 B站用户卡片接口校验数字候选。
+Tampermonkey 自身的例行更新请求取决于它的更新设置。
 
 支持平台：**B站 · 微博 · 知乎 · 百度贴吧 · X(Twitter) · 抖音**（不含小红书）。
 
@@ -11,7 +12,8 @@
   解析不到就保持原样。评论、帖子/动态、搜索结果和作品列表的实际覆盖，以文末验证表为准。
 - **B站视频弹幕**（从拦截或主动只读获取的数据段 `seg.so` 建立当前视频发送者列表，
   相同文案按组显示，单击或勾选批量会屏蔽组内全部发送者，并按 `mid_hash` 过滤；
-  评论 UID 也会经 CRC32 自动映射）
+  已屏蔽的评论 UID 会经 CRC32 正向映射到弹幕；也可主动查询 1–10 位 UID 候选并在人工
+  核对后关联评论身份）
 - **抖音视频弹幕**（网页弹幕带发送者属性时按 uid 隐藏）
 - **抖音推荐流**：刷到被屏蔽作者 → 视觉遮罩 + 自动切下一条（唯一一处"模拟操作"，带安全阀）
 
@@ -29,6 +31,9 @@
    - 打开 Tampermonkey 管理面板 → 「实用工具」→「导入」→ 选 `omniblock.user.js`
    - 或把文件内容复制，新建脚本粘贴保存
 3. 进任意支持的平台，右上角 Tampermonkey 图标 → 「OmniBlock 设置」即可管理名单、导出备份。
+
+> v0.14.0 新增了 `api.bilibili.com` 连接权限，只在你主动查询弹幕 UID 候选时使用；请求
+> 设置为匿名，不携带浏览器登录 Cookie，也不会发送本地黑名单或原始浏览数据。
 
 > 改一行刷新页面即生效，调试最直观。也可发布到 GreasyFork 分享给别人。
 
@@ -76,7 +81,9 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 - B站视频页右下角始终显示 **「弹幕屏蔽(N)」**；数据尚未就绪时显示 `(0)`，脚本会主动
   读取当前视频首段，失败时面板内可点「重新读取」。打开后按弹幕文案分组并显示发送者数；
   点击一组会屏蔽该文案的全部发送者，勾选多组时会展开并去重所有发送者。它不依赖移动
-  弹幕的举报菜单或右侧原生列表，并兼容 PAKKU 接管播放器弹幕请求的加载顺序。
+  弹幕的举报菜单或右侧原生列表，并兼容 PAKKU 接管播放器弹幕请求的加载顺序。每组旁边
+  的 `UID?` 会查询可能发送者；打开候选主页核对后点「确认并拉黑」，名单才会同时保存
+  hash 与 UID，此后该 UID 的评论和对应 hash 的弹幕都会隐藏。
 - 微博详情页当前已加载的每条评论操作区都有 **「本地拉黑」**；屏蔽后只让该评论无占位
   消失。左下角批量入口同时统计当前微博作者和已加载评论作者。
 - 抖音推荐流刷到被屏蔽作者会自动跳过（可选关闭，改为只盖遮罩）。
@@ -105,9 +112,12 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 - **B站弹幕**：固定使用右下角「弹幕屏蔽(N)」工具展示脚本已从弹幕段解析出的发送者；
   即使播放器首段请求被 PAKKU 等扩展接管，入口也不会消失，并会用当前视频 `cid` 主动
   只读获取首段兜底。工具按文案聚合重复弹幕，单条按钮和勾选批量都会展开组内所有
-  `mid_hash`，按发送者去重后逐人保存。B站弹幕段不提供可靠昵称或 UID，名单会明确显示
-  `bili:dmhash:<hash>` 及这一限制，不会从不可逆 hash 反向猜测 UID；同一 hash 的后续
-  弹幕仍会被过滤。
+  `mid_hash`，按发送者去重后逐人保存。普通弹幕段不直接提供昵称或 UID，所以默认名单
+  仍显示 `bili:dmhash:<hash>`。可点 `UID?` 使用 PAKKU 同类算法反查 1–10 位数字候选，再
+  匿名请求 B站用户卡片接口剔除不存在账号。CRC32 有碰撞且新账号 UID 可能超过 10 位，
+  因而结果始终标为「可能发送者」，不会自动写成 `bili:uid`；只有你打开主页核对并确认后，
+  名单才显示昵称、UID 与 hash，并同时覆盖该 UID 的评论。只按 hash 屏蔽时，评论仍需另行
+  屏蔽；同一 hash 的后续弹幕则会继续过滤。
   右侧原生弹幕列表若能与数据段安全对应，仍会补充行内「本地拉黑」，但它不是主要入口。
 - **微博评论**：当前详情页的单条评论操作区常驻「本地拉黑」，使用该行自己的 UID；
   评论中的回复对象或 `@提及` 不会被当作评论作者，找不到可靠身份的行不会出现入口。
@@ -139,16 +149,20 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 - **B站弹幕**在页面拿到数据前拦截实际的 `seg.so` / `list.so` 弹幕段，并在错过首段时按
   当前视频 `cid` 主动只读读取一次；手写轻量 protobuf 解析 `progress`、`mid_hash`、内容。
   PAKKU 的公开 XHR 回调契约会在其伪造响应交给播放器前应用同一本地过滤。`bili:uid:N`
-  经 CRC32 正向映射，或工具直接保存 `bili:dmhash:<hash>`；不会暴力反解 hash、猜测 UID，
-  也不会改写 `view` 元数据响应。
+  经 CRC32 正向映射，或工具直接保存 `bili:dmhash:<hash>`。UID 候选查询只在用户主动点击
+  后初始化约 1 MB 的本地反查表并校验公开用户卡片；未确认候选不会成为身份键，也不会
+  改写 `view` 元数据响应。
 
 ---
 
 ## 致谢 / 许可证
 
-- 整体 **MIT** 许可证。
-- **抖音、微博**两个适配器的行为（选择器策略、`data-e2e` 锚点、推荐流跳过纪律、避开原生"不感兴趣"）脱胎自开源项目 **Pynseq-Douyin** 与 **Pynseq-Weibo**（作者 DanielZenFlow，**MIT**）。本项目按其 MIT 许可证保留了原作者版权与许可声明，并在此致谢。
-- 其余 4 个适配器（B站/知乎/贴吧/X）及统一身份模型、隐藏引擎、弹幕钩子均为本项目自建。
+- 项目整体从 v0.14.0 起使用 **GPLv3-only** 许可证；此前已发布版本仍按各自发布时的许可处理。
+- B站 CRC32 UID 候选反查改编自 **PAKKU / pakku.js**（GPLv3，上游致谢
+  `@dramforever`）；OmniBlock 增加了正向校验、候选标记、公开账号校验与人工确认边界。
+- **抖音、微博**两个适配器的行为（选择器策略、`data-e2e` 锚点、推荐流跳过纪律、避开原生
+  “不感兴趣”）脱胎自 **Pynseq-Douyin** 与 **Pynseq-Weibo**（DanielZenFlow，MIT）。
+  完整第三方版权、许可和固定源码版本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 
@@ -156,7 +170,7 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 
 | 平台 | 当前可验证结果 | 当前限制与未验证范围 |
 |---|---|---|
-| B站 | `real-site verified`：2026-08-21 隔离未登录访问 `https://www.bilibili.com/video/BV1eyYRz2E2v`，v0.13.0 一次真实首段聚合为 6 组文案、7 位发送者，其中一组有 2 人；单击该组屏蔽两人，勾选前两组展开为 3 人，均逐人存储并可整体撤销。发布前最终复核还识别到 2 条根评论、4 条楼中楼和 6 位作者，评论零占位隐藏及撤销成功。 | hash 身份边界和原生列表预留空间另有 `structure regression`。弹幕段不提供可靠昵称/UID，原生列表仍无安全身份行；真实 PAKKU 扩展共存尚未验证，已进播放器缓存的弹幕需下一段或刷新后才完全消失。评论数据曾两次只停在 spinner，已按 `blocked` 保留记录。 |
+| B站 | `real-site verified`：2026-08-21 隔离未登录访问 `https://www.bilibili.com/video/BV1eyYRz2E2v`，v0.14.0 的真实弹幕 hash 产生数字候选，匿名账号校验后展示「可能发送者」；隔离内存中确认后 UID/hash 同时命中，撤销后同时恢复。同轮识别 2 条根评论、4 条楼中楼和 6 位作者，弹幕单组/两组批量及评论零占位隐藏均通过。 | UID 候选碰撞边界另有 `structure regression`。普通弹幕段不直接提供 UID，反查只覆盖 1–10 位数字且无法自动消除 CRC32 碰撞；原生列表仍无安全身份行，真实 PAKKU 扩展共存尚未验证，已进播放器缓存的弹幕需下一段或刷新后才完全消失。 |
 | 微博 | `real-site verified`：2026-08-21 隔离未登录访问 `https://weibo.com/1467079775/ReoaRxpSH`，识别 6/6 条已加载根评论并显示 6 个常驻入口；批量入口统计发帖人和评论作者共 7 人。隔离内存中拉黑一条评论后只隐藏该行、正文保留，撤销恢复。 | 当前真实页没有展开楼中楼；楼中楼 `.item2` 仍为 `structure regression`。已登录虚拟列表和其他微博前端变体仍需逐结构验证。 |
 | 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：隔离浏览器被重定向到登录页。 |
 | 贴吧 | `real-site verified`：2026-08-20 隔离未登录访问公开主题列表，8 个真实候选中 6 个解析出 UID，另外 2 个因无可靠身份保持原样；主楼层 `data-field` 另有 `structure regression`。 | `blocked`：该入口没有提供可核验的单条楼中楼结构；集合容器已明确不扫描，主楼层和楼中楼仍需真实帖子页复核。 |
@@ -168,7 +182,7 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 ```powershell
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
-node test/quickblock.cjs          # B站楼中楼、弹幕文案组、身份边界、PAKKU 与 XHR 共 20 项回归
+node test/quickblock.cjs          # B站楼中楼、弹幕分组、UID 候选、PAKKU 与 XHR 共 22 项回归
 node test/adapters.cjs            # 五个平台身份契约及微博详情评论入口共 15 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
 node test/real-bilibili-probe.cjs --verify-local # 隔离真实 B站页严格只读探针
@@ -177,7 +191,10 @@ node test/real-platform-probe.cjs <platform>      # 其余平台隔离真实页�
 node test/real-platform-probe.cjs weibo --url=https://weibo.com/<uid>/<mid> --verify-local
 ```
 
-参考实现：微博和抖音的策略持续对照 [Pynseq-Weibo](https://github.com/DanielZenFlow/Pynseq-Weibo) 与 [Pynseq-Douyin](https://github.com/DanielZenFlow/Pynseq-Douyin)；知乎的本地屏蔽行为对照 [XIU2/UserScript](https://github.com/XIU2/UserScript/wiki/%E7%9F%A5%E4%B9%8E-%E5%A2%9E%E5%BC%BA)。
+参考实现：B站 UID 候选算法对照 [pakku.js](https://github.com/xmcp/pakku.js)；微博和抖音
+策略持续对照 [Pynseq-Weibo](https://github.com/DanielZenFlow/Pynseq-Weibo) 与
+[Pynseq-Douyin](https://github.com/DanielZenFlow/Pynseq-Douyin)；知乎的本地屏蔽行为对照
+[XIU2/UserScript](https://github.com/XIU2/UserScript/wiki/%E7%9F%A5%E4%B9%8E-%E5%A2%9E%E5%BC%BA)。
 
 ---
 

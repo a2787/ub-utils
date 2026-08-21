@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.13.0
+// @version       0.14.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -21,24 +21,27 @@
 // @grant         GM_openInTab
 // @grant         GM_info
 // @connect       raw.githubusercontent.com
+// @connect       api.bilibili.com
 // @run-at        document-start
 // @sandbox       raw
 // @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
 // @downloadURL   https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
-// @license       MIT
-// @author        vibeme (抖音/微博适配器行为脱胎自 Pynseq-Douyin / Pynseq-Weibo，MIT；其余适配器自建)
+// @license       GPL-3.0-only
+// @author        vibeme（含 PAKKU GPLv3 与 Pynseq MIT 来源代码，详见 README）
 // ==/UserScript==
 
 /*
  * OmniBlock —— 跨平台本地黑名单
+ * Copyright (C) 2026 vibeme
+ * SPDX-License-Identifier: GPL-3.0-only
  * --------------------------------------------------------------------------
  * 设计要点（详见项目计划文档）：
  *  - 一份共享名单（GM 单键存储），6 个平台通用；可导出/导入 JSON 备份。
  *  - 评论/弹幕固定零占位隐藏；其他内容可折叠或完全消失；抖音推荐流可自动跳过。
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
- *  - B站弹幕：拦截并主动读取 seg.so，兼容 PAKKU 的伪造 XHR 回调，手写轻量 varint 解析 + CRC32 正向映射过滤（无需彩虹表）。
- *  - 名单与浏览数据只在本机保存，不上传；仅用户主动检查更新时请求脚本更新地址。
+ *  - B站弹幕：拦截并主动读取 seg.so，兼容 PAKKU 的伪造 XHR 回调；按 mid_hash 过滤，并可查询 1–10 位 UID 候选。
+ *  - 名单与浏览数据只在本机保存、不上传；检查更新时请求 GitHub，主动查询 UID 候选时匿名请求 B站用户卡片接口。
  */
 (function () {
   'use strict';
@@ -317,6 +320,52 @@
       return results;
     }
 
+    function confirmIdentityLink(keys, label, note) {
+      load();
+      const normalized = normalizeIdentityKeys(keys);
+      if (!normalized.length) return { person: null, personId: '', added: 0, addedKeys: [], rejected: true, undo: null };
+      const pset = persons();
+      const existingKeys = allIdentities();
+      let targetId = Object.keys(pset).find((id) => normalized.some((key) => pset[id].identities.includes(key))) || '';
+      const created = !targetId;
+      if (created) {
+        targetId = genId();
+        while (pset[targetId]) targetId = genId();
+        pset[targetId] = { label: '未命名', note: '', createdAt: Date.now(), hits: 0, identities: [] };
+      }
+      const target = pset[targetId];
+      const previous = { label: target.label, note: target.note };
+      const addedKeys = [];
+      for (const key of normalized) {
+        // 已属于另一人物的身份保持原归属；确认关联不能偷偷合并两个既有人物。
+        if (existingKeys.has(key)) continue;
+        target.identities.push(key);
+        addedKeys.push(key);
+      }
+      const nextLabel = cleanText(label, target.label || '未命名', 200);
+      const nextNote = cleanText(note, target.note || '', 2000);
+      const metadataChanged = nextLabel !== target.label || nextNote !== target.note;
+      target.label = nextLabel;
+      target.note = nextNote;
+      const changed = created || addedKeys.length > 0 || metadataChanged;
+      if (changed) persist();
+      const committed = { label: nextLabel, note: nextNote };
+      const undo = changed ? () => {
+        load();
+        const current = persons()[targetId];
+        if (!current) return;
+        current.identities = current.identities.filter((key) => !addedKeys.includes(key));
+        if (created && !current.identities.length) delete persons()[targetId];
+        else {
+          if (current.label === committed.label) current.label = previous.label;
+          if (current.note === committed.note) current.note = previous.note;
+          if (!current.identities.length) delete persons()[targetId];
+        }
+        persist();
+      } : null;
+      return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false, undo };
+    }
+
     function removePerson(id) {
       load();
       if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; persist(); return true; }
@@ -382,7 +431,7 @@
 
     return {
       persons, settings, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
-      removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
+      confirmIdentityLink, removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
     };
   })();
 
@@ -553,17 +602,43 @@
       padding: 20px; color: #777; text-align: center;
     }
     #ob-dm-manager .ob-dm-sender {
-      box-sizing: border-box; min-height: 52px; display: grid; grid-template-columns: auto minmax(0, 1fr) 34px;
+      box-sizing: border-box; min-height: 52px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #f0f0f0;
     }
     #ob-dm-manager .ob-dm-sender:last-child { border-bottom: 0; }
     #ob-dm-manager .ob-dm-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #ob-dm-manager .ob-dm-meta { color: #888; font-size: 11px; margin-top: 2px; }
+    #ob-dm-manager .ob-dm-actions { display: inline-flex; align-items: center; gap: 2px; }
+    #ob-dm-manager .ob-dm-uid-query {
+      min-width: 42px; height: 32px; border: 0; border-radius: 4px; padding: 0 5px; background: transparent;
+      color: #555; cursor: pointer; font-size: 11px; white-space: nowrap;
+    }
+    #ob-dm-manager .ob-dm-uid-query:hover:not(:disabled) { background: #f1f1f1; }
+    #ob-dm-manager .ob-dm-uid-query:disabled { color: #aaa; cursor: default; }
     #ob-dm-manager .ob-dm-single {
       width: 32px; height: 32px; border: 0; border-radius: 4px; padding: 0; background: transparent;
       color: #c0392b; cursor: pointer; font-size: 15px;
     }
     #ob-dm-manager .ob-dm-single:hover { background: #fdeceb; }
+    #ob-dm-manager .ob-dm-uid-results {
+      grid-column: 2 / -1; min-width: 0; display: grid; gap: 6px; padding: 6px 0 2px;
+      color: #555; font-size: 11px;
+    }
+    #ob-dm-manager .ob-dm-uid-warning { color: #8a5b00; line-height: 1.45; }
+    #ob-dm-manager .ob-dm-uid-hash { display: grid; gap: 4px; }
+    #ob-dm-manager .ob-dm-uid-hash-label { color: #777; word-break: break-all; }
+    #ob-dm-manager .ob-dm-uid-candidate {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0;
+      padding: 5px 7px; border-left: 2px solid #d8d8dc; background: #f7f7f8;
+    }
+    #ob-dm-manager .ob-dm-uid-candidate span { min-width: 0; overflow-wrap: anywhere; }
+    #ob-dm-manager .ob-dm-uid-candidate a { color: #1769aa; text-decoration: none; }
+    #ob-dm-manager .ob-dm-uid-candidate a:hover { text-decoration: underline; }
+    #ob-dm-manager .ob-dm-uid-link {
+      flex: 0 0 auto; min-height: 28px; border: 1px solid #e2a39c; border-radius: 4px; padding: 3px 7px;
+      background: #fff; color: #c0392b; cursor: pointer; font-size: 11px; white-space: nowrap;
+    }
+    #ob-dm-manager .ob-dm-uid-link:hover { background: #fdeceb; }
     #ob-dm-manager .ob-dm-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
     #ob-dm-manager .ob-dm-status { color: #777; }
     #ob-dm-manager .ob-dm-pages { display: inline-flex; align-items: center; gap: 4px; }
@@ -577,6 +652,10 @@
     @media (max-width: 520px) {
       #ob-dm-manager { align-items: flex-end; }
       #ob-dm-manager .ob-dm-box { width: 100vw; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-dm-manager .ob-dm-sender { grid-template-columns: auto minmax(0, 1fr); }
+      #ob-dm-manager .ob-dm-actions { grid-column: 2; justify-self: end; }
+      #ob-dm-manager .ob-dm-uid-results { grid-column: 1 / -1; }
+      #ob-dm-manager .ob-dm-uid-candidate { align-items: flex-start; flex-direction: column; }
       #ob-dm-manager .ob-dm-footer { align-items: stretch; }
       #ob-dm-manager .ob-dm-batch { flex: 1 1 100%; }
     }
@@ -1776,6 +1855,74 @@
       return /^[0-9a-f]{1,8}$/.test(hash) ? hash.padStart(8, '0') : '';
     }
 
+    /*
+     * UID candidate cracker adapted from PAKKU's crc32_crack.ts
+     * (xmcp/pakku.js, GPL-3.0; upstream credits @dramforever).
+     * Modified for lazy initialization, typed bucket indexes and explicit
+     * forward verification. It only searches decimal UID values up to 10 digits.
+     */
+    let uidHashCracker = null;
+    function makeUidHashCracker() {
+      const update = (byte, crc) => ((crc >>> 8) ^ crcTable[(crc & 0xFF) ^ byte]) >>> 0;
+      const compute = (values, initial) => {
+        let crc = initial == null ? 0 : initial;
+        for (const value of values) crc = update(value, crc);
+        return crc >>> 0;
+      };
+      const rainbow = new Uint32Array(100000);
+      for (let i = 0; i < rainbow.length; i++) rainbow[i] = compute(Array.from(String(i), Number));
+      const rainbowWithFiveZeroes = new Uint32Array(rainbow.length);
+      for (let i = 0; i < rainbow.length; i++) rainbowWithFiveZeroes[i] = compute([0, 0, 0, 0, 0], rainbow[i]);
+
+      const bucketPositions = new Uint32Array(65537);
+      for (const value of rainbow) bucketPositions[(value >>> 16) + 1]++;
+      for (let i = 1; i < bucketPositions.length; i++) bucketPositions[i] += bucketPositions[i - 1];
+      const bucketCursor = bucketPositions.slice();
+      const bucketUids = new Uint32Array(rainbow.length);
+      for (let uid = 0; uid < rainbow.length; uid++) bucketUids[bucketCursor[rainbow[uid] >>> 16]++] = uid;
+
+      const lookup = (crc) => {
+        const out = [];
+        const high = crc >>> 16;
+        for (let i = bucketPositions[high]; i < bucketPositions[high + 1]; i++) {
+          const uid = bucketUids[i];
+          if (rainbow[uid] === crc) out.push(uid);
+        }
+        return out;
+      };
+
+      return (hash) => {
+        const target = (~parseInt(hash, 16)) >>> 0;
+        const results = [];
+        let baseCrc = 0xFFFFFFFF;
+        for (let digits = 1; digits <= 10; digits++) {
+          baseCrc = update(0x30, baseCrc);
+          if (digits < 6) {
+            const firstUid = Math.pow(10, digits - 1);
+            const lastUid = Math.pow(10, digits);
+            for (let uid = firstUid; uid < lastUid; uid++) {
+              if (target === ((baseCrc ^ rainbow[uid]) >>> 0)) results.push(uid);
+            }
+            continue;
+          }
+          const firstPrefix = Math.pow(10, digits - 6);
+          const lastPrefix = Math.pow(10, digits - 5);
+          for (let prefix = firstPrefix; prefix < lastPrefix; prefix++) {
+            const remainder = (target ^ baseCrc ^ rainbowWithFiveZeroes[prefix]) >>> 0;
+            for (const suffix of lookup(remainder)) results.push(prefix * 100000 + suffix);
+          }
+        }
+        return results.filter((uid) => normalHash(crc32(String(uid)).toString(16)) === hash);
+      };
+    }
+
+    function crackUidHash(hash) {
+      const normalized = normalHash(hash);
+      if (!normalized) return [];
+      uidHashCracker = uidHashCracker || makeUidHashCracker();
+      return uidHashCracker(normalized);
+    }
+
     const isDanmakuUrl = (url) => /\/dm\/(?:wbi\/)?web\/seg\.so(?:[/?]|$)|\/dm\/list\.so(?:[/?]|$)/.test(String(url || ''));
     const isVideoPage = () => /^\/video\/[^/?]+/i.test(location.pathname);
     const numericCid = (value) => {
@@ -1859,6 +2006,9 @@
     const dmContentGroups = new Map();
     const dmSeenElements = new Set();
     const selectedDmGroups = new Set();
+    const expandedDmUidGroups = new Set();
+    const dmUidLookups = new Map();
+    const dmUidCardCache = new Map();
     const DM_PAGE_SIZE = 100;
     const DM_SENDER_LIMIT = 5000;
     let dmTool = null;
@@ -1896,7 +2046,8 @@
       if (!dmVideoKey) { dmVideoKey = key; return false; }
       if (key === dmVideoKey) return false;
       dmVideoKey = key;
-      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmContentGroups.clear(); dmSeenElements.clear(); selectedDmGroups.clear();
+      dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmContentGroups.clear(); dmSeenElements.clear();
+      selectedDmGroups.clear(); expandedDmUidGroups.clear();
       dmSearch = ''; dmPage = 0;
       resetDmBootstrap();
       if (dmManager) closeDmManager();
@@ -2214,6 +2365,170 @@
       return records;
     }
 
+    function requestDmUidCard(uid) {
+      const normalizedUid = normalizeDigits(uid);
+      if (!normalizedUid) return Promise.resolve(null);
+      if (dmUidCardCache.has(normalizedUid)) return dmUidCardCache.get(normalizedUid);
+      const request = new Promise((resolve, reject) => {
+        if (typeof GM_xmlhttpRequest !== 'function') { reject(new Error('GM_xmlhttpRequest unavailable')); return; }
+        try {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://api.bilibili.com/x/web-interface/card?type=json&mid=' + encodeURIComponent(normalizedUid),
+            timeout: 10000,
+            anonymous: true,
+            onload(response) {
+              if (!response || Number(response.status) !== 200) { reject(new Error('user card HTTP ' + (response && response.status))); return; }
+              let payload = response.response;
+              if (!payload || typeof payload !== 'object') {
+                try { payload = JSON.parse(response.responseText || ''); }
+                catch (e) { reject(new Error('invalid user card response')); return; }
+              }
+              if (payload.code === -404 || (payload.code === 0 && (!payload.data || !payload.data.card))) { resolve(null); return; }
+              if (payload.code !== 0 || !payload.data || !payload.data.card) { reject(new Error('user card API ' + payload.code)); return; }
+              const card = payload.data.card;
+              const cardUid = normalizeDigits(card.mid);
+              if (cardUid !== normalizedUid) { resolve(null); return; }
+              resolve({ uid: cardUid, name: cleanDmText(card.name) || ('UID ' + cardUid) });
+            },
+            onerror() { reject(new Error('user card request failed')); },
+            ontimeout() { reject(new Error('user card request timed out')); },
+          });
+        } catch (e) { reject(e); }
+      }).catch((error) => {
+        dmUidCardCache.delete(normalizedUid);
+        throw error;
+      });
+      dmUidCardCache.set(normalizedUid, request);
+      return request;
+    }
+
+    async function lookupDmUidCandidates(hash) {
+      const previous = dmUidLookups.get(hash);
+      if (previous && previous.status === 'ready') return previous;
+      if (previous && previous.status === 'loading') return previous.promise;
+      const state = { status: 'loading', candidates: [], partial: false, error: '', promise: null };
+      dmUidLookups.set(hash, state);
+      renderDmManager();
+      const run = (async () => {
+        // 先让“正在查询”渲染出来，再初始化约 1 MB 的彩虹表。
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const uids = crackUidHash(hash);
+        const candidates = [];
+        let failed = false;
+        let requestError = '';
+        for (const uid of uids) {
+          try {
+            const card = await requestDmUidCard(uid);
+            if (card) candidates.push(card);
+          } catch (e) {
+            failed = true;
+            requestError = String(e && e.message || e || 'candidate request failed').slice(0, 200);
+          }
+        }
+        state.status = failed && !candidates.length ? 'error' : 'ready';
+        state.candidates = candidates;
+        state.partial = failed && candidates.length > 0;
+        state.error = requestError;
+        return state;
+      })().catch((error) => {
+        state.status = 'error';
+        state.candidates = [];
+        state.error = String(error && error.message || error || 'unknown error').slice(0, 200);
+        return state;
+      }).finally(() => {
+        state.promise = null;
+        renderDmManager();
+      });
+      state.promise = run;
+      return run;
+    }
+
+    async function lookupDmUidGroup(group) {
+      expandedDmUidGroups.add(group.content);
+      renderDmManager();
+      for (const hash of group.hashes) await lookupDmUidCandidates(hash);
+    }
+
+    function confirmDmUidCandidate(hash, candidate, content, anchorEl) {
+      const keys = [makeIdentityKey('bili:dmhash', hash), makeIdentityKey('bili:uid', candidate.uid)];
+      const note = '从 CRC32 候选中手动选择；评论按 UID、弹幕按 hash 屏蔽。代表弹幕：' + content;
+      showConfirm(
+        '可能发送者：' + candidate.name + '（UID ' + candidate.uid + '）',
+        keys,
+        anchorEl,
+        () => {
+          expandedDmUidGroups.delete(content);
+          refreshDmTool();
+          scanDmPanels();
+        },
+        () => {
+          const result = Store.confirmIdentityLink(keys, candidate.name, note);
+          return { result, undo: result.undo };
+        }
+      );
+    }
+
+    function buildDmUidResults(group) {
+      const results = document.createElement('div');
+      results.className = 'ob-dm-uid-results';
+      const warning = document.createElement('div');
+      warning.className = 'ob-dm-uid-warning';
+      warning.textContent = '仅查询 1–10 位 UID；CRC32 可能碰撞，请打开主页核对后确认。';
+      results.appendChild(warning);
+      for (const hash of group.hashes) {
+        const section = document.createElement('div');
+        section.className = 'ob-dm-uid-hash';
+        const hashLabel = document.createElement('div');
+        hashLabel.className = 'ob-dm-uid-hash-label';
+        hashLabel.textContent = 'hash ' + hash;
+        section.appendChild(hashLabel);
+        const state = dmUidLookups.get(hash);
+        if (!state || state.status === 'loading') {
+          const status = document.createElement('div');
+          status.textContent = state ? '正在计算并校验候选...' : '等待查询';
+          section.appendChild(status);
+        } else if (state.status === 'error') {
+          section.setAttribute('data-ob-dm-uid-error', state.error || 'candidate lookup failed');
+          const status = document.createElement('div');
+          status.textContent = '候选查询失败，可收起后重试';
+          section.appendChild(status);
+        } else if (!state.candidates.length) {
+          const status = document.createElement('div');
+          status.textContent = '未找到仍存在的 1–10 位 UID 候选';
+          section.appendChild(status);
+        } else {
+          for (const candidate of state.candidates) {
+            const row = document.createElement('div');
+            row.className = 'ob-dm-uid-candidate';
+            const summary = document.createElement('span');
+            summary.appendChild(document.createTextNode('可能发送者：'));
+            const profile = document.createElement('a');
+            profile.href = 'https://space.bilibili.com/' + candidate.uid;
+            profile.target = '_blank'; profile.rel = 'noopener noreferrer';
+            profile.textContent = candidate.name;
+            summary.appendChild(profile);
+            summary.appendChild(document.createTextNode(' · UID ' + candidate.uid));
+            const choose = document.createElement('button');
+            choose.type = 'button'; choose.className = 'ob-dm-uid-link'; choose.textContent = '确认并拉黑';
+            choose.addEventListener('click', (event) => {
+              event.stopPropagation(); event.preventDefault();
+              confirmDmUidCandidate(hash, candidate, group.content, choose);
+            });
+            row.append(summary, choose);
+            section.appendChild(row);
+          }
+          if (state.partial) {
+            const partial = document.createElement('div');
+            partial.textContent = '部分候选账号校验失败，可稍后重试';
+            section.appendChild(partial);
+          }
+        }
+        results.appendChild(section);
+      }
+      return results;
+    }
+
     function closeDmManager() {
       if (dmManager) dmManager.remove();
       dmManager = null;
@@ -2226,6 +2541,7 @@
       const available = availableDmGroups();
       const availableGroupKeys = new Set(available.map((group) => group.content));
       for (const content of Array.from(selectedDmGroups)) if (!availableGroupKeys.has(content)) selectedDmGroups.delete(content);
+      for (const content of Array.from(expandedDmUidGroups)) if (!availableGroupKeys.has(content)) expandedDmUidGroups.delete(content);
       const term = cleanDmText(dmSearch).toLowerCase();
       const filtered = term ? available.filter((group) => group.content.toLowerCase().includes(term)) : available;
       const pageCount = Math.max(1, Math.ceil(filtered.length / DM_PAGE_SIZE));
@@ -2248,7 +2564,7 @@
       }
 
       for (const group of pageItems) {
-        const row = document.createElement('label');
+        const row = document.createElement('div');
         row.className = 'ob-dm-sender';
         row.setAttribute('data-ob-dm-content', group.content);
         row.setAttribute('data-ob-dm-hashes', group.hashes.join(','));
@@ -2269,6 +2585,25 @@
         meta.textContent = group.hashes.length + ' 位发送者 · 捕获 ' + group.messageCount + ' 条 · ' + formatDmProgress(group.progress);
         body.append(content, meta);
 
+        const actions = document.createElement('div');
+        actions.className = 'ob-dm-actions';
+        const uidQuery = document.createElement('button');
+        uidQuery.type = 'button'; uidQuery.className = 'ob-dm-uid-query';
+        const uidExpanded = expandedDmUidGroups.has(group.content);
+        const uidLoading = group.hashes.some((hash) => dmUidLookups.get(hash) && dmUidLookups.get(hash).status === 'loading');
+        uidQuery.textContent = uidExpanded ? '收起' : 'UID?';
+        uidQuery.title = uidExpanded ? '收起可能的 UID' : '查询可能的 UID';
+        uidQuery.setAttribute('aria-label', uidQuery.title);
+        uidQuery.setAttribute('aria-expanded', uidExpanded ? 'true' : 'false');
+        uidQuery.disabled = uidLoading;
+        uidQuery.addEventListener('click', (event) => {
+          event.stopPropagation(); event.preventDefault();
+          if (expandedDmUidGroups.has(group.content)) {
+            expandedDmUidGroups.delete(group.content);
+            renderDmManager();
+          } else void lookupDmUidGroup(group);
+        });
+
         const single = document.createElement('button');
         single.type = 'button'; single.className = 'ob-dm-single'; single.textContent = '🚫';
         single.title = '本地屏蔽发送此文案的全部用户'; single.setAttribute('aria-label', '本地屏蔽发送此文案的全部用户');
@@ -2281,7 +2616,9 @@
             () => { selectedDmGroups.delete(group.content); refreshDmTool(); scanDmPanels(); }
           );
         });
-        row.append(checkbox, body, single);
+        actions.append(uidQuery, single);
+        row.append(checkbox, body, actions);
+        if (uidExpanded) row.appendChild(buildDmUidResults(group));
         list.appendChild(row);
       }
 
