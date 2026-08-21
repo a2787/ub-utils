@@ -534,7 +534,10 @@
 - 用户卡片请求仅在主动点击 `UID?` 后发出，使用 `GM_xmlhttpRequest` 的匿名模式，不发送
   本地名单或原始浏览数据；B站仍能看到正常网络请求的 IP 和被查询 UID。
 - 版本/发布状态：userscript 为 `0.14.0`，许可证为 `GPL-3.0-only`；此前已经发布的版本
-  仍保留其发布时的 MIT 许可。本条将与功能代码一同提交，随后推送 `origin/master`、创建
-  `v0.14.0` 标签和 GitHub Release。既有 `.workbuddy` 与三张 `test/shot-*.png` 脏改动不纳入发布。
+  仍保留其发布时的 MIT 许可。功能提交
+  `de751c8c766277534640735582f7cc73a1719c94` 已推送到 `origin/master`；注释标签
+  `v0.14.0` 指向该提交并已推送；GitHub Release 已发布：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.14.0`。raw `master` 更新 URL 继续提供
+  v0.14.0。既有 `.workbuddy` 与三张 `test/shot-*.png` 脏改动不纳入发布。
 - 下一项最有价值的验证：用户在已安装 PAKKU 的浏览器中，对熟悉的弹幕发送者查询候选，
   人工核对主页后确认，并验证其后续弹幕与同 UID 评论在刷新后都完全消失。
