@@ -598,7 +598,12 @@ B站播放器悬停弹幕的原生举报菜单入口；微博旧版/懒加载楼
 
 **版本/发布状态**
 
-见本条目结尾的发布记录（提交、tag、Release 与 raw 更新状态）。
+- userscript `@version` 为 `0.15.0`，许可证仍为 `GPL-3.0-only`。
+- 功能提交 `996ef9a21d5c92457f91ba51d739edf3ad5c43d5` 已推送到 `origin/master`；注释标签
+  `v0.15.0` 指向该提交并已推送；GitHub Release：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.15.0`。
+- raw `master` 更新 URL 现提供 v0.15.0。既有 `.workbuddy/memory/2026-08-20.md` 与三张
+  `test/shot-*.png` 脏改动按规则未纳入发布。
 
 **下一项最有价值的验证**
 
