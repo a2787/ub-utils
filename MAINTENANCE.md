@@ -766,3 +766,46 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 用户在自己已登录、装有 PAKKU 的浏览器里确认弹幕浮层与微博点赞弹窗批量入口；这两条路径
 在未登录无头会话里始终不可达。
+
+### 2026-08-22 - 工作区清理 - 移除长期脏改动
+
+**范围**
+
+按用户要求清掉从 v0.12 起每轮都要在交接里复述一遍的四个脏文件。它们与当前工作无关，
+只是持续占用注意力。此后 `git status --short` 在干净仓库上应为空。
+
+**改动文件**
+
+- `.gitignore`：新增 `test/shot-*.png` 与 `.workbuddy/`。
+- `test/shot-1-load.png`、`test/shot-2-after-block.png`、`test/shot-3-settings.png`：
+  从版本控制移除并从磁盘删除。这三张是 2026-08-20 提交 `54e25c2` 留下的一次性产物，
+  全仓无任何代码或文档引用（`rg` 在源码、测试与文档中命中 0 处）；`test/run.cjs` 现在只写
+  已忽略的 `test/_shot_*.png`，因此需要时可用 `node test/run.cjs` 重新生成截图。
+- `.workbuddy/memory/2026-08-20.md`：从版本控制移除，文件移到工作区外的
+  `%USERPROFILE%\.workbuddy\archive\pluginforchrome\2026-08-20.md`（未删除，仅归档）。
+  `AGENTS.md` 本来就禁止提交 `.workbuddy/`，此前却仍被跟踪，属于矛盾状态。
+  注意 `test/runtime.cjs` 读取的是 `%USERPROFILE%\.workbuddy\binaries\...` 下的
+  playwright-core，与仓库内这个目录无关，删除不影响测试运行时。
+
+**证据**
+
+- `structure regression`（清理后复跑）：`node test/run.cjs` 11/11、`node test/state.cjs` 6/6、
+  `node test/quickblock.cjs` 24/24、`node test/adapters.cjs` 16/16、`node test/douyin.cjs` 2/2；
+  `node --check omniblock.user.js`、`git diff --check`、`git diff --cached --check` 通过。
+  复跑后 `test/_shot_*.png` 照常生成，确认截图链路未被破坏。
+- 本轮不涉及平台适配、入口注入或隐藏行为改动，因此不需要真站探针；`@version` 保持
+  `0.16.0`，用户可见行为不变。
+
+**限制**
+
+- 三张截图的历史版本仍留在 git 历史里（未改写历史），只是不再出现在工作树中。
+- 归档后的工作日志不再随仓库同步；需要时在
+  `%USERPROFILE%\.workbuddy\archive\pluginforchrome\` 下查看。
+
+**版本/发布状态**
+
+见本条目的提交记录；不发新版本。
+
+**下一项最有价值的验证**
+
+同上一条：在已登录、装有 PAKKU 的真实浏览器里确认弹幕浮层与微博点赞弹窗批量入口。
