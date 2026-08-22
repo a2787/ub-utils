@@ -226,8 +226,10 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
 
     // 在打开任何自建确认框之前记录本页批量入口。此前探针只在点过按钮后
     // 才读取它，正好会撞上“弹窗打开时隐藏 FAB”的正常逻辑，无法验证入口本身。
+    // FAB 在“已识别作者数为 0”时按设计隐藏，所以快照必须等到评论作者真的解析出来，
+    // 否则读到的只是评论尚未渲染完的中间状态。
     let bulkBeforeInteraction;
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < 16; attempt++) {
       bulkBeforeInteraction = await page.evaluate(() => {
       const modalSelector = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
       const modalCandidates = [];
@@ -256,19 +258,31 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         for (const child of node.children || []) walk(child);
       };
       walk(document);
+      const userCount = window.OB && typeof window.OB.collectUsers === 'function'
+        ? window.OB.collectUsers(document).length
+        : null;
       if (window.OB && typeof window.OB.refreshBulk === 'function') window.OB.refreshBulk();
       const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
-      if (!bulk) return { found: false, text: null, visible: false, modalCandidates };
+      if (!bulk) return { found: false, text: null, visible: false, userCount, modalCandidates };
       const style = getComputedStyle(bulk);
       return {
         found: true,
         text: bulk.textContent,
         visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
+        userCount,
         modalCandidates,
       };
       });
       if (bulkBeforeInteraction.found && bulkBeforeInteraction.visible) break;
-      await sleep(750);
+      // 作者还没解析出来时继续滚动评论区，让 B站按需加载更多评论。
+      if (!bulkBeforeInteraction.userCount) {
+        await page.evaluate(() => {
+          const comments = document.querySelector('bili-comments');
+          if (comments) comments.scrollIntoView({ block: 'center', inline: 'nearest' });
+          else window.scrollBy(0, 700);
+        });
+      }
+      await sleep(900);
     }
     result.bulkBeforeInteraction = bulkBeforeInteraction;
 

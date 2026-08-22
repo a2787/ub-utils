@@ -281,6 +281,29 @@ async function pickWeiboDetailTarget(browser, candidates) {
             }
           }
         }
+        // 微博以外的平台此前即使停在登录页或安全验证页也返回空 errors，等于把
+        // 「无法验证」静默记成通过。按证据规则，这类结果必须显式落成 blocked。
+        if (target.id !== 'weibo') {
+          const page = result.page || {};
+          const text = String(page.pageText || '');
+          const title = String(page.title || '');
+          const gate = /登录|signin|sign in|安全验证|验证码|slide|滑动/i.test(title + ' ' + text)
+            || /\/(signin|login)\b/i.test(String(page.finalUrl || ''));
+          if (!page.obReady) {
+            result.errors.push('验证失败：用户脚本未在真实页面就绪');
+          } else if (!page.adapterReady) {
+            result.errors.push('验证失败：真实页面未匹配到对应适配器');
+          } else if (!result.loaded) {
+            result.errors.push('blocked：真实页面未成功加载（HTTP 非 2xx 或被重定向）'
+              + (gate ? '，落在登录/安全验证页' : ''));
+          } else if (gate && !page.identityCount) {
+            result.errors.push('blocked：未登录会话被登录页或安全验证页拦截，无法验证条目身份');
+          } else if (!page.candidateCount) {
+            result.errors.push('blocked：真实页面没有可解析的条目（未登录会话下无内容）');
+          } else if (!page.identityCount) {
+            result.errors.push('验证失败：真实页面有条目但没有任何条目解析出身份');
+          }
+        }
       } catch (error) {
         result.errors.push(String(error && error.message || error));
       }
