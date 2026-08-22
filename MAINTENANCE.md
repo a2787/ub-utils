@@ -837,7 +837,7 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-- userscript `@version` 已提高到 `0.17.0`；提交 `b0c2291ff71be7532cdb3e632ccce510de499d69` 已推送到 `origin/master`，tag `v0.17.0` 与 GitHub Release 已创建：<https://github.com/a2787/ub-utils/releases/tag/v0.17.0>。
+- userscript `@version` 已提高到 `0.17.0`；本条记录创建时本轮改动尚未提交、推送、打 tag 或创建 Release。
 - 工作区另有前一轮 B 站/微博未收尾改动和一次性诊断产物，均未被覆盖或纳入本条范围。
 
 **下一项最有价值的验证**
