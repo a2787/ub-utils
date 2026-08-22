@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.16.0
+// @version       0.17.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -36,12 +36,12 @@
  * SPDX-License-Identifier: GPL-3.0-only
  * --------------------------------------------------------------------------
  * 设计要点（详见项目计划文档）：
- *  - 一份共享名单（GM 单键存储），6 个平台通用；可导出/导入 JSON 备份。
+ *  - 一份共享名单（GM 单键存储），6 个平台通用；另有独立的本地快照环，可导出/恢复。
  *  - 评论/弹幕固定零占位隐藏；其他内容可折叠或完全消失；抖音推荐流可自动跳过。
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
  *  - B站弹幕：拦截并主动读取 seg.so，兼容 PAKKU 的伪造 XHR 回调；按 mid_hash 过滤，并可查询 1–10 位 UID 候选。
- *  - 名单与浏览数据只在本机保存、不上传；检查更新时请求 GitHub，主动查询 UID 候选时匿名请求 B站用户卡片接口。
+ *  - 名单与浏览数据只在本机保存、不上传；本地快照也只写入本机 GM 存储；检查更新时请求 GitHub，主动查询 UID 候选时匿名请求 B站用户卡片接口。
  */
 (function () {
   'use strict';
@@ -184,6 +184,14 @@
   // 1. 共享名单存储（一份名单，6 平台通用）
   // ====================================================================
   const STORAGE_KEY = 'omniblock:data:v1';
+  // 备份使用独立键和稳定 envelope。未来同步 provider 只需消费同一快照对象，
+  // 当前版本不注册任何网络 provider，也不改变主名单键的兼容格式。
+  const BACKUP_STORAGE_KEY = 'omniblock:backup:v1';
+  const BACKUP_FORMAT = 'omniblock.snapshot';
+  const BACKUP_SCHEMA = 1;
+  const BACKUP_RETENTION = 5;
+  const BACKUP_RECORD_MAX_BYTES = 2 * 1024 * 1024;
+  const BACKUP_TOTAL_MAX_BYTES = 4 * 1024 * 1024;
 
   const DEFAULT_SETTINGS = {
     enabled: true,
@@ -193,11 +201,16 @@
     skipCap: 6,                  // 连续跳过上限，超过则停在遮罩不再自动切
     showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
     showBulkBlock: true,         // 本页/弹窗内"一键拉黑全部用户"
+    localBackupEnabled: true,    // 自动保留最近 5 份本地快照（不上传）
   };
 
   const Store = (function () {
     let data = null;             // { version, persons:{}, settings:{} }
     const listeners = [];
+    const persistListeners = [];
+    const backupSinks = new Map();
+    let backupLastRevision = 0;
+    let backupError = '';
 
     function cleanText(value, fallback, maxLength) {
       if (value == null) return fallback;
@@ -208,7 +221,7 @@
     function sanitizeSettings(input) {
       const source = input && typeof input === 'object' ? input : {};
       const out = { ...DEFAULT_SETTINGS };
-      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock']) {
+      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled']) {
         if (typeof source[key] === 'boolean') out[key] = source[key];
       }
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
@@ -254,9 +267,126 @@
       return data;
     }
 
-    function persist() {
+    function snapshotObject(reason, source = 'local') {
+      const now = Date.now();
+      let knownRevision = backupLastRevision;
+      try {
+        for (const record of readBackupRecords()) knownRevision = Math.max(knownRevision, record.revision);
+      } catch (e) {}
+      const revision = Math.max(now, knownRevision + 1);
+      backupLastRevision = revision;
+      return {
+        format: BACKUP_FORMAT,
+        schema: BACKUP_SCHEMA,
+        snapshotId: 's_' + revision.toString(36) + '_' + Math.random().toString(36).slice(2, 8),
+        revision,
+        exportedAt: now,
+        source,
+        reason: reason || 'manual',
+        version: 1,
+        persons: sanitizePersons(persons()),
+        settings: sanitizeSettings(settings()),
+      };
+    }
+
+    function snapshotFingerprint(snapshot) {
+      return JSON.stringify({
+        persons: sanitizePersons(snapshot.persons),
+        settings: sanitizeSettings(snapshot.settings),
+      });
+    }
+
+    function currentStateFingerprint() {
+      return JSON.stringify({
+        persons: sanitizePersons(persons()),
+        settings: sanitizeSettings(settings()),
+      });
+    }
+
+    function normalizeSnapshot(input) {
+      const raw = input && input.state && typeof input.state === 'object'
+        ? { ...input, ...input.state }
+        : input;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !raw.persons || typeof raw.persons !== 'object' || Array.isArray(raw.persons)) return null;
+      // 允许旧版手动导出（没有 format/schema），但拒绝明确声明的未知协议，
+      // 避免未来云端数据被静默当成当前 schema 解释。
+      if (raw.format != null && raw.format !== BACKUP_FORMAT) return null;
+      if (raw.schema != null && Number(raw.schema) !== BACKUP_SCHEMA) return null;
+      const exportedAt = Number(raw.exportedAt);
+      const revision = Number(raw.revision);
+      return {
+        format: BACKUP_FORMAT,
+        schema: BACKUP_SCHEMA,
+        snapshotId: cleanText(raw.snapshotId, '', 120) || ('s_' + (Number.isFinite(revision) && revision >= 0 ? Math.round(revision) : Date.now()).toString(36) + '_' + Math.random().toString(36).slice(2, 8)),
+        revision: Number.isFinite(revision) && revision >= 0 ? Math.round(revision) : (Number.isFinite(exportedAt) ? Math.round(exportedAt) : Date.now()),
+        exportedAt: Number.isFinite(exportedAt) && exportedAt >= 0 ? Math.round(exportedAt) : Date.now(),
+        source: cleanText(raw.source, 'local', 40),
+        reason: cleanText(raw.reason, 'import', 80),
+        version: 1,
+        persons: sanitizePersons(raw.persons),
+        settings: sanitizeSettings(raw.settings),
+      };
+    }
+
+    function readBackupRecords() {
+      let raw;
+      try { raw = GM_getValue(BACKUP_STORAGE_KEY, null); } catch (e) { raw = null; }
+      if (raw && typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+      }
+      const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.snapshots) ? raw.snapshots : []);
+      return list.map(normalizeSnapshot).filter(Boolean).sort((a, b) => b.revision - a.revision).slice(0, BACKUP_RETENTION);
+    }
+
+    function writeBackupRecords(records) {
+      const payload = JSON.stringify({ format: BACKUP_FORMAT, schema: BACKUP_SCHEMA, snapshots: records });
+      if (payload.length > BACKUP_TOTAL_MAX_BYTES) {
+        backupError = '本地快照超出存储上限';
+        return false;
+      }
+      try {
+        GM_setValue(BACKUP_STORAGE_KEY, payload);
+        backupError = '';
+        return true;
+      } catch (e) {
+        backupError = '本地快照写入失败';
+        return false;
+      }
+    }
+
+    function notifyBackupSinks(snapshot) {
+      // provider 是故意窄化的未来扩展点：同步实现自行处理认证、加密、冲突和网络，
+      // Store 只提供规范化快照，不替任何 provider 上传名单。
+      for (const registration of backupSinks.values()) {
+        try { registration.sink.onSnapshot(JSON.parse(JSON.stringify(snapshot))); } catch (e) {}
+      }
+    }
+
+    function captureBackup(snapshot, reason, force = false) {
+      const normalized = normalizeSnapshot({ ...snapshot, reason: reason || snapshot.reason || 'change' });
+      if (!normalized || (!force && !getSetting('localBackupEnabled'))) return false;
+      const serialized = JSON.stringify(normalized);
+      if (serialized.length > BACKUP_RECORD_MAX_BYTES) {
+        backupError = '本地快照过大，已保留旧快照';
+        return false;
+      }
+      const records = readBackupRecords();
+      const fingerprint = snapshotFingerprint(normalized);
+      // 只跳过与当前最新快照完全相同的重复写入；历史上再次出现同一状态时仍要留下
+      // 新的时间点，保证“恢复上一份”在恢复操作后有可逆路径。
+      if (records[0] && snapshotFingerprint(records[0]) === fingerprint) return false;
+      records.unshift(normalized);
+      while (records.length > BACKUP_RETENTION || JSON.stringify({ format: BACKUP_FORMAT, schema: BACKUP_SCHEMA, snapshots: records }).length > BACKUP_TOTAL_MAX_BYTES) records.pop();
+      return writeBackupRecords(records);
+    }
+
+    function persist(reason) {
       try { GM_setValue(STORAGE_KEY, JSON.stringify(data)); } catch (e) { /* 配额/隐私模式 */ }
+      const snapshot = snapshotObject(reason || 'change');
+      captureBackup(snapshot, reason || 'change');
+      notifyBackupSinks(snapshot);
       listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+      persistListeners.forEach((fn) => { try { fn(snapshot); } catch (e) {} });
     }
 
     function persons() { return load().persons; }
@@ -398,18 +528,27 @@
     }
 
     function exportJSON() {
-      return JSON.stringify({ version: 1, exportedAt: Date.now(), persons: persons(), settings: settings() }, null, 2);
+      // 手动文件仍保持 v1 的公开格式；内部快照 envelope 只用于本机环和 provider 边界。
+      return JSON.stringify({
+        version: 1,
+        exportedAt: Date.now(),
+        persons: sanitizePersons(persons()),
+        settings: sanitizeSettings(settings()),
+      }, null, 2);
     }
 
     function importJSON(text) {
       const obj = JSON.parse(text);
-      if (!obj || typeof obj !== 'object' || !obj.persons || typeof obj.persons !== 'object' || Array.isArray(obj.persons)) {
+      const source = obj && obj.state && typeof obj.state === 'object' ? { ...obj, ...obj.state } : obj;
+      if (!source || typeof source !== 'object' || !source.persons || typeof source.persons !== 'object' || Array.isArray(source.persons)) {
         throw new Error('格式不正确：缺少 persons');
       }
+      if (source.format != null && source.format !== BACKUP_FORMAT) throw new Error('不支持的快照格式');
+      if (source.schema != null && Number(source.schema) !== BACKUP_SCHEMA) throw new Error('不支持的快照版本');
       load();
       const result = { persons: 0, identities: 0, skipped: 0 };
-      for (const id of Object.keys(obj.persons)) {
-        const person = obj.persons[id];
+      for (const id of Object.keys(source.persons)) {
+        const person = source.persons[id];
         if (!person || !Array.isArray(person.identities)) { result.skipped++; continue; }
         const before = Object.keys(persons()).length;
         const added = addIdentitiesInternal(person.identities, person.label, person.note, person);
@@ -417,14 +556,105 @@
         if (Object.keys(persons()).length > before) result.persons++;
         result.identities += added.added;
       }
-      if (obj.settings && typeof obj.settings === 'object') data.settings = sanitizeSettings({ ...data.settings, ...obj.settings });
+      if (source.settings && typeof source.settings === 'object') data.settings = sanitizeSettings({ ...data.settings, ...source.settings });
       persist();
       return result;
     }
 
+    function listBackups() {
+      return readBackupRecords().map((snapshot) => ({
+        snapshotId: snapshot.snapshotId,
+        revision: snapshot.revision,
+        exportedAt: snapshot.exportedAt,
+        source: snapshot.source,
+        reason: snapshot.reason,
+        persons: Object.keys(snapshot.persons).length,
+        identities: Object.values(snapshot.persons).reduce((sum, person) => sum + person.identities.length, 0),
+      }));
+    }
+
+    function backupStatus() {
+      const records = readBackupRecords();
+      return {
+        enabled: !!getSetting('localBackupEnabled'),
+        count: records.length,
+        retention: BACKUP_RETENTION,
+        latestAt: records[0] ? records[0].exportedAt : 0,
+        error: backupError,
+        format: BACKUP_FORMAT,
+        schema: BACKUP_SCHEMA,
+      };
+    }
+
+    function ensureLocalBackup() {
+      if (!getSetting('localBackupEnabled')) return backupStatus();
+      const records = readBackupRecords();
+      if (!records.length) {
+        const snapshot = snapshotObject('initial');
+        captureBackup(snapshot, 'initial');
+      }
+      return backupStatus();
+    }
+
+    function preserveRestoreCheckpoint() {
+      const current = currentStateFingerprint();
+      const records = readBackupRecords();
+      const alreadySaved = !!(records[0] && snapshotFingerprint(records[0]) === current);
+      if (alreadySaved) return true;
+      return captureBackup(snapshotObject('pre-restore'), 'pre-restore', true);
+    }
+
+    function restoreBackup(snapshotId) {
+      const target = readBackupRecords().find((snapshot) => snapshot.snapshotId === snapshotId);
+      if (!target) throw new Error('找不到本地快照');
+      // 显式恢复是用户动作，即使自动快照当前关闭，也先保留当前状态，保证误恢复可回退。
+      if (!preserveRestoreCheckpoint()) throw new Error('无法保留当前状态，已取消恢复');
+      data = { version: 1, persons: sanitizePersons(target.persons), settings: sanitizeSettings(target.settings) };
+      persist('restore');
+      return { snapshotId: target.snapshotId, persons: Object.keys(data.persons).length, identities: allIdentities().size };
+    }
+
+    function restorePreviousBackup() {
+      const records = readBackupRecords();
+      const target = records[1] || records[0];
+      if (!target) throw new Error('暂无本地快照');
+      // 正常写入会先有“当前”快照，上一份是 records[1]；如果最近一次写入被
+      // 关闭开关或存储配额阻断，当前状态不在环里，此时应恢复 records[0]。
+      const latest = records[0];
+      const current = currentStateFingerprint();
+      const previous = latest && snapshotFingerprint(latest) !== current ? latest : (records[1] || latest);
+      return restoreBackup((previous || target).snapshotId);
+    }
+
+    function registerBackupSink(name, sink) {
+      const id = cleanText(name, '', 80);
+      if (!id || !sink || typeof sink.onSnapshot !== 'function') throw new Error('备份 provider 不完整');
+      const registration = { sink };
+      backupSinks.set(id, registration);
+      return () => {
+        if (backupSinks.get(id) === registration) backupSinks.delete(id);
+      };
+    }
+
+    function onPersist(fn) {
+      if (typeof fn === 'function') persistListeners.push(fn);
+      return () => {
+        const index = persistListeners.indexOf(fn);
+        if (index >= 0) persistListeners.splice(index, 1);
+      };
+    }
+
     // 跨标签页/设置变更的监听
     try {
-      GM_addValueChangeListener(STORAGE_KEY, () => { data = null; load(); listeners.forEach((fn) => { try { fn(); } catch (e) {} }); });
+      GM_addValueChangeListener(STORAGE_KEY, () => {
+        data = null;
+        load();
+        const snapshot = snapshotObject('external-change', 'local');
+        captureBackup(snapshot, 'external-change');
+        notifyBackupSinks(snapshot);
+        listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+        persistListeners.forEach((fn) => { try { fn(snapshot); } catch (e) {} });
+      });
     } catch (e) { /* 不支持则忽略 */ }
 
     function onChange(fn) { listeners.push(fn); }
@@ -432,8 +662,13 @@
     return {
       persons, settings, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
       confirmIdentityLink, removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
+      onPersist, registerBackupSink, listBackups, backupStatus, ensureLocalBackup, restoreBackup, restorePreviousBackup,
+      backupFormat: BACKUP_FORMAT, backupSchema: BACKUP_SCHEMA,
     };
   })();
+
+  // 首次加载即建立一个恢复点；没有本地备份开关或 GM 存储支持时静默降级，不影响名单。
+  try { Store.ensureLocalBackup(); } catch (e) {}
 
   // 内存索引：身份键 → 是否屏蔽（O(1) 判定）
   const Index = (function () {
@@ -3273,11 +3508,14 @@
         <div class="ob-list" id="ob-list"></div>
 
         <h3>备份</h3>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="ob-export" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导出 JSON</button>
           <button id="ob-import" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导入 JSON</button>
+          <button id="ob-restore-backup" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">恢复上一份快照</button>
           <input type="file" id="ob-file" accept="application/json" style="display:none">
         </div>
+        <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-local-backup" checked> 自动保留本地快照（最近 5 份）</label>
+        <div id="ob-backup-status" style="color:#999;font-size:12px;margin-top:5px"></div>
 
         <h3>更新</h3>
         <div style="display:flex;gap:8px;align-items:center">
@@ -3286,7 +3524,7 @@
         </div>
         <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
 
-        <p style="color:#999;font-size:12px;margin-top:14px">名单与浏览数据只保存在本机，不上传。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
+        <p style="color:#999;font-size:12px;margin-top:14px">名单、浏览数据和自动快照只保存在本机，不上传。自动快照用于误删/错误导入后的回退；浏览器配置整体丢失时仍请使用导出 JSON。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
       </div>`;
     document.body.appendChild(panel);
     panel.querySelector('.ob-close').onclick = () => panel.remove();
@@ -3323,6 +3561,14 @@
       panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
+      const backup = Store.backupStatus();
+      const backupToggle = panel.querySelector('#ob-local-backup');
+      const restoreBackup = panel.querySelector('#ob-restore-backup');
+      const backupStatus = panel.querySelector('#ob-backup-status');
+      backupToggle.checked = s.localBackupEnabled;
+      restoreBackup.disabled = backup.count < 2;
+      backupStatus.textContent = backup.error
+        || (backup.count ? ('已保留 ' + backup.count + '/' + backup.retention + ' 份本地快照，最新：' + new Date(backup.latestAt).toLocaleString()) : '尚无本地快照，将在下一次名单变更时建立');
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
     }
@@ -3351,6 +3597,11 @@
     panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); refreshBulkBlock(); };
     panel.querySelector('#ob-skip').onchange = (e) => Store.setSetting('douyinAutoSkip', e.target.checked);
     panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) Store.setSetting('skipCap', v); };
+    panel.querySelector('#ob-local-backup').onchange = (e) => {
+      Store.setSetting('localBackupEnabled', e.target.checked);
+      if (e.target.checked) Store.ensureLocalBackup();
+      refresh();
+    };
     panel.querySelector('#ob-export').onclick = () => {
       const blob = new Blob([Store.exportJSON()], { type: 'application/json' });
       const a = document.createElement('a');
@@ -3358,6 +3609,16 @@
       a.download = 'omniblock-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+    panel.querySelector('#ob-restore-backup').onclick = () => {
+      if (Store.backupStatus().count < 2) { showToast('暂无可恢复的上一份快照'); return; }
+      if (!window.confirm('恢复上一份本地快照？当前状态会先保留为新的快照。')) return;
+      try {
+        const result = Store.restorePreviousBackup();
+        refresh(); refreshQuickBlock(); refreshBulkBlock();
+        if (currentScanner) currentScanner.schedule();
+        showToast('已恢复本地快照：' + result.identities + ' 个身份');
+      } catch (e) { showToast('恢复失败：' + (e && e.message || e)); }
     };
     const file = panel.querySelector('#ob-file');
     panel.querySelector('#ob-import').onclick = () => file.click();

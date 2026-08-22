@@ -197,9 +197,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const panel = document.getElementById('ob-panel');
     const skip = panel ? panel.querySelector('#ob-skipcap') : null;
     const upd = panel ? panel.querySelector('#ob-update') : null;
-    return { panelShown: !!panel, hasSkipCap: !!skip, hasUpdateBtn: !!upd };
+    const localBackup = panel ? panel.querySelector('#ob-local-backup') : null;
+    const backupStatus = panel ? panel.querySelector('#ob-backup-status') : null;
+    const restoreBackup = panel ? panel.querySelector('#ob-restore-backup') : null;
+    return { panelShown: !!panel, hasSkipCap: !!skip, hasUpdateBtn: !!upd, hasLocalBackup: !!localBackup, hasBackupStatus: !!backupStatus, hasRestoreBackup: !!restoreBackup };
   })()`);
-  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn) ? report.pass.push('E 设置面板：含"跳过上限"与"检查更新"按钮') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
+  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup)
+    ? report.pass.push('E 设置面板：含"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
 
   // F. 全局影子穿透兜底：Frank(666) 在双层嵌套 Shadow DOM 内也应被隐藏
   const f = await page.evaluate(`(() => {

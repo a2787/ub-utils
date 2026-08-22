@@ -11,6 +11,12 @@ test/_real_*.json
 test/_real_*.png
 test/_shot_*.png
 
+# 2026-08-22 B站/微博真站诊断产物；仅供当轮排查，不属于可交付测试。
+test/_dmrows*.json
+test/_probe_dm_rows.cjs
+test/_probe_wb_modal.cjs
+test/_wbmodal*.json
+
 # 2026-08-20 的一次性运行产物，与当前测试无关：run.cjs 现在只写忽略的
 # test/_shot_*.png，这三张旧截图没有任何代码或文档引用。
 test/shot-*.png

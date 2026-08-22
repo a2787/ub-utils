@@ -809,3 +809,78 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 **下一项最有价值的验证**
 
 同上一条：在已登录、装有 PAKKU 的真实浏览器里确认弹幕浮层与微博点赞弹窗批量入口。
+
+### 2026-08-23 - v0.17.0 工作区 - 本地快照与未来同步边界
+
+**范围与改动文件**
+
+- `omniblock.user.js`：保留主名单键 `omniblock:data:v1` 不变，新增独立的
+  `omniblock:backup:v1` 快照环；默认保留最近 5 份，支持关闭、状态查询和恢复上一份。
+  快照格式为 `omniblock.snapshot` schema 1。新增 `registerBackupSink` provider 边界，
+  当前没有注册网络 provider，也不会上传名单。
+- `test/state.cjs`、`test/run.cjs`：新增快照协议、恢复/上限/关闭开关和设置控件回归。
+- `README.md`、`CHANGELOG.md`：说明本地快照行为和浏览器配置整体丢失时仍需导出 JSON 的限制。
+
+**证据**
+
+- `structure regression`：`node test/state.cjs` 7/7、`node test/run.cjs` 11/11；覆盖
+  独立键、schema/format、最近状态恢复、5 份上限、关闭后不再写入和 provider 只接收快照。
+- `structure regression`：`node --check omniblock.user.js`、`node --check test/state.cjs`、
+  `git diff --check` 通过。
+- 本地备份不触发真实站点或网络请求；本条不把夹具结果写成 `real-site verified`。
+
+**限制**
+
+- 快照与主名单都位于当前 Tampermonkey/浏览器配置，不能替代导出到下载目录或其他设备。
+- 云同步尚未实现；未来 provider 必须自行处理认证、加密、冲突和网络，不能复用当前本地
+  隐私承诺来暗示已上传。
+
+**版本/发布状态**
+
+- userscript `@version` 已提高到 `0.17.0`；本轮改动尚未提交、推送、打 tag 或创建 Release。
+- 工作区另有前一轮 B 站/微博未收尾改动和一次性诊断产物，均未被覆盖或纳入本条范围。
+
+**下一项最有价值的验证**
+
+先把 B 站右侧弹幕列表回归夹具切换到真实捕获层级并恢复 quickblock 全部通过，再继续其
+按钮几何和正式真站探针收尾。
+
+### 2026-08-23 - v0.17.0 - 本地快照协议复核
+
+**范围与改动文件**
+
+- `omniblock.user.js`：内部 `omniblock.snapshot` schema 1 继续使用独立的
+  `omniblock:backup:v1`；手动 JSON 导出保持旧版 `{version, exportedAt, persons, settings}`
+  兼容格式。显式恢复在执行前建立可回退检查点；当自动快照关闭或一次写入未进入快照环时，
+  「恢复上一份」改为选择最近仍然有效的状态。未知 `format/schema` 会被拒绝。
+- `omniblock.user.js`：`registerBackupSink(name, {onSnapshot})` 只接收规范化深拷贝；同名
+  provider 替换后，旧注销句柄不会误删新注册项；跨标签页主名单变更也会通知 provider。
+  当前仍没有注册网络 provider、上传请求或新增连接权限。
+- `test/state.cjs`：补充导出兼容、关闭开关后的恢复、同名 provider 生命周期回归。
+
+**证据**
+
+- `structure regression`：`node test/state.cjs` 7/7、`node test/run.cjs` 11/11、
+  `node test/adapters.cjs` 17/17、`node test/douyin.cjs` 2/2。
+- `state.cjs` 的人工合成跨标签页回调也确认 provider 收到 `external-change` 快照；这仍是
+  `structure regression`，不代表云端传输已存在。
+- `structure regression`：`node --check omniblock.user.js` 与 `git diff --check` 通过。
+- 本地快照路径不访问真实平台；本条没有 `real-site verified` 声明。
+
+**限制**
+
+- 快照和主名单都位于当前 Tampermonkey/浏览器配置；浏览器配置整体丢失时仍须显式导出
+  JSON 到下载目录或其他设备。
+- 云同步尚未实现；未来 provider 仍需自行处理认证、加密、冲突、远端拉取和用户同意，
+  不能把当前本地 callback 当成已上传证据。
+- 工作区此前的 B 站弹幕布局夹具仍有 QB-O（移动横向溢出）和 QB-Z（悬停探针未命中）
+  两项失败，未纳入本次本地备份范围。
+
+**版本/发布状态**
+
+- userscript `@version` 为 `0.17.0`；当前工作区仍未提交、推送、打 tag 或创建 Release。
+
+**下一项最有价值的验证**
+
+在隔离 Tampermonkey 配置中重启浏览器后确认 `omniblock:backup:v1` 可跨页面读取，再单独
+处理既有 B 站 QB-O/QB-Z 回归，避免把平台布局问题与本地快照证据混在一起。

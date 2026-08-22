@@ -16,7 +16,8 @@ window.GM_setValue = (k,v) => { window.__gm[k] = v; };
 window.GM_deleteValue = () => {};
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
-window.GM_addValueChangeListener = () => {};
+window.__gmListeners = {};
+window.GM_addValueChangeListener = (k, fn) => { window.__gmListeners[k] = fn; };
 window.GM_xmlhttpRequest = () => {};
 window.GM_openInTab = () => {};
 window.GM_info = { script:{ version:'${version}' } };
@@ -194,6 +195,74 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (identity.canonical && !identity.raw && !identity.invalid && !identity.injected)
       report.pass.push('STATE-F 手动/导入身份规范化，未知前缀被拒绝且名单文本不执行 HTML');
     else report.fail.push('STATE-F 身份或渲染边界错误：' + JSON.stringify(identity));
+
+    // G. 本地备份：人工合成状态只验证快照协议、保留上限、恢复可逆和未来 provider 边界，
+    // 不代表浏览器配置丢失时仍能恢复；外部文件导出仍由用户显式操作。
+    const backup = await x.evaluate(async () => {
+      const store = window.OB.Store;
+      store.ensureLocalBackup();
+      const manualExport = JSON.parse(store.exportJSON());
+      const sinkSnapshots = [];
+      const unregister = store.registerBackupSink('state-test', { onSnapshot: (snapshot) => sinkSnapshots.push(snapshot) });
+      const firstReplacement = [];
+      const secondReplacement = [];
+      const unregisterFirst = store.registerBackupSink('replace-test', { onSnapshot: (snapshot) => firstReplacement.push(snapshot) });
+      const unregisterSecond = store.registerBackupSink('replace-test', { onSnapshot: (snapshot) => secondReplacement.push(snapshot) });
+      unregisterFirst();
+      store.addIdentities(['x:handle:backupa'], 'Backup A');
+      const afterA = store.listBackups();
+      store.addIdentities(['x:handle:backupb'], 'Backup B');
+      store.addIdentities(['x:handle:replace'], 'Replacement');
+      const beforeExternalNotify = sinkSnapshots.length;
+      if (window.__gmListeners['omniblock:data:v1']) window.__gmListeners['omniblock:data:v1']('omniblock:data:v1', null, window.__gm['omniblock:data:v1'], true);
+      const externalNotify = sinkSnapshots.slice(beforeExternalNotify).some((snapshot) => snapshot.reason === 'external-change');
+      const beforeRestore = store.backupStatus();
+      const restore = store.restoreBackup(afterA[0] && afterA[0].snapshotId);
+      const restoredA = window.OB.Index.isBlocked('x:handle:backupa');
+      const restoredB = window.OB.Index.isBlocked('x:handle:backupb');
+      for (let i = 0; i < 8; i++) store.addIdentities(['x:handle:b' + i], 'B' + i);
+      const bounded = store.backupStatus();
+      const records = store.listBackups();
+      const latestRaw = JSON.parse(window.__gm['omniblock:backup:v1'] || '{}');
+      const latest = latestRaw.snapshots && latestRaw.snapshots[0];
+      const countBeforeDisable = store.backupStatus().count;
+      store.setSetting('localBackupEnabled', false);
+      store.addIdentities(['x:handle:noauto'], 'No Auto');
+      const countAfterDisable = store.backupStatus().count;
+      const fallbackRestore = store.restorePreviousBackup();
+      const restoredAfterDisabledWrite = window.OB.Index.isBlocked('x:handle:b7')
+        && !window.OB.Index.isBlocked('x:handle:noauto')
+        && store.getSetting('localBackupEnabled') === true;
+      const restoredTarget = fallbackRestore && fallbackRestore.identities;
+      unregisterSecond();
+      unregister();
+      return {
+        format: latest && latest.format,
+        schema: latest && latest.schema,
+        manualExportCompatible: manualExport.version === 1 && !manualExport.format && !!manualExport.persons && !!manualExport.settings,
+        recordCount: records.length,
+        beforeRestore: beforeRestore.count,
+        restoredA,
+        restoredB,
+        bounded: bounded.count <= bounded.retention,
+        sinkCount: sinkSnapshots.length,
+        sinkShape: !!(sinkSnapshots[0] && sinkSnapshots[0].format === 'omniblock.snapshot' && sinkSnapshots[0].persons && sinkSnapshots[0].settings),
+        providerReplacement: firstReplacement.length === 0 && secondReplacement.length > 0,
+        externalNotify,
+        countBeforeDisable,
+        countAfterDisable,
+        restoredAfterDisabledWrite,
+        restoredTarget,
+      };
+    });
+    if (backup.format === 'omniblock.snapshot' && backup.schema === 1 && backup.recordCount > 0
+      && backup.beforeRestore >= 2 && backup.restoredA && !backup.restoredB && backup.bounded
+      && backup.sinkCount >= 2 && backup.sinkShape && backup.providerReplacement
+      && backup.externalNotify
+      && backup.manualExportCompatible && backup.countAfterDisable === backup.countBeforeDisable
+      && backup.restoredAfterDisabledWrite && backup.restoredTarget > 0) {
+      report.pass.push('STATE-G 本地快照环有界、恢复/关闭开关可逆，导出兼容且 provider 注册边界稳定');
+    } else report.fail.push('STATE-G 本地备份边界错误：' + JSON.stringify(backup));
     await x.close();
   } catch (error) {
     report.errors.push(String(error && error.stack || error));
