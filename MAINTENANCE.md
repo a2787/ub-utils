@@ -697,7 +697,11 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-见本条目结尾的发布记录。
+- userscript `@version` 为 `0.16.0`，许可证仍为 `GPL-3.0-only`。
+- 功能提交 `e9630d45a29cbaa2d9d61f1047740d4d64a7e21a` 已推送到 `origin/master`；注释标签
+  `v0.16.0` 指向该提交并已推送；GitHub Release：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.16.0`。
+- 既有 `.workbuddy/memory/2026-08-20.md` 与三张 `test/shot-*.png` 脏改动按规则未纳入发布。
 
 **下一项最有价值的验证**
 
@@ -752,7 +756,11 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-见本条目结尾的发布记录。
+- 探针修复提交 `65c1ce93b5b33b167df067d32f32a43659bdad87` 已推送到 `origin/master`，
+  排在 tag `v0.16.0` 之后；不提升版本号，因此不单独发 Release。
+- v0.16.0 发布链路已完成：tag `v0.16.0` → 提交 `e9630d4`，Release
+  `https://github.com/a2787/ub-utils/releases/tag/v0.16.0`，raw `master` 更新 URL 现提供
+  v0.16.0。
 
 **下一项最有价值的验证**
 
