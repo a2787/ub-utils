@@ -128,6 +128,52 @@ const WEIBO_LEGACY_REPLY_FIXTURE = `
     </li>
   </ul>`;
 
+// 2026-08-22 未登录真实详情页捕获：点击「共 N 条回复」打开
+// `.woo-modal-wrap > .woo-modal-main > .wbpro-layer` 弹窗。弹窗里根评论保留
+// `.item1 > .item1in > .con1`，但回复行是 `.item2 > .con2`（无 `.item2in`），
+// 且被 vue-recycle-scroller 包了一层 `.wbpro-scroller-item`，所以
+// `.wbpro-list .list2 > .item2` 这条直接子元素路径匹配不到弹窗内的回复。
+const WEIBO_REPLY_MODAL_FIXTURE = `
+  <div class="woo-box-flex woo-modal-wrap">
+    <div class="woo-modal-main">
+      <div class="wbpro-layer">
+        <div class="woo-panel-main woo-panel-bottom">
+          <div class="woo-box-flex wbpro-layer-tit"><div class="wbpro-layer-tit-text">1条回复</div></div>
+          <div class="_scroll3_f78o9_3">
+            <div class="wbpro-list">
+              <div class="item1">
+                <div class="woo-box-flex item1in">
+                  <div><a href="/u/123460001"><div usercard="123460001"></div></a></div>
+                  <div class="woo-box-item-flex con1">
+                    <div class="text"><a class="_default_129qs_2" href="/u/123460001" usercard="123460001">弹窗根作者</a><span>根评论正文</span></div>
+                    <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                  </div>
+                </div>
+                <div class="list2">
+                  <div class="vue-recycle-scroller ready page-mode">
+                    <div class="vue-recycle-scroller__item-wrapper">
+                      <div class="vue-recycle-scroller__item-view">
+                        <div class="wbpro-scroller-item">
+                          <div class="item2">
+                            <div class="con2">
+                              <div class="text"><a class="_default_129qs_2" href="/u/123460002" usercard="123460002">弹窗回复作者</a><span>:</span><span>回复正文</span></div>
+                              <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="woo-modal-mask"></div>
+  </div>`;
+
 (async () => {
   const report = { pass: [], fail: [], errors: [] };
   const browser = await launchChromium({
@@ -295,6 +341,69 @@ const WEIBO_LEGACY_REPLY_FIXTURE = `
       report.pass.push('weibo-legacy-reply-and-likers: old reply row gets local block, hidden-row wrapper collapses, and like-modal users bulk block');
     } else report.fail.push('weibo-legacy-reply-and-likers: ' + JSON.stringify(weiboDetail));
     await weiboPage.close();
+
+    // 「共 N 条回复」展开弹窗：真站里回复行被 vue-recycle-scroller 包裹，
+    // 旧的 `.wbpro-list .list2 > .item2` 直接子元素路径匹配不到，因此弹窗内没有入口。
+    const modalPage = await browser.newPage();
+    const modalFixture = '<!doctype html><html><body>' + WEIBO_REPLY_MODAL_FIXTURE + '</body></html>';
+    await modalPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: modalFixture }));
+    await modalPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await modalPage.goto('https://weibo.com/fixture-user/fixture-detail', { waitUntil: 'domcontentloaded' });
+    await modalPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    const weiboModal = await modalPage.evaluate(async () => {
+      const adapter = window.OB.adapters.weibo;
+      const layer = document.querySelector('.woo-modal-main > .wbpro-layer');
+      const rootRow = layer && layer.querySelector('.wbpro-list > .item1');
+      const replyRow = layer && layer.querySelector('.wbpro-scroller-item > .item2');
+      if (!layer || !rootRow || !replyRow) return { fixtureOk: false };
+      const rootInfo = adapter.extract(rootRow);
+      const replyInfo = adapter.extract(replyRow);
+      const replySelected = adapter.selectors.some((selector) => replyRow.matches(selector));
+      const replyButton = replyRow.querySelector('.ob-weibo-comment-block');
+      const rootButton = rootRow.querySelector('.ob-weibo-comment-block');
+      let blocked = false; let confirmText = ''; let replyHidden = false; let rootVisible = false; let restored = false;
+      if (replyButton) {
+        replyButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const confirm = document.getElementById('ob-confirm');
+        confirmText = (confirm && confirm.textContent) || '';
+        if (confirm) confirm.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        blocked = window.OB.Index.isBlocked('weibo:uid:123460002');
+        replyHidden = replyRow.getBoundingClientRect().height === 0;
+        rootVisible = rootRow.getBoundingClientRect().height > 0;
+        const toast = document.getElementById('ob-toast');
+        if (toast) toast.querySelector('button').click();
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        restored = !window.OB.Index.isBlocked('weibo:uid:123460002')
+          && replyRow.getBoundingClientRect().height > 0;
+      }
+      return {
+        fixtureOk: true,
+        replySelected,
+        rootKeys: rootInfo.keys,
+        replyKeys: replyInfo.keys,
+        replyLabel: replyInfo.label,
+        rootButtonPresent: !!rootButton,
+        replyButtonPresent: !!replyButton,
+        confirmText,
+        blocked,
+        replyHidden,
+        rootVisible,
+        restored,
+      };
+    });
+    if (weiboModal.fixtureOk && weiboModal.replySelected
+      && (weiboModal.rootKeys || []).includes('weibo:uid:123460001')
+      && (weiboModal.replyKeys || []).includes('weibo:uid:123460002')
+      && weiboModal.replyLabel === '弹窗回复作者'
+      && weiboModal.rootButtonPresent && weiboModal.replyButtonPresent
+      && weiboModal.confirmText.includes('弹窗回复作者')
+      && weiboModal.blocked && weiboModal.replyHidden && weiboModal.rootVisible && weiboModal.restored) {
+      report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
+    } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
+    await modalPage.close();
   } catch (error) {
     report.errors.push(String(error && error.message || error));
   }

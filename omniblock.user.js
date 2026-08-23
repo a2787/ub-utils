@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.17.0
+// @version       0.18.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -783,6 +783,7 @@
       color: #c0392b !important; font-size: 11px !important; line-height: 18px !important; cursor: pointer !important;
     }
     .ob-dm-block:hover { background: #fdeceb !important; }
+    .ob-dm-block:disabled { border-color: #d8d8d8 !important; color: #999 !important; background: #f5f5f5 !important; cursor: wait !important; }
     [data-ob-dm-action="1"] {
       position: relative !important; box-sizing: border-box !important; padding-right: 76px !important;
     }
@@ -790,6 +791,9 @@
       position: absolute !important; right: 4px !important; top: 50% !important;
       transform: translateY(-50%) !important; margin: 0 !important; z-index: 1 !important;
     }
+    /* 真站悬停时日期列会收起，原生“屏蔽用户”从右侧展开；把本地按钮移到释放的日期槽，
+       避免两个操作入口互相盖住。偏移来自 2026-08-22 真站 350px 行捕获。 */
+    [data-ob-dm-action="1"]:hover > .ob-dm-block { right: 82px !important; }
     [data-ob-dm-blocked="1"] { display: none !important; }
 
     /* 播放器内浮动弹幕的坐标命中拉黑按钮。真实弹幕层是 pointer-events:none，
@@ -814,10 +818,11 @@
     #ob-dm-tool:hover { background: #41414a; }
     #ob-dm-manager {
       position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+      width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
     }
     #ob-dm-manager .ob-dm-box {
-      box-sizing: border-box; width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column;
+      box-sizing: border-box; width: min(720px, 94vw); max-width: 100%; min-width: 0; max-height: 86vh; display: flex; flex-direction: column;
+      overflow-x: hidden;
       border-radius: 8px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
     }
     #ob-dm-manager .ob-dm-head, #ob-dm-manager .ob-dm-toolbar, #ob-dm-manager .ob-dm-footer {
@@ -898,7 +903,7 @@
     #ob-dm-manager .ob-dm-batch:disabled { background: #ccc; cursor: default; }
     @media (max-width: 520px) {
       #ob-dm-manager { align-items: flex-end; }
-      #ob-dm-manager .ob-dm-box { width: 100vw; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-dm-manager .ob-dm-box { width: 100%; max-width: 100%; min-width: 0; max-height: 88vh; border-radius: 8px 8px 0 0; }
       #ob-dm-manager .ob-dm-sender { grid-template-columns: auto minmax(0, 1fr); }
       #ob-dm-manager .ob-dm-actions { grid-column: 2; justify-self: end; }
       #ob-dm-manager .ob-dm-uid-results { grid-column: 1 / -1; }
@@ -1478,6 +1483,12 @@
         '.card-review[comment_id]',
         '.wbpro-list > .item1',
         '.wbpro-list .list2 > .item2',
+        // 2026-08-22 真站捕获：「共 N 条回复」会打开
+        // `.woo-modal-main > .wbpro-layer` 弹窗。弹窗里根评论仍是 `.wbpro-list > .item1`，
+        // 但回复行被 vue-recycle-scroller 包了一层 `.wbpro-scroller-item`，因此
+        // `.list2 > .item2` 这条直接子元素路径匹配不到它们。
+        '.wbpro-layer .wbpro-scroller-item > .item2',
+        '.wbpro-layer .vue-recycle-scroller__item-view > .item2',
         '.wbpro-frame [node-type="reply_list"] > .item2, .wbpro-frame [node-type="reply_list"] .item2',
         '[node-type="reply_list"] > .item2, [node-type="reply_list"] .item2',
         '.list_ul > .item2, .list_ul .item2',
@@ -1504,6 +1515,11 @@
       ':scope > .content > .txt > a.name[href]',
       ':scope > .item1in > .con1 > .text > a:first-child[href]',
       ':scope > .item2in > .con2 > .text > a:first-child[href]',
+      // 2026-08-22 真站捕获（「共 N 条回复」展开弹窗 .woo-modal-main > .wbpro-layer）：
+      // 弹窗里根评论仍是 `.item1 > .item1in > .con1 > .text > a`（保留 item1in），
+      // 但回复行是 `.item2 > .con2 > .text > a`，没有 `.item2in` 中间层，
+      // 所以必须有这条直连路径，否则弹窗内的回复行解析不出身份。
+      ':scope > .con2 > .text > a:first-child[href]',
       ':scope > .con > .txt > a:first-child[href]',
       ':scope > .txt > a:first-child[href]',
       ':scope > .content > .txt a.name[href], :scope > .content > .txt a[nick-name][href]',
@@ -2010,6 +2026,9 @@
   };
 
   const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
+  // B站弹幕举报操作条的具体标签节点会随登录态和前端版本变化；在已经打开的菜单/对话框
+  // 内，只补扫没有交互子节点的短文本叶子，避免把整页正文当成举报项。
+  const QB_MENU_ROOT = '.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog,.operation-list';
   // 播放器浮动弹幕没有稳定公开 UID，也不接收指针事件（真站 CSS 写死
   // `pointer-events: none`）。弹幕模块用坐标命中解析出唯一 mid_hash 后写入这里，
   // 登录用户能弹出原生弹幕操作条时，「举报」菜单也可复用同一身份。
@@ -2058,7 +2077,7 @@
               return;
             }
             if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
-            const btn = makeQuickBtn(dmInfo.label, el, { identify: () => dmInfo }, dmInfo.keys.join('|'));
+            const btn = makeQuickBtn(cfg.label || '本地拉黑', el, { identify: () => dmInfo }, dmInfo.keys.join('|'));
             el.setAttribute('data-ob-qb', '1');
             el.insertAdjacentElement('afterend', btn);
             return;
@@ -2078,7 +2097,33 @@
     function scanAll() {
       if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) { clearInjected(); return; }
       for (const el of querySelectorAllDeep(document, QB_CANDIDATE)) tryInject(el);
+      // 某些 B站登录态弹幕举报窗使用无 role/class 的 div 作为选项。只在已打开菜单根内
+      // 检查叶子项，身份仍必须来自当前唯一浮动弹幕 hash，因而不会给普通举报窗乱挂入口。
+      for (const root of querySelectorAllDeep(document, QB_MENU_ROOT)) {
+        const leaves = querySelectorAllDeep(root, '*').filter((el) => {
+          if (!el || el === root || !el.parentElement) return false;
+          const text = textOf(el);
+          if (!text || text.length > 120) return false;
+          if ((el.children || []).length > 2) return false;
+          const interactive = el.querySelector && el.querySelector('a,button,[role="menuitem"],[role="button"],li');
+          if (interactive) return false;
+          return (el.parentElement.children || []).length >= 2;
+        });
+        for (const el of leaves) tryInject(el);
+      }
     }
+    const probeMenuEvent = (event) => {
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+      for (const el of path) {
+        if (!el || el.nodeType !== 1) continue;
+        const text = textOf(el);
+        if (text && text.length <= 120 && cfg.anchorTexts.some((anchor) => text.indexOf(anchor) !== -1)) tryInject(el);
+      }
+    };
+    // 举报项常在鼠标悬停后才瞬时挂载；事件触发补扫能赶在菜单关闭前插入入口，
+    // 周期扫描仍负责键盘打开和无鼠标场景。
+    document.addEventListener('pointerover', probeMenuEvent, true);
+    document.addEventListener('focusin', probeMenuEvent, true);
     // 周期扫描：B站菜单在 Shadow DOM 内，MutationObserver 跨不过影子边界，故用定时器 + 全局穿透扫描
     setInterval(scanAll, 900);
     scanAll();
@@ -2390,6 +2435,9 @@
     const dmSenders = new Map();
     const dmContentGroups = new Map();
     const dmSeenElements = new Set();
+    const dmLoadedSegments = new Set();
+    const dmSegmentPromises = new Map();
+    const dmSegmentRetryAt = new Map();
     const selectedDmGroups = new Set();
     const expandedDmUidGroups = new Set();
     const dmUidLookups = new Map();
@@ -2449,6 +2497,7 @@
       if (key === dmVideoKey) return false;
       dmVideoKey = key;
       dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmContentGroups.clear(); dmSeenElements.clear();
+      dmLoadedSegments.clear(); dmSegmentPromises.clear(); dmSegmentRetryAt.clear();
       selectedDmGroups.clear(); expandedDmUidGroups.clear();
       dmSearch = ''; dmPage = 0;
       resetDmBootstrap();
@@ -2500,7 +2549,7 @@
     function copyRange(out, buf, start, end) {
       for (let i = start; i < end; i++) out.push(buf[i]);
     }
-    function filterSeg(bytes) {
+    function filterSeg(bytes, segmentIndex) {
       const buf = new Uint8Array(bytes);
       const blocked = blockedHashes();
       const out = [];
@@ -2527,6 +2576,8 @@
         copyRange(out, buf, start, next);
         p = next;
       }
+      const parsedSegment = Number(segmentIndex);
+      if (Number.isInteger(parsedSegment) && parsedSegment > 0) dmLoadedSegments.add(parsedSegment);
       if (dmSenders.size) {
         dmBootstrapStatus = 'ready';
         dmBootstrapRetryAt = 0;
@@ -2575,6 +2626,12 @@
       try { return numericCid(new URL(String(url), location.href).searchParams.get('oid')); }
       catch (e) { return ''; }
     }
+    function segmentIndexFromUrl(url) {
+      try {
+        const value = Number(new URL(String(url), location.href).searchParams.get('segment_index') || 0);
+        return Number.isInteger(value) && value > 0 ? value : 0;
+      } catch (e) { return 0; }
+    }
 
     function noteDanmakuUrl(url) {
       const cid = cidFromDanmakuUrl(url);
@@ -2597,7 +2654,7 @@
         try {
           const raw = xhr.response;
           if (!(raw instanceof ArrayBuffer)) return;
-          const filtered = asArrayBuffer(filterSeg(raw));
+          const filtered = asArrayBuffer(filterSeg(raw, segmentIndexFromUrl(xhr.__obDanmakuUrl || xhr.pakku_url)));
           if (filtered !== raw) xhr.response = filtered;
         } catch (e) {}
       };
@@ -2659,7 +2716,8 @@
         if (!response || !response.ok) throw new Error('danmaku segment HTTP ' + (response && response.status));
         const bytes = await response.arrayBuffer();
         if (currentVideoKey() !== requestKey) return;
-        filterSeg(bytes);
+        filterSeg(bytes, 1);
+        dmLoadedSegments.add(1);
         if (currentVideoKey() !== requestKey) return;
         dmBootstrapStatus = dmSenders.size ? 'ready' : 'empty';
         dmBootstrapRetryAt = dmSenders.size ? 0 : Date.now() + 5000;
@@ -2673,6 +2731,51 @@
       });
       dmBootstrapPromise = run;
       refreshDmTool();
+    }
+
+    // 右侧弹幕列表是跨整段的虚拟列表，而播放器通常只先请求当前段。列表行带有显示秒数，
+    // 按 B站 seg.so 每 6 分钟一段的协议按需读取对应段，避免把“尚未进入播放器缓存”误判为
+    // 无身份。请求仅针对当前视频 cid，且结果仍走同一 protobuf 解析/过滤路径。
+    function dmSegmentIndexFromRow(row) {
+      const cell = row && row.querySelector && row.querySelector('.dm-info-time');
+      const at = timeInMs(cell ? textOf(cell) : textOf(row));
+      return at >= 0 ? Math.floor(at / 360000) + 1 : 0;
+    }
+    function loadDmSegment(index) {
+      const segment = Number(index);
+      if (!Number.isInteger(segment) || segment < 1 || !dmFetch) return null;
+      if (dmLoadedSegments.has(segment)) return null;
+      if (dmSegmentPromises.has(segment)) return dmSegmentPromises.get(segment);
+      if (Date.now() < (dmSegmentRetryAt.get(segment) || 0)) return null;
+      const requestKey = currentVideoKey();
+      const run = (async () => {
+        let cid = cidFromPageState() || dmObservedCid;
+        if (!cid) cid = await cidFromVideoMetadata(requestKey);
+        if (!cid || currentVideoKey() !== requestKey) return;
+        const url = 'https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=' + encodeURIComponent(cid)
+          + '&segment_index=' + encodeURIComponent(segment);
+        const response = await dmFetch(url, { credentials: 'include' });
+        if (!response || !response.ok) throw new Error('danmaku segment HTTP ' + (response && response.status));
+        const bytes = await response.arrayBuffer();
+        if (currentVideoKey() !== requestKey) return;
+        filterSeg(bytes, segment);
+        dmLoadedSegments.add(segment);
+        dmSegmentRetryAt.delete(segment);
+      })().catch(() => {
+        if (currentVideoKey() === requestKey) dmSegmentRetryAt.set(segment, Date.now() + 10000);
+      }).finally(() => {
+        if (dmSegmentPromises.get(segment) === run) dmSegmentPromises.delete(segment);
+        if (currentVideoKey() === requestKey) scanDmPanels();
+      });
+      dmSegmentPromises.set(segment, run);
+      return run;
+    }
+    function requestDmRowSegment(row) {
+      const segment = dmSegmentIndexFromRow(row);
+      if (segment < 1) return;
+      // 第 1 段由播放器/XHR 或 bootstrap 负责；不要与 bootstrap 并发重复读取。
+      if (segment === 1 && (dmBootstrapPromise || dmBootstrapStatus === 'loading')) return;
+      loadDmSegment(segment);
     }
 
     function hashFromData(data) {
@@ -2691,31 +2794,79 @@
       return (Number(match[1]) * 60 + Number(match[2])) * 1000;
     }
 
-    function hashFromDmRow(row) {
+    // 2026-08-22 真站捕获：弹幕列表的 `.dm-info-dm` 只显示前 30 个字符，完整文案在
+    // 它的 `title` 属性里。因此必须优先用 title 做匹配，否则长弹幕永远匹配不到数据段。
+    function dmRowContent(row) {
+      const cell = row.querySelector && row.querySelector('.dm-info-dm');
+      return {
+        title: cell ? cleanDmText(attr(cell, 'title')) : '',
+        text: cell ? cleanDmText(textOf(cell)) : '',
+      };
+    }
+
+    // 返回 { hash, reason, candidateCount }。reason 用于诊断与回归断言：
+    // attr/data 表示站点直接给了 mid_hash；matched 表示按文案(+时间)唯一命中；
+    // ambiguous 表示同文案有多个发送者（提供明确的整组入口，不提供单身份入口）；
+    // no-session 表示本轮还没抓到任何弹幕段；unmatched 表示该行文案不在本轮段里。
+    function resolveDmRow(row) {
       const direct = normalHash(attr(row, 'data-mid-hash') || attr(row, 'data-mid_hash') || attr(row, 'data-dm-hash') || attr(row, 'data-danmaku-hash'));
-      if (direct) return direct;
+      if (direct) return { hash: direct, hashes: [direct], reason: 'attr', candidateCount: 1 };
       const fromData = hashFromData(row.__data) || hashFromData(row.__vueParentComponent && row.__vueParentComponent.props) || hashFromData(row._vnode && row._vnode.props);
-      if (fromData) return fromData;
+      if (fromData) return { hash: fromData, hashes: [fromData], reason: 'data', candidateCount: 1 };
       const rowText = cleanDmText(textOf(row));
-      if (!rowText) return '';
+      const cell = dmRowContent(row);
+      if (!rowText && !cell.title && !cell.text) return { hash: '', hashes: [], reason: 'no-text', candidateCount: 0 };
+      if (!dmByContent.size) return { hash: '', hashes: [], reason: 'no-session', candidateCount: 0 };
+      const timeCell = row.querySelector && row.querySelector('.dm-info-time');
       const rawProgress = attr(row, 'data-progress') || attr(row, 'data-time') || attr(row, 'data-dm-progress');
       const progress = rawProgress == null || rawProgress === '' ? NaN : Number(rawProgress);
-      const at = Number.isFinite(progress) && progress >= 0 ? progress : timeInMs(rowText);
-      const candidates = new Set();
-      for (const [content, hashes] of dmByContent) {
-        if (!rowText.includes(content)) continue;
-        if (at >= 0) {
-          const exact = dmByProgress.get(String(at) + '\x1f' + content);
-          if (exact) for (const hash of exact) candidates.add(hash);
-          // 列表有时只显示到秒，允许 1 秒的时间差。
-          for (const [key, timedHashes] of dmByProgress) {
-            const divider = key.indexOf('\x1f');
-            if (divider < 0 || key.slice(divider + 1) !== content) continue;
-            if (Math.abs(Number(key.slice(0, divider)) - at) <= 1000) for (const hash of timedHashes) candidates.add(hash);
-          }
-        } else for (const hash of hashes) candidates.add(hash);
+      const exactProgress = Number.isFinite(progress) && progress >= 0;
+      const at = exactProgress ? progress : timeInMs(timeCell ? textOf(timeCell) : rowText);
+      // 2026-08-22 真站取证：列表时间列是 floor(progress/1000)（20/20 条唯一文案行成立，
+      // 其中 10 条对四舍五入不成立）。所以由显示时间反推时只接受 [at, at+1000) 这一秒，
+      // 用对称的 ±1s 会把相邻一秒的另一位发送者也算进来，凭空造出歧义。
+      const inWindow = (value) => (exactProgress
+        ? Math.abs(value - at) <= 1000
+        : value >= at && value < at + 1000);
+      // 先用完整 title 精确匹配；没有 title 时退回可见文案（可能被站点截断），
+      // 最后才用整行文本包含关系。越靠后的方式越容易产生多候选，从而判为歧义。
+      const collect = (accepts) => {
+        const candidates = new Set();
+        for (const [content, hashes] of dmByContent) {
+          if (!accepts(content)) continue;
+          if (at >= 0) {
+            for (const [key, timedHashes] of dmByProgress) {
+              const divider = key.indexOf('\x1f');
+              if (divider < 0 || key.slice(divider + 1) !== content) continue;
+              if (inWindow(Number(key.slice(0, divider)))) for (const hash of timedHashes) candidates.add(hash);
+            }
+          } else for (const hash of hashes) candidates.add(hash);
+        }
+        return candidates;
+      };
+      const strategies = [];
+      if (cell.title) strategies.push((content) => content === cell.title);
+      if (cell.text) strategies.push((content) => content === cell.text || content.startsWith(cell.text));
+      if (rowText) strategies.push((content) => rowText.includes(content));
+      let candidates = new Set();
+      for (const accepts of strategies) {
+        candidates = collect(accepts);
+        if (candidates.size) break;
       }
-      return candidates.size === 1 ? Array.from(candidates)[0] : '';
+      const hashes = Array.from(candidates);
+      if (hashes.length === 1) return { hash: hashes[0], hashes, reason: 'matched', candidateCount: 1 };
+      // 命中 0 个时，说明该行文案不在本轮已抓到的弹幕段里（例如列表已滚到
+      // 尚未请求的分段）；命中多个时是同文案多发送者的真实歧义。
+      return {
+        hash: '',
+        hashes,
+        reason: hashes.length ? 'ambiguous' : 'unmatched',
+        candidateCount: hashes.length,
+      };
+    }
+
+    function hashFromDmRow(row) {
+      return resolveDmRow(row).hash;
     }
 
     function formatDmProgress(progress) {
@@ -3139,6 +3290,7 @@
     let dmPickButton = null;
     let dmPickTarget = null;
     let dmPickHideTimer = 0;
+    let dmPickFollowFrame = 0;
 
     function floatingDmIdentityFor(node) {
       const content = cleanDmText(textOf(node));
@@ -3163,8 +3315,37 @@
 
     function hideDmPick() {
       if (dmPickHideTimer) { clearTimeout(dmPickHideTimer); dmPickHideTimer = 0; }
+      if (dmPickFollowFrame) {
+        (window.cancelAnimationFrame || clearTimeout)(dmPickFollowFrame);
+        dmPickFollowFrame = 0;
+      }
       dmPickTarget = null;
       if (dmPickButton) dmPickButton.style.setProperty('display', 'none', 'important');
+    }
+
+    // 弹幕节点本身持续向左移动，只在 pointermove 时设置一次按钮坐标会让浮层停在旧位置。
+    // 可见期间用一帧循环跟随目标矩形；目标离开或被站点回收时立即收起，避免悬空入口。
+    function positionDmPick() {
+      if (!dmPickButton || !dmPickTarget || !dmPickTarget.isConnected) return false;
+      const rect = dmPickTarget.getBoundingClientRect();
+      if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return false;
+      const width = dmPickButton.offsetWidth || 150;
+      const left = Math.min(Math.max(4, rect.left), Math.max(4, window.innerWidth - width - 4));
+      const top = rect.top - 26 >= 4 ? rect.top - 26 : rect.bottom + 6;
+      dmPickButton.style.setProperty('left', Math.round(left) + 'px', 'important');
+      dmPickButton.style.setProperty('top', Math.round(top) + 'px', 'important');
+      return true;
+    }
+    function followDmPick() {
+      if (dmPickFollowFrame) return;
+      const tick = () => {
+        dmPickFollowFrame = 0;
+        if (!dmPickTarget || !positionDmPick()) { hideDmPick(); return; }
+        const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+        dmPickFollowFrame = raf(tick);
+      };
+      const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+      dmPickFollowFrame = raf(tick);
     }
 
     function ensureDmPickButton() {
@@ -3225,11 +3406,8 @@
       // 快捷入口，使那条原生菜单也能复用同一 mid_hash。
       floatingDanmaku.remember(info);
       button.style.setProperty('display', 'inline-flex', 'important');
-      const width = button.offsetWidth || 150;
-      const left = Math.min(Math.max(4, hit.rect.left), Math.max(4, window.innerWidth - width - 4));
-      const top = hit.rect.top - 26 >= 4 ? hit.rect.top - 26 : hit.rect.bottom + 6;
-      button.style.setProperty('left', Math.round(left) + 'px', 'important');
-      button.style.setProperty('top', Math.round(top) + 'px', 'important');
+      positionDmPick();
+      followDmPick();
     }
 
     function setupFloatingDmPick() {
@@ -3251,22 +3429,99 @@
       const info = floatingDmIdentityFor(hit.node);
       return { text: cleanDmText(textOf(hit.node)), keys: info ? info.keys : [] };
     };
+    // 供回归测试与诊断查询“弹幕列表某一行为何没有入口”，不改变运行行为。
+    window.__omniblockDmRowProbe = (row) => {
+      if (!row) return null;
+      const resolved = resolveDmRow(row);
+      return {
+        hash: resolved.hash,
+        hashes: resolved.hashes,
+        reason: resolved.reason,
+        candidateCount: resolved.candidateCount,
+        sessionSize: dmByContent.size,
+      };
+    };
+    // 仅供本地诊断：列出某条文案在本轮已抓段里的 progress，用于验证列表显示秒
+    // 与 progress 的换算关系。不参与运行逻辑。
+    window.__omniblockDmContentProbe = (content) => {
+      const text = cleanDmText(content);
+      const out = [];
+      for (const [key, hashes] of dmByProgress) {
+        const divider = key.indexOf('\x1f');
+        if (divider < 0 || key.slice(divider + 1) !== text) continue;
+        for (const hash of hashes) out.push({ progress: Number(key.slice(0, divider)), hash });
+      }
+      return out.sort((a, b) => a.progress - b.progress);
+    };
+    // 仅供本地诊断：某条列表文案在本轮段里是否存在近似项，用于区分“段没抓到”
+    // 和“文案对不上”。不参与运行逻辑。
+    window.__omniblockDmNearMissProbe = (content) => {
+      const text = cleanDmText(content);
+      if (!text) return null;
+      const head = text.slice(0, 8);
+      const near = [];
+      for (const known of dmByContent.keys()) {
+        if (known === text) continue;
+        if (known.startsWith(head) || text.startsWith(known.slice(0, 8))) near.push(known.slice(0, 40));
+        if (near.length >= 5) break;
+      }
+      return { exact: dmByContent.has(text), sessionSize: dmByContent.size, near };
+    };
 
-    const DM_PANEL_SEL = '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view';
-    const DM_ROW_SEL = 'li,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash],[class*="dm-item"],[class*="danmaku-item"]';
-    function addDmBlockButton(row, hash) {
+    // 2026-08-22 真站捕获（未登录，播放器右侧「弹幕列表」由 .bui-dropdown-display 打开）：
+    // 列表容器是 `.bpx-player-dm-wrap`，里面是虚拟长列表
+    // `ul.bui-long-list-list > li.bui-long-list-item > div.dm-info-row`。
+    // 旧的 `.bpx-player-dm-container` 在真站上是 0×0 且无子节点，另外三个选择器不存在，
+    // 因此旧实现在真实弹幕列表里一个入口都挂不上；已按真站结构改正，不保留伪兜底。
+    const DM_PANEL_SEL = '.bpx-player-dm-wrap,.bui-long-list-list';
+    const DM_ROW_SEL = 'li.bui-long-list-item,.dm-info-row,[data-mid-hash],[data-mid_hash],[data-dm-hash],[data-danmaku-hash]';
+    // `li.bui-long-list-item` 与其内部的 `.dm-info-row` 会同时匹配。只保留最内层，
+    // 否则同一条弹幕会挂两个按钮。
+    function dmRowsIn(panel) {
+      const all = querySelectorAllDeep(panel, DM_ROW_SEL);
+      return all.filter((row) => !all.some((other) => other !== row && row.contains(other)));
+    }
+    // 虚拟列表把高度写死在外层 `li` 上（真站为 24px）。隐藏时必须收掉那个 li，
+    // 只隐藏内层 `.dm-info-row` 会留下等高空行。
+    function dmHideTarget(row) {
+      const host = row.closest && row.closest('li.bui-long-list-item');
+      return host || row;
+    }
+    function addDmStatusButton(row, text, title) {
       row.setAttribute('data-ob-dm-action', '1');
-      if (row.querySelector && row.querySelector(':scope > .ob-dm-block')) return;
+      const signature = 'status:' + text;
+      const current = row.querySelector && row.querySelector(':scope > .ob-dm-block');
+      if (current && current.getAttribute('data-ob-dm-signature') === signature) return;
+      if (current) current.remove();
       const btn = document.createElement('button');
-      btn.className = 'ob-dm-block'; btn.type = 'button'; btn.textContent = '本地拉黑';
-      btn.title = '按该弹幕的 mid_hash 本地屏蔽发送者';
+      btn.className = 'ob-dm-block'; btn.type = 'button'; btn.disabled = true; btn.textContent = text;
+      btn.title = title || text; btn.setAttribute('data-ob-dm-signature', signature);
+      row.appendChild(btn);
+    }
+
+    function addDmBlockButton(row, resolved) {
+      const hashes = Array.isArray(resolved && resolved.hashes) ? resolved.hashes.filter(Boolean) : [];
+      if (!hashes.length) return;
+      row.setAttribute('data-ob-dm-action', '1');
+      const signature = 'hashes:' + hashes.join(',');
+      const current = row.querySelector && row.querySelector(':scope > .ob-dm-block');
+      if (current && current.getAttribute('data-ob-dm-signature') === signature) return;
+      if (current) current.remove();
+      const btn = document.createElement('button');
+      btn.className = 'ob-dm-block'; btn.type = 'button';
+      btn.textContent = hashes.length === 1 ? '本地拉黑' : '本地拉黑全部(' + hashes.length + ')';
+      btn.title = hashes.length === 1
+        ? '按该弹幕的 mid_hash 本地屏蔽发送者'
+        : '该文案对应多位发送者；确认后按 mid_hash 全部屏蔽';
+      btn.setAttribute('data-ob-dm-signature', signature);
       btn.addEventListener('click', (e) => {
         e.stopPropagation(); e.preventDefault();
-        blockMany([{
+        const list = hashes.map((hash) => ({
           keys: [makeIdentityKey('bili:dmhash', hash)],
           label: 'B站弹幕发送者',
           note: 'B站弹幕段未提供昵称/UID；同一发送者后续弹幕均会屏蔽。',
-        }], btn, '屏蔽该弹幕发送者', scanDmPanels);
+        }));
+        blockMany(list, btn, hashes.length === 1 ? '屏蔽该弹幕发送者' : '屏蔽该文案的全部 ' + hashes.length + ' 位发送者', scanDmPanels);
       });
       row.appendChild(btn);
     }
@@ -3276,33 +3531,35 @@
       const showButton = enabled && Store.getSetting('showQuickBlock');
       const blocked = enabled ? blockedHashes() : new Set();
       for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
-        for (const row of querySelectorAllDeep(panel, DM_ROW_SEL)) {
+        for (const row of dmRowsIn(panel)) {
           const existingButton = row.querySelector && row.querySelector(':scope > .ob-dm-block');
+          const hideTarget = dmHideTarget(row);
           if (!enabled) {
-            setInlineHidden(row, false);
-            row.removeAttribute('data-ob-dm-blocked');
+            setInlineHidden(hideTarget, false);
+            hideTarget.removeAttribute('data-ob-dm-blocked');
             if (existingButton) existingButton.remove();
             row.removeAttribute('data-ob-dm-action');
             continue;
           }
-          const hash = hashFromDmRow(row);
-          if (!hash) {
-            setInlineHidden(row, false);
-            row.removeAttribute('data-ob-dm-blocked');
+          const resolved = resolveDmRow(row);
+          if (!resolved.hashes.length) {
+            setInlineHidden(hideTarget, false);
+            hideTarget.removeAttribute('data-ob-dm-blocked');
+            requestDmRowSegment(row);
+            addDmStatusButton(row, resolved.reason === 'no-session' ? '读取弹幕…' : '匹配中…',
+              resolved.reason === 'no-session' ? '正在读取当前时间段的弹幕数据' : '该行尚未在已读取的弹幕段中找到');
+            continue;
+          }
+          if (resolved.hashes.length && resolved.hashes.every((hash) => blocked.has(hash))) {
+            hideTarget.setAttribute('data-ob-dm-blocked', '1');
+            setInlineHidden(hideTarget, true);
             if (existingButton) existingButton.remove();
             row.removeAttribute('data-ob-dm-action');
             continue;
           }
-          if (blocked.has(hash)) {
-            row.setAttribute('data-ob-dm-blocked', '1');
-            setInlineHidden(row, true);
-            if (existingButton) existingButton.remove();
-            row.removeAttribute('data-ob-dm-action');
-            continue;
-          }
-          setInlineHidden(row, false);
-          row.removeAttribute('data-ob-dm-blocked');
-          if (showButton) addDmBlockButton(row, hash);
+          setInlineHidden(hideTarget, false);
+          hideTarget.removeAttribute('data-ob-dm-blocked');
+          if (showButton) addDmBlockButton(row, resolved);
           else {
             if (existingButton) existingButton.remove();
             row.removeAttribute('data-ob-dm-action');
@@ -3338,7 +3595,7 @@
               if (raw === lastRaw) return lastFiltered;
               try {
                 lastRaw = raw;
-                lastFiltered = asArrayBuffer(filterSeg(raw));
+              lastFiltered = asArrayBuffer(filterSeg(raw, segmentIndexFromUrl(xhr.__obDanmakuUrl)));
                 return lastFiltered;
               } catch (e) {
                 return raw;
@@ -3377,7 +3634,7 @@
             if (currentVideoKey() !== requestKey) return resp;
             const buf = await resp.clone().arrayBuffer();
             if (currentVideoKey() !== requestKey) return resp;
-            const filtered = filterSeg(buf);
+            const filtered = filterSeg(buf, segmentIndexFromUrl(url));
             // 重建响应时丢掉内容编码相关头，否则浏览器会二次解压导致弹幕全失
             const hdr = new Headers();
             resp.headers.forEach((v, k) => {

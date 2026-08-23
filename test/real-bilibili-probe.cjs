@@ -459,6 +459,11 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       if (floating.rendered) {
         // 等待弹幕渲染期间页面可能再次被站点脚本滚动，采样前重新对齐播放器。
         await bringPlayerIntoView();
+        // 采样矩形后若继续播放，弹幕可能在一次鼠标移动前已经越过视口，
+        // 会把“目标移动太快”误报成坐标命中失败。暂停只用于本轮只读验证，
+        // 不触发平台写操作；真实脚本仍覆盖播放中的跟随路径。
+        await page.evaluate(() => { const video = document.querySelector('video'); if (video) video.pause(); });
+        await sleep(300);
         floating.pointerEventsNone = await page.evaluate(() => {
           const dm = document.querySelector('.bili-danmaku-x-dm');
           return !!dm && getComputedStyle(dm).pointerEvents === 'none';
@@ -868,9 +873,11 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
           .filter((entry) => /\/dm\/(?:wbi\/)?web\/seg\.so|\/dm\/list\.so/.test(entry.name))
           .map((entry) => ({ initiatorType: entry.initiatorType, endpoint: entry.name.replace(/[?].*$/, '') })),
         danmakuXhrTypes: window.__obXhrProbe || [],
-        danmakuPanelCount: collect(document, '.bpx-player-dm-container,.bpx-player-dm-list,.bpx-player-dm-list-container,.bpx-player-dm-list-view').length,
-        danmakuRowCount: collect(document, '.bpx-player-dm-container li,.bpx-player-dm-list li,.bpx-player-dm-list-container li,.bpx-player-dm-list-view li').length,
-        danmakuLocalButtonCount: collect(document, '.ob-dm-block').length,
+        // 2026-08-22 真站捕获的当前结构：弹幕列表由 `.bpx-player-dm-wrap` 承载，
+        // 虚拟行是 `li.bui-long-list-item` / `.dm-info-row`；旧的四个容器选择器已失效。
+        danmakuPanelCount: collect(document, '.bpx-player-dm-wrap,.bui-long-list-list').length,
+        danmakuRowCount: collect(document, '.bpx-player-dm-wrap li.bui-long-list-item,.bpx-player-dm-wrap .dm-info-row').length,
+        danmakuLocalButtonCount: collect(document, '.bpx-player-dm-wrap .ob-dm-block').length,
         player: video ? { present: true, readyState: video.readyState, durationFinite: Number.isFinite(video.duration) } : { present: false },
       };
     });

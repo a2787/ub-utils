@@ -74,11 +74,23 @@ async function loadWeiboDetail(page, url) {
 async function countWeiboRows(page) {
   return page.evaluate(({ rootSel, replySel }) => {
     const adapter = window.OB && window.OB.adapters.weibo;
-    const identified = (sel) => Array.from(document.querySelectorAll(sel)).filter((row) => {
+    const roots = Array.from(document.querySelectorAll(rootSel));
+    const replies = Array.from(document.querySelectorAll(replySel));
+    const keyOf = (row) => {
       const info = adapter && adapter.extract(row);
-      return !!(info && info.keys && info.keys.length);
-    }).length;
-    return { roots: identified(rootSel), replies: identified(replySel) };
+      return (info && info.keys && info.keys[0]) || '';
+    };
+    const identifiedRoots = roots.filter((row) => !!keyOf(row));
+    const identifiedReplies = replies.filter((row) => !!keyOf(row));
+    const distinctReplies = identifiedReplies.filter((row) => {
+      const root = row.closest(rootSel);
+      return !!root && keyOf(root) && keyOf(root) !== keyOf(row);
+    });
+    return {
+      roots: identifiedRoots.length,
+      replies: identifiedReplies.length,
+      distinctReplies: distinctReplies.length,
+    };
   }, { rootSel: WB_ROOT_SEL, replySel: WB_REPLY_SEL });
 }
 async function pickWeiboDetailTarget(browser, candidates) {
@@ -89,7 +101,9 @@ async function pickWeiboDetailTarget(browser, candidates) {
       await page.addInitScript({ content: shim + '\n' + userscript });
       await loadWeiboDetail(page, candidate);
       const counts = await countWeiboRows(page);
-      if (counts.replies > 0) return candidate;
+      // 独立隐藏的断言必须选到作者不同于根评论的回复；同作者回复被一起隐藏是
+      // 正确的身份语义，但不能证明“只收起回复行”。
+      if (counts.distinctReplies > 0) return candidate;
       if (counts.roots > 0 && !fallback) fallback = candidate;
     } catch (error) {
       // 单个候选失败不影响继续尝试下一个。
@@ -161,6 +175,14 @@ async function pickWeiboDetailTarget(browser, candidates) {
               const info = adapter && adapter.extract(row);
               return !!(info && info.keys && info.keys.length);
             });
+            const keyOf = (row) => {
+              const info = adapter && adapter.extract(row);
+              return (info && info.keys && info.keys[0]) || '';
+            };
+            const distinctReplies = replyRows.filter((row) => {
+              const root = row.closest('.wbpro-list > .item1');
+              return !!root && keyOf(root) && keyOf(row) && keyOf(root) !== keyOf(row);
+            });
             const withButton = (rows) => rows.filter((row) => !!row.querySelector('.ob-weibo-comment-block'));
             const users = window.OB && window.OB.collectUsers(document) || [];
             const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
@@ -174,6 +196,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
               replyRowCount: replyRows.length,
               identifiedReplyCount: identified(replyRows).length,
               replyButtonCount: withButton(identified(replyRows)).length,
+              distinctReplyCount: distinctReplies.length,
               // 「共 N 条回复」展开行同样匹配 .item2，但没有作者身份，不应出现入口。
               expandRowsWithButton: replyRows.filter((row) => /共\s*\d+\s*条回复/.test(row.textContent || '')
                 && !!row.querySelector('.ob-weibo-comment-block')).length,
@@ -216,8 +239,11 @@ async function pickWeiboDetailTarget(browser, candidates) {
               const root = item.closest('.wbpro-list > .item1');
               const replyKey = keyOf(item);
               return !!replyKey && (!root || keyOf(root) !== replyKey);
-            }) || rows.find((item) => item.matches('.wbpro-list .list2 > .item2')
-              && !!item.querySelector('.ob-weibo-comment-block')) || rows[0];
+            });
+            if (!row) return {
+              found: false,
+              blocked: 'blocked：本轮真实页没有作者不同于根评论的已加载楼中楼，无法安全证明独立隐藏',
+            };
             const button = row && row.querySelector('.ob-weibo-comment-block');
             const info = adapter && row && adapter.extract(row);
             const key = info && info.keys && info.keys[0];
@@ -252,9 +278,8 @@ async function pickWeiboDetailTarget(browser, candidates) {
               })),
             } : null;
             const sameAuthorAsRoot = !!rootKey && rootKey === key;
-            const rootKept = !rootThread || rootThread === row || sameAuthorAsRoot
-              ? true
-              : rootAfter > 0 && rootAfter < rootBefore;
+            const rootKept = !!rootThread && rootThread !== row && !sameAuthorAsRoot
+              && rootAfter > 0 && rootAfter < rootBefore;
             const toast = document.getElementById('ob-toast');
             const undo = toast && toast.querySelector('button');
             if (undo) { undo.click(); await pause(220); }
@@ -263,7 +288,9 @@ async function pickWeiboDetailTarget(browser, candidates) {
           });
           const local = result.localBlock || {};
           const platform = (result.page && result.page.platform) || {};
-          if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
+          if (local.blocked && typeof local.blocked === 'string' && local.blocked.indexOf('blocked：') === 0) {
+            result.errors.push(local.blocked);
+          } else if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
             result.errors.push('验证失败：微博详情评论本地拉黑、隔离隐藏或撤销不完整');
           }
           if (onDetail) {
@@ -275,6 +302,9 @@ async function pickWeiboDetailTarget(browser, candidates) {
             }
             if (!platform.identifiedReplyCount) {
               result.errors.push('blocked：本轮真实页没有可识别的已加载楼中楼');
+            }
+            if (platform.identifiedReplyCount && !platform.distinctReplyCount) {
+              result.errors.push('blocked：本轮真实页的楼中楼作者均与根评论相同，无法安全证明独立隐藏');
             }
             if (platform.expandRowsWithButton) {
               result.errors.push('验证失败：「共 N 条回复」展开行错误地获得了拉黑入口');

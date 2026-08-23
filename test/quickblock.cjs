@@ -14,7 +14,12 @@ const SAVE_SCREENSHOTS = process.argv.includes('--screenshot');
 const SHIM = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
-window.GM_setValue = (k,v) => { window.__gm[k] = v; window.__writes = (window.__writes || 0) + 1; };
+window.GM_setValue = (k,v) => {
+  window.__gm[k] = v;
+  // 本地快照使用独立 GM 键；事务断言只统计主名单提交次数。
+  if (k === 'omniblock:data:v1') window.__writes = (window.__writes || 0) + 1;
+  else window.__backupWrites = (window.__backupWrites || 0) + 1;
+};
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
@@ -48,16 +53,31 @@ fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\n' + USERSCRIPT
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真实结构回归页</title></head><body>
 <div id="related"></div>
 <bili-comments id="comments"></bili-comments>
-<section class="bpx-player-dm-container" id="dm-panel">
-  <li class="bpx-player-dm-item" data-progress="5000"><span class="dm-time">00:05</span><span class="dm-text">hello danmaku</span></li>
-  <li class="bpx-player-dm-item" data-progress="9000"><span class="dm-time">00:09</span><span class="dm-text">keep danmaku</span></li>
+<section class="bpx-player-dm-wrap" id="dm-panel">
+  <ul class="bui-long-list-list">
+    <li class="bui-long-list-item" style="height:24px"><div class="dm-info-row">
+      <span class="dm-info-time">00:05</span><span class="dm-info-dm" title="hello danmaku">hello danmaku</span><span class="dm-info-date">01-01 00:00</span>
+      <span class="dm-info-block-btn" data-action="block">屏蔽用户</span><span class="dm-info-report-btn" data-action="report">举报</span>
+    </div></li>
+    <li class="bui-long-list-item" style="height:24px"><div class="dm-info-row">
+      <span class="dm-info-time">00:09</span><span class="dm-info-dm" title="keep danmaku">keep danmaku</span><span class="dm-info-date">01-01 00:00</span>
+      <span class="dm-info-block-btn" data-action="block">屏蔽用户</span><span class="dm-info-report-btn" data-action="report">举报</span>
+    </div></li>
+  </ul>
 </section>
 <style>
-  #dm-panel .bpx-player-dm-item { box-sizing:border-box; display:flex; align-items:center; gap:8px; width:320px; height:32px; margin:0; }
-  #dm-panel .dm-time { flex:0 0 42px; }
-  #dm-panel .dm-text { min-width:0; flex:1 1 auto; overflow:hidden; white-space:nowrap; }
+  #dm-panel .bui-long-list-item { box-sizing:border-box; display:block; width:350px; height:24px; margin:0; }
+  /* 人工合成夹具复现真站 long-list 的 reset；浏览器默认 ul padding 不属于弹幕组件布局。 */
+  #dm-panel .bui-long-list-list { margin:0; padding:0; list-style:none; }
+  #dm-panel .dm-info-row { box-sizing:border-box; display:flex; align-items:center; width:350px; height:24px; position:relative; }
+  #dm-panel .dm-info-time { flex:0 0 42px; overflow:hidden; }
+  #dm-panel .dm-info-dm { min-width:0; flex:1 1 auto; overflow:hidden; white-space:nowrap; }
+  #dm-panel .dm-info-date { flex:0 0 88px; overflow:hidden; }
+  #dm-panel .dm-info-block-btn, #dm-panel .dm-info-report-btn { position:absolute; display:none; height:20px; top:2px; }
+  #dm-panel .dm-info-block-btn { width:70px; right:10px; }
+  #dm-panel .dm-info-row:hover .dm-info-block-btn { display:block; }
 </style>
-<script>
+  <script>
   const related = document.getElementById('related');
   for (let i = 0; i < 34; i++) {
     const card = document.createElement('a');
@@ -132,6 +152,8 @@ const SEGMENT = Buffer.concat([
   dmElem('55667788', 'repeat danmaku', 12100),
   dmElem('fd09ed1d', 'known comment user danmaku', 13000),
 ]);
+// 人工合成第 2 段：验证右侧列表滚到 6 分钟以后会按行时间按需读取对应 seg.so。
+const SEGMENT_2 = Buffer.concat([dmElem('abcdef12', 'later danmaku', 365000)]);
 
 // 人工合成：PAKKU 先于 OmniBlock 安装时的公开 pakku_open/pakku_send 回调契约。
 const PAKKU_BEFORE = `
@@ -175,10 +197,18 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const page = await browser.newPage();
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') report.console.push('[' + m.type() + '] ' + m.text()); });
   page.on('pageerror', (e) => report.pageErrors.push(String(e)));
+  const requestedSegments = [];
+  page.on('request', (request) => {
+    const url = request.url();
+    if (/\/dm\/(?:wbi\/)?web\/seg\.so/.test(url)) {
+      try { requestedSegments.push(Number(new URL(url).searchParams.get('segment_index') || 0)); } catch (e) {}
+    }
+  });
 
   await page.route('**/*', (route) => {
     if (/\/dm\/(?:wbi\/)?web\/seg\.so/.test(route.request().url())) {
-      return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: SEGMENT });
+      const index = Number(new URL(route.request().url()).searchParams.get('segment_index') || 1);
+      return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: index === 2 ? SEGMENT_2 : SEGMENT });
     }
     return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
@@ -499,6 +529,16 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     };
 
     await hoverFloating('floating-danmaku-unique');
+    const floatingFollow = await page.evaluate(async () => {
+      const pick = document.getElementById('ob-dm-pick');
+      const dm = document.getElementById('floating-danmaku-unique');
+      if (!pick || !dm) return { shown: false };
+      const before = { pick: pick.getBoundingClientRect().left, dm: dm.getBoundingClientRect().left };
+      dm.style.left = '180px';
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const after = { pick: pick.getBoundingClientRect().left, dm: dm.getBoundingClientRect().left };
+      return { shown: getComputedStyle(pick).display !== 'none', moved: after.dm !== before.dm, follows: Math.abs((after.pick - after.dm) - (before.pick - before.dm)) < 4 };
+    });
     // 登录用户悬停时 B站会弹出自己的弹幕操作条；这里验证同一身份也能供原生菜单复用。
     await page.evaluate(() => {
       const menu = document.createElement('ul');
@@ -507,6 +547,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       menu.innerHTML = '<li>举报</li>';
       document.body.appendChild(menu);
     });
+    await page.evaluate(() => {
+      const generic = document.createElement('div');
+      generic.setAttribute('role', 'dialog'); generic.id = 'generic-dm-report';
+      generic.innerHTML = '<div class="report-choice">举报</div><div class="report-choice">取消</div>';
+      document.body.appendChild(generic);
+    });
     await wait(1000);
     const floatingDanmakuPick = await page.evaluate(async () => {
       const pick = document.getElementById('ob-dm-pick');
@@ -514,17 +560,20 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (!visible) return { visible: false };
       const menu = document.querySelector('ul[role="menu"]');
       const menuQuick = !!(menu && menu.querySelector('.ob-quick'));
+      const menuText = menu && menu.querySelector('.ob-quick') ? menu.querySelector('.ob-quick').textContent : '';
+      const generic = document.getElementById('generic-dm-report');
+      const genericQuick = !!(generic && generic.querySelector('.ob-quick'));
       pick.click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       const confirm = document.getElementById('ob-confirm');
-      if (!confirm) return { visible: true, menuQuick, confirm: false };
+      if (!confirm) return { visible: true, menuQuick, menuText, genericQuick, confirm: false };
       confirm.querySelector('.ob-ok').click();
       await new Promise((resolve) => setTimeout(resolve, 150));
       const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
       const hiddenAfterBlock = getComputedStyle(document.getElementById('ob-dm-pick')).display === 'none';
       const toast = document.getElementById('ob-toast');
       const undo = toast && toast.querySelector('button');
-      const result = { visible: true, menuQuick, confirm: true, blocked, hiddenAfterBlock, hasUndo: !!undo };
+      const result = { visible: true, menuQuick, menuText, genericQuick, confirm: true, blocked, hiddenAfterBlock, hasUndo: !!undo };
       if (undo) {
         undo.click();
         await new Promise((resolve) => setTimeout(resolve, 150));
@@ -533,14 +582,19 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return result;
     });
     if (layerContract.pointerEventsNone && layerContract.elementAtPointIsNotDanmaku
-      && floatingDanmakuPick.visible && floatingDanmakuPick.menuQuick && floatingDanmakuPick.confirm
+      && floatingFollow.shown && floatingFollow.moved && floatingFollow.follows
+      && floatingDanmakuPick.visible && floatingDanmakuPick.menuQuick
+      && /本地拉黑/.test(floatingDanmakuPick.menuText || '') && floatingDanmakuPick.genericQuick
+      && floatingDanmakuPick.confirm
       && floatingDanmakuPick.blocked && floatingDanmakuPick.hiddenAfterBlock && floatingDanmakuPick.restored)
-      report.pass.push('QB-X 指针落在 pointer-events:none 的浮动弹幕上时，坐标命中给出拉黑浮层，原生举报菜单复用同一 mid_hash，可拉黑并撤销');
-    else report.fail.push('QB-X 浮动弹幕坐标命中失败：' + JSON.stringify({ ...layerContract, ...floatingDanmakuPick }));
+      report.pass.push('QB-X pointer-events:none 浮动弹幕的本地浮层会跟随移动，原生/无语义 role 举报项均显示“本地拉黑”，可按同一 mid_hash 拉黑并撤销');
+    else report.fail.push('QB-X 浮动弹幕坐标/举报入口失败：' + JSON.stringify({ ...layerContract, floatingFollow, ...floatingDanmakuPick }));
 
     await page.evaluate(() => {
       const menu = document.querySelector('ul[role="menu"]');
       if (menu) menu.remove();
+      const generic = document.getElementById('generic-dm-report');
+      if (generic) generic.remove();
       for (const button of document.querySelectorAll('.ob-quick')) button.remove();
     });
     await hoverFloating('floating-danmaku-ambiguous');
@@ -850,6 +904,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         exists: true,
         inside: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
         noPageOverflow: document.documentElement.scrollWidth <= innerWidth,
+        viewport: { innerWidth, scrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body && document.body.scrollWidth },
         batchInside: batchRect.left >= rect.left && batchRect.right <= rect.right && batchRect.bottom <= rect.bottom,
         listScrollable: panel.querySelector('.ob-dm-list').scrollHeight >= panel.querySelector('.ob-dm-list').clientHeight,
       };
@@ -864,12 +919,37 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('QB-O 弹幕工具在桌面与 390px 手机视口内无溢出或控件越界');
     else report.fail.push('QB-O 弹幕工具响应式布局错误：' + JSON.stringify({ desktopLayout, mobileLayout }));
 
+    // 弹幕列表的悬停断言应在管理工具关闭后执行；工具是全屏遮罩，遮罩打开时鼠标
+    // 坐标不会落到其下方的原生列表行，不能把这个测试状态误报成产品 hover 失效。
+    await page.evaluate(() => {
+      const close = document.querySelector('#ob-dm-manager .ob-dm-close');
+      if (close) close.click();
+    });
+    await wait(80);
     await page.waitForFunction(() => !!document.querySelector('#dm-panel .ob-dm-block'), null, { timeout: 5000 });
+    await page.locator('#dm-panel .dm-info-row').first().scrollIntoViewIfNeeded();
+    const dmRowBox = await page.locator('#dm-panel .dm-info-row').first().boundingBox();
+    if (dmRowBox) await page.mouse.move(dmRowBox.x + 12, dmRowBox.y + dmRowBox.height / 2);
+    const dmHover = await page.evaluate(() => {
+      const row = document.querySelector('#dm-panel .dm-info-row');
+      const own = row && row.querySelector('.ob-dm-block');
+      const native = row && row.querySelector('.dm-info-block-btn');
+      if (!row || !own || !native) return { exists: false };
+      const a = own.getBoundingClientRect();
+      const b = native.getBoundingClientRect();
+      const overlap = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      return { exists: true, rowHover: row.matches(':hover'), nativeVisible: b.width > 0 && b.height > 0, overlap, ownInside: a.left >= row.getBoundingClientRect().left && a.right <= row.getBoundingClientRect().right };
+    });
+    await page.mouse.move(5, 5);
+    if (dmHover.exists && dmHover.rowHover && dmHover.nativeVisible && !dmHover.overlap && dmHover.ownInside)
+      report.pass.push('QB-Z 弹幕列表悬停展开原生控件时，本地按钮移入独立操作槽且不重叠');
+    else report.fail.push('QB-Z 弹幕列表悬停布局重叠：' + JSON.stringify(dmHover));
+    await page.mouse.move(5, 5);
     const dm = await page.evaluate(async () => {
-      const row = document.querySelector('#dm-panel .bpx-player-dm-item');
+      const row = document.querySelector('#dm-panel .dm-info-row');
       const button = row.querySelector('.ob-dm-block');
       if (!button) return { exists: false };
-      const content = row.querySelector('.dm-text');
+      const content = row.querySelector('.dm-info-dm');
       const buttonRect = button.getBoundingClientRect();
       const contentRect = content.getBoundingClientRect();
       const layoutReserved = row.getAttribute('data-ob-dm-action') === '1'
@@ -884,8 +964,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         layoutReserved,
         confirm: true,
         blocked: window.OB.Index.isBlocked('bili:dmhash:678f8529'),
-        hidden: row.getAttribute('data-ob-dm-blocked') === '1',
-        visuallyHidden: getComputedStyle(row).display === 'none' || row.getBoundingClientRect().height === 0,
+        hidden: (row.closest('li.bui-long-list-item') || row).getAttribute('data-ob-dm-blocked') === '1',
+        visuallyHidden: getComputedStyle(row.closest('li.bui-long-list-item') || row).display === 'none' || (row.closest('li.bui-long-list-item') || row).getBoundingClientRect().height === 0,
         bars: document.querySelectorAll('#dm-panel .ob-bar').length,
       };
     });
@@ -896,16 +976,78 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const toast = document.getElementById('ob-toast');
       if (!toast) return { toast: false };
       toast.querySelector('button').click(); await new Promise((resolve) => setTimeout(resolve, 120));
-      const row = document.querySelector('#dm-panel .bpx-player-dm-item');
+      const row = document.querySelector('#dm-panel .dm-info-row');
       return {
         toast: true,
         removed: !window.OB.Index.isBlocked('bili:dmhash:678f8529'),
-        visible: row.getAttribute('data-ob-dm-blocked') !== '1',
-        visuallyVisible: getComputedStyle(row).display !== 'none' && row.getBoundingClientRect().height > 0,
+        visible: (row.closest('li.bui-long-list-item') || row).getAttribute('data-ob-dm-blocked') !== '1',
+        visuallyVisible: getComputedStyle(row.closest('li.bui-long-list-item') || row).display !== 'none' && (row.closest('li.bui-long-list-item') || row).getBoundingClientRect().height > 0,
       };
     });
     if (dmUndo.toast && dmUndo.removed && dmUndo.visible && dmUndo.visuallyVisible) report.pass.push('QB-I 撤销弹幕发送者拉黑后，当前列表行立即恢复');
     else report.fail.push('QB-I 弹幕撤销未恢复列表行：' + JSON.stringify(dmUndo));
+
+    // 真实侧栏是跨段虚拟列表：同文案多发送者的行不应“消失”，而是明确提供整组入口；
+    // 超出当前段的行先显示读取状态，按显示时间拉取对应 seg.so 后再变为可执行按钮。
+    await page.evaluate(() => {
+      window.__INITIAL_STATE__ = { videoData: { cid: '123456' } };
+      const list = document.querySelector('#dm-panel .bui-long-list-list');
+      const make = (time, content) => {
+        const li = document.createElement('li'); li.className = 'bui-long-list-item'; li.style.height = '24px';
+        li.innerHTML = '<div class="dm-info-row"><span class="dm-info-time">' + time + '</span>'
+          + '<span class="dm-info-dm" title="' + content + '">' + content + '</span>'
+          + '<span class="dm-info-date">01-01 00:00</span><span class="dm-info-block-btn">屏蔽用户</span>'
+          + '<span class="dm-info-report-btn">举报</span></div>';
+        return li;
+      };
+      list.append(make('00:12', 'repeat danmaku'));
+      list.append(make('06:05', 'later danmaku'));
+      window.OB.Store.setSetting('showQuickBlock', false);
+      window.OB.Store.setSetting('showQuickBlock', true);
+    });
+    await page.waitForFunction(() => {
+      const rows = Array.from(document.querySelectorAll('#dm-panel .dm-info-row'));
+      const repeat = rows.find((row) => row.querySelector('.dm-info-dm') && row.querySelector('.dm-info-dm').getAttribute('title') === 'repeat danmaku');
+      const later = rows.find((row) => row.querySelector('.dm-info-dm') && row.querySelector('.dm-info-dm').getAttribute('title') === 'later danmaku');
+      return !!(repeat && later && repeat.querySelector('.ob-dm-block') && later.querySelector('.ob-dm-block')
+        && !later.querySelector('.ob-dm-block').disabled);
+    }, null, { timeout: 8000 });
+    const dmCoverage = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = Array.from(document.querySelectorAll('#dm-panel .dm-info-row'));
+      const repeat = rows.find((row) => row.querySelector('.dm-info-dm') && row.querySelector('.dm-info-dm').getAttribute('title') === 'repeat danmaku');
+      const later = rows.find((row) => row.querySelector('.dm-info-dm') && row.querySelector('.dm-info-dm').getAttribute('title') === 'later danmaku');
+      const repeatButton = repeat && repeat.querySelector('.ob-dm-block');
+      const laterButton = later && later.querySelector('.ob-dm-block');
+      const repeatLabel = repeatButton && repeatButton.textContent;
+      if (repeatButton) {
+        repeatButton.click(); await pause(60);
+        const confirm = document.getElementById('ob-confirm');
+        if (confirm) confirm.querySelector('.ob-ok').click();
+        await pause(120);
+      }
+      const repeatBlocked = window.OB.Index.isBlocked('bili:dmhash:11223344') && window.OB.Index.isBlocked('bili:dmhash:55667788');
+      const repeatHidden = !!repeat && getComputedStyle(repeat.closest('li')).display === 'none';
+      const toast = document.getElementById('ob-toast');
+      if (toast && toast.querySelector('button')) toast.querySelector('button').click();
+      await pause(120);
+      if (laterButton) {
+        laterButton.click(); await pause(60);
+        const confirm = document.getElementById('ob-confirm');
+        if (confirm) confirm.querySelector('.ob-ok').click();
+        await pause(120);
+      }
+      const laterBlocked = window.OB.Index.isBlocked('bili:dmhash:abcdef12');
+      const laterToast = document.getElementById('ob-toast');
+      if (laterToast && laterToast.querySelector('button')) laterToast.querySelector('button').click();
+      await pause(120);
+      return { repeatLabel, repeatBlocked, repeatHidden, laterBlocked, laterRestored: !window.OB.Index.isBlocked('bili:dmhash:abcdef12') };
+    });
+    const segment2Requested = requestedSegments.includes(2);
+    if (/本地拉黑全部\(2\)/.test(dmCoverage.repeatLabel || '') && dmCoverage.repeatBlocked && dmCoverage.repeatHidden
+      && segment2Requested && dmCoverage.laterBlocked && dmCoverage.laterRestored)
+      report.pass.push('QB-LIST 弹幕列表歧义行提供整组入口，跨 6 分钟段按行时间读取后每行均可本地拉黑并撤销');
+    else report.fail.push('QB-LIST 弹幕列表行覆盖失败：' + JSON.stringify({ dmCoverage, requestedSegments }));
 
     const filtered = await page.evaluate(async () => {
       const bytes = await new Promise((resolve, reject) => {
