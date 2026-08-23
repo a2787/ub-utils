@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.22.0
+// @version       0.23.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -811,7 +811,7 @@
       line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
     }
     .ob-weibo-comment-block:hover { background: #fdeceb !important; }
-    /* 微博帖子作者与 B站视频/动态作者行内的常驻拉黑入口。 */
+    /* 微博帖子作者与 B站视频/动态作者的常驻拉黑入口。 */
     .ob-weibo-author-block, .ob-bili-author-block {
       flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 20px !important;
       border: 1px solid #e2a39c !important; border-radius: 4px !important; padding: 1px 7px !important;
@@ -820,6 +820,13 @@
       margin-left: 8px !important; vertical-align: middle !important;
     }
     .ob-weibo-author-block:hover, .ob-bili-author-block:hover { background: #fdeceb !important; }
+    /* B站页面主体由 Vue 管理，作者按钮不能作为其子节点插入；门户只挂在 body 上，
+       再用 fixed 定位贴到作者链接旁，避免破坏 Vue 的虚拟 DOM。 */
+    .ob-bili-author-portal {
+      position: fixed !important; z-index: 2147483645 !important; pointer-events: none !important;
+      display: block !important; width: max-content !important; height: max-content !important;
+    }
+    .ob-bili-author-portal > .ob-bili-author-block { pointer-events: auto !important; margin-left: 0 !important; display: block !important; }
     /* B站右侧弹幕列表里的本地发送者屏蔽入口 */
     .ob-dm-block {
       flex: 0 0 auto !important; margin-left: 8px !important; padding: 2px 6px !important;
@@ -2245,37 +2252,83 @@
       return button;
     }
 
-    function syncBiliAuthorButtons() {
-      for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) {
-        const keep = button.__obBiliAuthorKind === 'video' ? !!button.closest('.up-detail-top') : !!button.closest('.opus-module-author');
-        if (!keep) button.remove();
+    let biliAuthorPortal = null;
+    let biliAuthorAnchor = null;
+    let biliAuthorPortalKey = '';
+    let biliAuthorPositionListeners = false;
+
+    function positionBiliAuthorPortal() {
+      if (!biliAuthorPortal || !biliAuthorAnchor || !biliAuthorAnchor.isConnected) return;
+      const rect = biliAuthorAnchor.getBoundingClientRect();
+      const visible = rect.width > 0 && rect.height > 0
+        && rect.bottom > 0 && rect.top < window.innerHeight
+        && rect.right > 0 && rect.left < window.innerWidth;
+      if (!visible) { biliAuthorPortal.style.setProperty('display', 'none', 'important'); return; }
+      biliAuthorPortal.style.setProperty('display', 'block', 'important');
+      const width = biliAuthorPortal.offsetWidth || 120;
+      const height = biliAuthorPortal.offsetHeight || 22;
+      const left = clamp(rect.right + 8, 4, Math.max(4, window.innerWidth - width - 4));
+      const top = clamp(rect.top + (rect.height - height) / 2, 4, Math.max(4, window.innerHeight - height - 4));
+      biliAuthorPortal.style.left = left + 'px';
+      biliAuthorPortal.style.top = top + 'px';
+    }
+
+    function removeBiliAuthorPortal() {
+      if (biliAuthorPortal && biliAuthorPortal.parentNode) biliAuthorPortal.parentNode.removeChild(biliAuthorPortal);
+      biliAuthorPortal = null;
+      biliAuthorAnchor = null;
+      biliAuthorPortalKey = '';
+    }
+
+    function ensureBiliAuthorPortal(info, anchor, kind) {
+      if (!info || !info.keys || !info.keys.length || !anchor || !document.body) return;
+      const key = kind + '|' + info.keys.join('|');
+      if (!biliAuthorPortal || biliAuthorAnchor !== anchor || biliAuthorPortalKey !== key) {
+        removeBiliAuthorPortal();
+        const portal = document.createElement('div');
+        portal.className = 'ob-bili-author-portal';
+        portal.setAttribute('aria-label', 'B站作者本地拉黑入口');
+        const button = makeBiliAuthorButton(info);
+        button.__obBiliAuthorKind = kind;
+        portal.appendChild(button);
+        document.body.appendChild(portal);
+        biliAuthorPortal = portal;
+        biliAuthorAnchor = anchor;
+        biliAuthorPortalKey = key;
       }
-      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      positionBiliAuthorPortal();
+    }
+
+    function syncBiliAuthorButtons() {
+      // 清理旧版本可能插入到 Vue 管理树里的按钮；新版本只保留 body 门户。
+      for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) {
+        if (!button.closest || !button.closest('.ob-bili-author-portal')) button.remove();
+      }
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) { removeBiliAuthorPortal(); return; }
+      if (!biliAuthorPositionListeners && document.addEventListener) {
+        const reposition = () => positionBiliAuthorPortal();
+        document.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
+        biliAuthorPositionListeners = true;
+      }
       const vInfo = videoAuthorInfo();
       if (vInfo && vInfo.keys.length && !Index.isBlocked(vInfo.keys)) {
         const name = document.querySelector(SEL.videoAuthor);
-        const mount = name && name.parentElement;
-        if (mount && !mount.querySelector(':scope > .ob-bili-author-block')) {
-          const button = makeBiliAuthorButton(vInfo);
-          button.__obBiliAuthorKind = 'video';
-          mount.insertBefore(button, name.nextSibling);
-        }
+        ensureBiliAuthorPortal(vInfo, name, 'video');
+        return;
       }
       const oInfo = opusAuthorInfo();
       if (oInfo && oInfo.keys.length && !Index.isBlocked(oInfo.keys)) {
         const center = document.querySelector('.opus-module-author__center')
           || document.querySelector('.opus-module-author');
-        if (center && !center.querySelector(':scope > .ob-bili-author-block')) {
-          const button = makeBiliAuthorButton(oInfo);
-          button.__obBiliAuthorKind = 'opus';
-          const pub = center.querySelector('.opus-module-author__pub');
-          if (pub) center.insertBefore(button, pub);
-          else center.appendChild(button);
-        }
+        ensureBiliAuthorPortal(oInfo, center, 'opus');
+        return;
       }
+      removeBiliAuthorPortal();
     }
 
     function clearBiliAuthorButtons() {
+      removeBiliAuthorPortal();
       for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) button.remove();
     }
 
@@ -4398,8 +4451,9 @@
     // 当前 B站播放器以 XMLHttpRequest + responseType=arraybuffer 请求 seg.so。
     // 覆盖实例 response 的 getter，播放器自己的 onload 回调第一次读取时就拿到过滤后的字节。
     if (typeof XMLHttpRequest !== 'undefined') {
-      const nativeXhrOpen = XMLHttpRequest.prototype.open;
-      const nativeXhrSend = XMLHttpRequest.prototype.send;
+      const xhrProto = XMLHttpRequest.prototype;
+      const nativeXhrOpen = xhrProto.open;
+      const nativeXhrSend = xhrProto.send;
       const responseDescriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
       function installXhrFilter(xhr) {
         if (xhr.__obDanmakuResponseInstalled || !responseDescriptor || !responseDescriptor.get) return;
@@ -4426,19 +4480,37 @@
           xhr.__obDanmakuResponseInstalled = false;
         }
       }
-      XMLHttpRequest.prototype.open = function (method, url, ...args) {
-        this.__obDanmakuUrl = String(url || '');
-        this.__obDanmakuVideoKey = currentVideoKey();
-        if (isDanmakuUrl(this.__obDanmakuUrl)) {
-          noteDanmakuUrl(this.__obDanmakuUrl);
-          installPakkuResponseFilter(this);
+
+      function rememberDanmakuXhr(xhr, url) {
+        xhr.__obDanmakuUrl = String(url || '');
+        xhr.__obDanmakuVideoKey = currentVideoKey();
+        if (isDanmakuUrl(xhr.__obDanmakuUrl)) {
+          noteDanmakuUrl(xhr.__obDanmakuUrl);
+          installPakkuResponseFilter(xhr);
         }
-        return nativeXhrOpen.call(this, method, url, ...args);
-      };
-      XMLHttpRequest.prototype.send = function (...args) {
-        if (isDanmakuUrl(this.__obDanmakuUrl)) installXhrFilter(this);
-        return nativeXhrSend.call(this, ...args);
-      };
+      }
+
+      // PAKKU 已经接管 open/send 时，只桥接它公开的 pakku_open 回调，不再把
+      // 自己的包装层叠到所有 XHR 上。这样评论、图片和视频分片仍走 PAKKU/页面
+      // 原有链路，弹幕 seg.so 仍可在 PAKKU 的回调交给播放器前过滤。
+      const pakkuOpen = xhrProto.pakku_open;
+      if (typeof pakkuOpen === 'function' && typeof xhrProto.pakku_send === 'function' && !pakkuOpen.__obPakkuOpenBridge) {
+        const bridgedPakkuOpen = function (method, url, ...args) {
+          rememberDanmakuXhr(this, url);
+          return pakkuOpen.call(this, method, url, ...args);
+        };
+        bridgedPakkuOpen.__obPakkuOpenBridge = true;
+        xhrProto.pakku_open = bridgedPakkuOpen;
+      } else if (typeof nativeXhrOpen === 'function' && typeof nativeXhrSend === 'function') {
+        xhrProto.open = function (method, url, ...args) {
+          rememberDanmakuXhr(this, url);
+          return nativeXhrOpen.call(this, method, url, ...args);
+        };
+        xhrProto.send = function (...args) {
+          if (isDanmakuUrl(this.__obDanmakuUrl)) installXhrFilter(this);
+          return nativeXhrSend.call(this, ...args);
+        };
+      }
     }
 
     // fetch 保留为兼容分支；页面版本切换回 fetch 时仍可工作。

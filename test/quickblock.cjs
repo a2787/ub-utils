@@ -162,6 +162,8 @@ const SEGMENT = Buffer.concat([
 ]);
 // 人工合成第 2 段：验证右侧列表滚到 6 分钟以后会按行时间按需读取对应 seg.so。
 const SEGMENT_2 = Buffer.concat([dmElem('abcdef12', 'later danmaku', 365000)]);
+// 1x1 PNG：锁住普通图片请求不经过弹幕网络分支。
+const PROBE_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
 // 人工合成：PAKKU 先于 OmniBlock 安装时的公开 pakku_open/pakku_send 回调契约。
 const PAKKU_BEFORE = `
@@ -218,6 +220,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const index = Number(new URL(route.request().url()).searchParams.get('segment_index') || 1);
       return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: index === 2 ? SEGMENT_2 : SEGMENT });
     }
+    if (/\/omniblock-normal-image\.png(?:[?]|$)/.test(route.request().url())) {
+      return route.fulfill({ status: 200, contentType: 'image/png', body: PROBE_PNG });
+    }
     return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
   await page.addInitScript({ path: path.join(ROOT, 'test', '_initqb.js') });
@@ -248,6 +253,37 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('(0)') && emptyDmTool.empty && emptyDmTool.retry)
       report.pass.push('QB-R 尚未取得弹幕段时，视频页仍显示弹幕屏蔽(0)、空状态和重新读取入口');
     else report.fail.push('QB-R 弹幕工具零数据入口错误：' + JSON.stringify(emptyDmTool));
+
+    // 回归：普通评论接口、普通 XHR 与图片请求不能被 B站弹幕过滤层改写或阻断。
+    const ordinaryTransport = await page.evaluate(async () => {
+      const result = { fetch: null, xhr: null, image: null };
+      try {
+        const response = await fetch('/omniblock-normal-fetch?fixture=1');
+        result.fetch = { ok: response.ok, status: response.status, hasFixture: (await response.text()).includes('B站真实结构回归页') };
+      } catch (e) { result.fetch = { error: String(e) }; }
+      try {
+        result.xhr = await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', '/omniblock-normal-xhr?fixture=1');
+          xhr.onload = () => resolve({ ok: xhr.status === 200, status: xhr.status, hasFixture: (xhr.responseText || '').includes('B站真实结构回归页') });
+          xhr.onerror = () => resolve({ error: 'network error' });
+          xhr.send();
+        });
+      } catch (e) { result.xhr = { error: String(e) }; }
+      result.image = await new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve({ complete: image.complete, width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => resolve({ complete: image.complete, width: image.naturalWidth, height: image.naturalHeight, error: true });
+        image.src = '/omniblock-normal-image.png?fixture=1';
+        document.body.appendChild(image);
+      });
+      return result;
+    });
+    if (ordinaryTransport.fetch && ordinaryTransport.fetch.ok && ordinaryTransport.fetch.status === 200 && ordinaryTransport.fetch.hasFixture
+      && ordinaryTransport.xhr && ordinaryTransport.xhr.ok && ordinaryTransport.xhr.status === 200 && ordinaryTransport.xhr.hasFixture
+      && ordinaryTransport.image && ordinaryTransport.image.width === 1 && ordinaryTransport.image.height === 1)
+      report.pass.push('QB-S 普通评论式 fetch、XHR 和图片请求不受弹幕拦截层影响');
+    else report.fail.push('QB-S B站普通请求回归失败：' + JSON.stringify(ordinaryTransport));
 
     // 人工合成：按 PAKKU 公开 xhr_hook.ts 的 pakku_load_callback 契约伪造响应。
     const pakkuIntercept = await page.evaluate(async (segmentBytes) => {
@@ -1326,9 +1362,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const mount = document.querySelector('.up-detail-top');
       const name = mount && mount.querySelector('.up-name');
       if (!mount || !name) return { found: false };
-      const button = mount.querySelector(':scope > .ob-bili-author-block');
-      if (!button) return { found: true, button: false };
-      const before = { text: button.textContent, nextIsName: button.previousElementSibling === name };
+      const button = document.querySelector('.ob-bili-author-portal > .ob-bili-author-block');
+      if (!button) return { found: true, button: false, mountedInsideVue: !!mount.querySelector(':scope > .ob-bili-author-block') };
+      const before = { text: button.textContent, portal: !!button.closest('.ob-bili-author-portal'), mountedInsideVue: !!mount.querySelector(':scope > .ob-bili-author-block') };
       button.click(); await pause(80);
       const confirm = document.getElementById('ob-confirm');
       const confirmText = confirm && confirm.textContent || '';
@@ -1341,10 +1377,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const restored = !window.OB.Index.isBlocked('bili:uid:888');
       return { ...before, found: true, button: true, confirm: true, confirmText, blocked, restored };
     });
-    if (videoAuthor.found && videoAuthor.button && videoAuthor.text === '本地拉黑作者' && videoAuthor.nextIsName
+    if (videoAuthor.found && videoAuthor.button && videoAuthor.text === '本地拉黑作者' && videoAuthor.portal && !videoAuthor.mountedInsideVue
       && videoAuthor.confirm && /Video Author/.test(videoAuthor.confirmText) && /bili:uid:888/.test(videoAuthor.confirmText)
       && videoAuthor.blocked && videoAuthor.restored)
-      report.pass.push('QB-AC 视频页作者区显示「本地拉黑作者」，点击后按 uid 屏蔽并撤销');
+      report.pass.push('QB-AC B站作者入口通过 body 门户贴近作者行，点击后按 uid 屏蔽并撤销');
     else report.fail.push('QB-AC 视频作者入口错误：' + JSON.stringify(videoAuthor));
 
     // 人工合成：动态详情页作者模块 `.opus-module-author` 使用 __INITIAL_STATE__ 的 mid。
@@ -1370,13 +1406,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const opusAuthor = await opusPage.evaluate(async () => {
       const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const deadline = Date.now() + 3000;
-      while (Date.now() < deadline && !document.querySelector('.opus-module-author__center .ob-bili-author-block')) await pause(100);
+      while (Date.now() < deadline && !document.querySelector('.ob-bili-author-portal > .ob-bili-author-block')) await pause(100);
       const center = document.querySelector('.opus-module-author__center');
-      let button = center && center.querySelector(':scope > .ob-bili-author-block');
+      let button = document.querySelector('.ob-bili-author-portal > .ob-bili-author-block');
       if (!button) {
         try { window.OB.adapters.bilibili.onScan(); } catch (e) {}
         await pause(300);
-        button = center && center.querySelector(':scope > .ob-bili-author-block');
+        button = document.querySelector('.ob-bili-author-portal > .ob-bili-author-block');
       }
       if (!center || !button) {
         return {
@@ -1385,7 +1421,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         };
       }
       const name = center.querySelector('.opus-module-author__name');
-      const before = { text: button.textContent, nextIsPub: button.nextElementSibling && button.nextElementSibling.classList.contains('opus-module-author__pub') };
+      const before = { text: button.textContent, portal: !!button.closest('.ob-bili-author-portal'), mountedInsideVue: !!center.querySelector(':scope > .ob-bili-author-block') };
       button.click(); await pause(80);
       const confirm = document.getElementById('ob-confirm');
       const confirmText = confirm && confirm.textContent || '';
@@ -1399,7 +1435,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return { ...before, found: true, button: true, name: name && name.textContent, confirm: true, confirmText, blocked, restored };
     });
     await opusPage.close();
-    if (opusAuthor.found && opusAuthor.button && opusAuthor.text === '本地拉黑作者' && opusAuthor.nextIsPub
+    if (opusAuthor.found && opusAuthor.button && opusAuthor.text === '本地拉黑作者' && opusAuthor.portal && !opusAuthor.mountedInsideVue
       && opusAuthor.name === 'Opus Author' && opusAuthor.confirm
       && /Opus Author/.test(opusAuthor.confirmText) && /bili:uid:999/.test(opusAuthor.confirmText)
       && opusAuthor.blocked && opusAuthor.restored)
