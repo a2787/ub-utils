@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.21.0
+// @version       0.22.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -720,10 +720,12 @@
 
     /* 抖音弹幕跟随浮层：挂在弹幕节点内，随滚动弹幕一起移动 */
     .ob-dy-dm-block {
-      position: absolute !important; right: 2px !important; top: -22px !important;
+      position: absolute !important; left: 6px !important; top: 50% !important;
+      transform: translate(-100%, -50%) !important;
       z-index: 2147483646 !important; height: 20px; line-height: 20px; padding: 0 7px;
       background: rgba(28, 28, 28, 0.92) !important; color: #fff !important;
       border-radius: 4px; font-size: 12px; cursor: pointer; white-space: nowrap;
+      pointer-events: auto !important;
       box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35); user-select: none;
     }
     .ob-dy-dm-block:hover { background: #a93226 !important; }
@@ -943,6 +945,46 @@
     }
     #ob-dm-manager .ob-dm-batch:hover:not(:disabled) { background: #a93226; }
     #ob-dm-manager .ob-dm-batch:disabled { background: #ccc; cursor: default; }
+    #ob-douyin-comment-manager {
+      position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
+      width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-douyin-comment-manager .ob-dc-box {
+      box-sizing: border-box; width: min(680px, 94vw); max-width: 100%; min-width: 0; max-height: 86vh;
+      display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px;
+      background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-douyin-comment-manager .ob-dc-head, #ob-douyin-comment-manager .ob-dc-toolbar,
+    #ob-douyin-comment-manager .ob-dc-footer { display: flex; align-items: center; gap: 8px; }
+    #ob-douyin-comment-manager .ob-dc-head { justify-content: space-between; margin-bottom: 10px; }
+    #ob-douyin-comment-manager h2 { margin: 0; font-size: 16px; }
+    #ob-douyin-comment-manager .ob-dc-close { width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: #555; cursor: pointer; font-size: 18px; }
+    #ob-douyin-comment-manager .ob-dc-close:hover { background: #f1f1f1; }
+    #ob-douyin-comment-manager .ob-dc-toolbar { flex-wrap: wrap; margin-bottom: 10px; }
+    #ob-douyin-comment-manager .ob-dc-expand, #ob-douyin-comment-manager .ob-dc-retry {
+      min-height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px; background: #fff; color: #333; cursor: pointer; font-size: 12px;
+    }
+    #ob-douyin-comment-manager .ob-dc-expand:hover:not(:disabled), #ob-douyin-comment-manager .ob-dc-retry:hover:not(:disabled) { background: #f4f4f4; }
+    #ob-douyin-comment-manager button:disabled { color: #aaa; cursor: default; }
+    #ob-douyin-comment-manager .ob-dc-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
+    #ob-douyin-comment-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
+    #ob-douyin-comment-manager .ob-dc-status { width: 100%; min-height: 18px; color: #777; font-size: 12px; word-break: break-word; }
+    #ob-douyin-comment-manager .ob-dc-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+    #ob-douyin-comment-manager .ob-dc-empty { min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 20px; color: #777; text-align: center; }
+    #ob-douyin-comment-manager .ob-dc-row { min-height: 48px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 8px; padding: 8px 4px; border-bottom: 1px solid #f0f0f0; }
+    #ob-douyin-comment-manager .ob-dc-row:last-child { border-bottom: 0; }
+    #ob-douyin-comment-manager .ob-dc-name { min-width: 0; color: #333; font-weight: 600; }
+    #ob-douyin-comment-manager .ob-dc-note { min-width: 0; margin-top: 3px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ob-douyin-comment-manager .ob-dc-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
+    #ob-douyin-comment-manager .ob-dc-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
+    #ob-douyin-comment-manager .ob-dc-batch:hover:not(:disabled) { background: #a93226; }
+    #ob-douyin-comment-manager .ob-dc-batch:disabled { background: #ccc; }
+    @media (max-width: 520px) {
+      #ob-douyin-comment-manager { align-items: flex-end; }
+      #ob-douyin-comment-manager .ob-dc-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-douyin-comment-manager .ob-dc-footer { align-items: stretch; }
+      #ob-douyin-comment-manager .ob-dc-batch { flex: 1 1 100%; }
+    }
     @media (max-width: 520px) {
       #ob-dm-manager { align-items: flex-end; }
       #ob-dm-manager .ob-dm-box { width: 100%; max-width: 100%; min-width: 0; max-height: 88vh; border-radius: 8px 8px 0 0; }
@@ -961,7 +1003,10 @@
     #ob-panel h3 { margin: 16px 0 6px; font-size: 14px; }
     #ob-panel input:not([type="checkbox"]):not([type="radio"]), #ob-panel select, #ob-panel textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
     #ob-panel input[type="checkbox"], #ob-panel input[type="radio"] { width: auto; margin: 0 4px 0 0; }
-    #ob-panel .ob-list { border: 1px solid #eee; border-radius: 8px; max-height: 260px; overflow: auto; }
+    #ob-panel .ob-list { border: 1px solid #eee; border-radius: 8px; max-height: 300px; overflow: auto; }
+    #ob-panel .ob-platform-group { border-bottom: 1px solid #eee; }
+    #ob-panel .ob-platform-group:last-child { border-bottom: 0; }
+    #ob-panel .ob-platform-title { margin: 0; padding: 7px 10px; background: #f7f7f8; color: #555; font-size: 12px; font-weight: 600; }
     #ob-panel .ob-item { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f2f2f2; align-items: center; }
     #ob-panel .ob-item:last-child { border-bottom: 0; }
     #ob-panel .ob-item .ob-meta { color: #999; font-size: 11px; word-break: break-all; }
@@ -1090,12 +1135,21 @@
   // 安全祖先，不碰正文、兄弟评论或列表容器。
   function collapseBlockedWrappers(container) {
     if (!container || !container.classList || !container.classList.contains('ob-hidden')) return;
+    const subtreeHasVisibleContent = (node) => {
+      if (!node || node.nodeType !== 1) return false;
+      if (node.classList.contains('ob-blocked-wrapper') || node.classList.contains('ob-hidden') || node.hasAttribute('data-ob-blocked')) return false;
+      const ownText = Array.from(node.childNodes || []).some((child) => (
+        child.nodeType === Node.TEXT_NODE && (child.textContent || '').trim()
+      ));
+      if (ownText) return true;
+      const children = Array.from(node.children || []);
+      if (!children.length) return true;
+      return children.some(subtreeHasVisibleContent);
+    };
     let node = container.parentElement;
     while (node && node !== document.body && node !== document.documentElement) {
       const style = window.getComputedStyle ? getComputedStyle(node) : null;
-      const hasMeaningfulChild = Array.from(node.children || []).some((child) => (
-        child !== container && !child.hasAttribute?.('data-ob-blocked')
-      ));
+      const hasMeaningfulChild = Array.from(node.children || []).some((child) => child !== container && subtreeHasVisibleContent(child));
       const hasOwnText = Array.from(node.childNodes || []).some((child) => (
         child.nodeType === Node.TEXT_NODE && (child.textContent || '').trim()
       ));
@@ -1218,7 +1272,21 @@
     setTimeout(() => { const close = (ev) => { if (!ctx.contains(ev.target)) { ctx.remove(); document.removeEventListener('click', close); } }; document.addEventListener('click', close); }, 0);
   }
 
-  function showConfirm(label, keys, anchorEl, onBlocked, commit) {
+  function reasonFromAnchor(anchorEl) {
+    const a = currentAdapter;
+    if (!a || !a.extract || !anchorEl) return '';
+    for (const node of ancestorChain(anchorEl)) {
+      if (!node || node.nodeType !== 1 || !node.matches) continue;
+      for (const selector of a.selectors || []) {
+        if (!node.matches(selector)) continue;
+        const info = a.extract(node);
+        if (info && info.note) return String(info.note).slice(0, 2000);
+      }
+    }
+    return '';
+  }
+
+  function showConfirm(label, keys, anchorEl, onBlocked, commit, note) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { showToast('无法识别可靠身份'); return; }
     let box = $('#ob-confirm');
@@ -1239,7 +1307,7 @@
       try {
         if (commit) transaction = commit();
         else {
-          const result = Store.addIdentities(normalizedKeys, label);
+          const result = Store.addIdentities(normalizedKeys, label, note || reasonFromAnchor(anchorEl));
           transaction = {
             result,
             undo: result.addedKeys.length ? () => Store.removeIdentities(result.addedKeys) : null,
@@ -1343,6 +1411,49 @@
       feedAuthorName: '[data-e2e="feed-video-nickname"], [data-e2e="feed-author-name"]',
       danmaku: '[data-danmu-id], [data-danmaku-id], [data-danmaku-user-id], [data-danmu-user-id]',
     };
+    const COMMENT_EXPAND_TEXT = /(?:展开|查看|更多|共)\s*(?:\d+\s*)?(?:条\s*)?(?:回复|评论)/;
+    let lastCommentMenuContext = null;
+
+    function noteFor(prefix, item) {
+      const text = textOf(item).replace(/\s+/g, ' ').trim();
+      return text ? prefix + '：' + text.slice(0, 300) : '';
+    }
+
+    function composedParent(node) {
+      if (!node) return null;
+      if (node.parentElement) return node.parentElement;
+      const root = node.getRootNode && node.getRootNode();
+      return root && root.host ? root.host : null;
+    }
+
+    function nearestComment(node) {
+      let current = node;
+      for (let guard = 0; current && guard < 20; guard++, current = composedParent(current)) {
+        if (current.matches && current.matches(SEL.comment)) return current;
+      }
+      return null;
+    }
+
+    function rememberCommentMenuContext(event) {
+      const path = event && typeof event.composedPath === 'function' ? event.composedPath() : [event && event.target];
+      for (const node of path || []) {
+        const comment = nearestComment(node);
+        if (!comment) continue;
+        const info = extractComment(comment);
+        if (info && info.keys && info.keys.length) {
+          lastCommentMenuContext = { ...info, at: Date.now() };
+          return;
+        }
+      }
+    }
+
+    function menuContextInfo() {
+      if (!lastCommentMenuContext || Date.now() - lastCommentMenuContext.at > 5000) {
+        lastCommentMenuContext = null;
+        return null;
+      }
+      return lastCommentMenuContext;
+    }
 
     function secUidFromHref(href) {
       if (!href) return '';
@@ -1370,7 +1481,7 @@
       const name = textOf(link) || textOf(item.querySelector(SEL.commentNickname));
       const keys = [];
       appendIdentityKey(keys, 'douyin:secuid', sec);
-      return { keys, label: name, container: item };
+      return { keys, label: name, note: noteFor('抖音评论', item), container: item };
     }
 
     function extractGeneric(item) {
@@ -1410,7 +1521,47 @@
         appendIdentityKey(keys, 'douyin:secuid', currentVideoAuthorSecUid());
       }
       if (!keys.length) return null;
-      return { keys, label: '', container: item };
+      return { keys, label: '', note: noteFor('抖音弹幕', item), container: item };
+    }
+
+    function interactiveAncestor(node, comment) {
+      let current = node;
+      for (let guard = 0; current && current !== comment && guard < 8; guard++, current = composedParent(current)) {
+        if (current.matches && current.matches('button,a,[role="button"],[role="menuitem"],[tabindex]')) return current;
+      }
+      return node.matches && node.matches('button,a,[role="button"],[role="menuitem"],[tabindex]') ? node : null;
+    }
+
+    function commentExpandControls() {
+      const out = []; const seen = new Set();
+      for (const node of querySelectorAllDeep(document, '*')) {
+        if (!node || node.matches(SEL.comment)) continue;
+        const text = textOf(node).replace(/\s+/g, ' ').trim();
+        if (!text || text.length > 60 || !COMMENT_EXPAND_TEXT.test(text)) continue;
+        const comment = nearestComment(node);
+        const control = comment && interactiveAncestor(node, comment);
+        if (!comment || !control || !isVisible(control) || seen.has(control)) continue;
+        seen.add(control); out.push(control);
+      }
+      return out;
+    }
+
+    async function expandAllCommentReplies(onProgress) {
+      const clicked = new WeakSet();
+      let count = 0;
+      const maxClicks = 80;
+      for (let round = 0; round < 16 && count < maxClicks; round++) {
+        const controls = commentExpandControls().filter((control) => !clicked.has(control));
+        if (!controls.length) break;
+        for (const control of controls) {
+          if (count >= maxClicks) break;
+          clicked.add(control);
+          try { control.click(); count++; } catch (e) {}
+          if (onProgress) onProgress(count);
+          await new Promise((resolve) => setTimeout(resolve, 220));
+        }
+      }
+      return { clicked: count, users: querySelectorAllDeep(document, SEL.comment).length };
     }
 
     // 抖音弹幕是持续滚动的节点，通用固定悬浮按钮会停在原地。这里把按钮挂进
@@ -1567,6 +1718,13 @@
       match: (h) => /(^|\.)douyin\.com$/.test(h.hostname),
       selectors: [SEL.comment, SEL.siteCard, SEL.profileList, SEL.danmaku],
       disappearSelectors: [SEL.comment, SEL.danmaku],
+      collectUsers(root) {
+        return querySelectorAllDeep(root || document, SEL.comment).map(extractComment);
+      },
+      bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
+      commentManager: { expandAll: expandAllCommentReplies },
+      rememberMenuContext: rememberCommentMenuContext,
+      menuContextInfo,
       extract(item) {
         if (item.matches && item.matches(SEL.comment)) return extractComment(item);
         if (item.matches && item.matches(SEL.profileList)) return extractProfileList(item);
@@ -2333,6 +2491,9 @@
       const link = deepQuery(n, 'a[href*="space.bilibili.com/"]');
       if (link) { const mm = (attr(link, 'href') || '').match(/space\.bilibili\.com\/(\d+)/); if (mm) return { keys: [makeIdentityKey('bili:uid', mm[1])], label: textOf(link) }; }
     }
+    // 抖音评论菜单有时被挂到 body 的 portal，菜单项自身不再位于评论 DOM 链上；
+    // 由用户打开“三个点”时记录的评论上下文提供同一条评论身份。
+    if (typeof a.menuContextInfo === 'function') return a.menuContextInfo(anchor);
     return null;
   }
 
@@ -2350,7 +2511,7 @@
       if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
       const info = cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl);
       if (!info || !info.keys || !info.keys.length) { showToast('⚠️ 无法识别该用户，可试悬浮按钮或右键'); return; }
-      showConfirm(info.label || '该用户', info.keys, anchorEl);
+      showConfirm(info.label || '该用户', info.keys, anchorEl, null, null, info.note);
     };
     btn.addEventListener('click', activate);
     if (listItem) btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') activate(e); });
@@ -2466,6 +2627,9 @@
     // 周期扫描仍负责键盘打开和无鼠标场景。
     document.addEventListener('pointerover', probeMenuEvent, true);
     document.addEventListener('focusin', probeMenuEvent, true);
+    if (typeof a.rememberMenuContext === 'function') {
+      document.addEventListener('pointerdown', (event) => a.rememberMenuContext(event), true);
+    }
     // 周期扫描：B站菜单在 Shadow DOM 内，MutationObserver 跨不过影子边界，故用定时器 + 全局穿透扫描
     setInterval(scanAll, 900);
     scanAll();
@@ -2523,6 +2687,116 @@
         undo: addedKeys.length ? () => Store.removeIdentities(addedKeys) : null,
       };
     });
+  }
+
+  let douyinCommentManager = null;
+  let douyinCommentManagerKeyHandler = null;
+  function closeDouyinCommentManager() {
+    if (douyinCommentManagerKeyHandler) document.removeEventListener('keydown', douyinCommentManagerKeyHandler);
+    douyinCommentManagerKeyHandler = null;
+    if (douyinCommentManager) douyinCommentManager.remove();
+    douyinCommentManager = null;
+  }
+
+  // 抖音评论使用独立管理器：页面本身的评论列表是虚拟/懒加载的，不能把“当前可见作者”
+  // 误称为全量。管理器打开后自动尝试展开带明确回复数量语义的控件，按钮可在需要时重试，
+  // 再重新收集作者，避免猜测平台内部接口或触发评论写入操作。
+  function openDouyinCommentManager(adapter) {
+    if (douyinCommentManager) { closeDouyinCommentManager(); return; }
+    if (!document.body) return;
+    const selected = new Set();
+    douyinCommentManager = document.createElement('div');
+    douyinCommentManager.id = 'ob-douyin-comment-manager';
+    douyinCommentManager.innerHTML = `
+      <div class="ob-dc-box" role="dialog" aria-modal="true" aria-labelledby="ob-dc-title">
+        <div class="ob-dc-head"><h2 id="ob-dc-title">抖音评论屏蔽</h2><button class="ob-dc-close" type="button" aria-label="关闭">×</button></div>
+        <div class="ob-dc-toolbar">
+          <button class="ob-dc-expand" type="button">加载全部子评论</button>
+          <label class="ob-dc-checkall"><input type="checkbox">全选当前列表</label>
+          <div class="ob-dc-status"></div>
+        </div>
+        <div class="ob-dc-list"></div>
+        <div class="ob-dc-footer"><span class="ob-dc-count"></span><button class="ob-dc-batch" type="button">屏蔽选中(0)</button></div>
+      </div>`;
+    document.body.appendChild(douyinCommentManager);
+    const panel = douyinCommentManager;
+    const close = () => closeDouyinCommentManager();
+    panel.querySelector('.ob-dc-close').onclick = close;
+    panel.addEventListener('click', (event) => { if (event.target === panel) close(); });
+    douyinCommentManagerKeyHandler = (event) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', douyinCommentManagerKeyHandler);
+
+    const keyOf = (info) => (info && info.keys || []).join('|');
+    const getRecords = () => uniqueUsers(collectUsers(document, 'comment-manager'));
+    const status = panel.querySelector('.ob-dc-status');
+    const count = panel.querySelector('.ob-dc-count');
+    const list = panel.querySelector('.ob-dc-list');
+    const checkAll = panel.querySelector('.ob-dc-checkall input');
+    const batch = panel.querySelector('.ob-dc-batch');
+    const expand = panel.querySelector('.ob-dc-expand');
+
+    function render() {
+      if (!panel.isConnected) return;
+      const records = getRecords();
+      const available = new Set(records.map(keyOf));
+      for (const key of Array.from(selected)) if (!available.has(key)) selected.delete(key);
+      list.textContent = '';
+      if (!records.length) {
+        const empty = document.createElement('div'); empty.className = 'ob-dc-empty';
+        empty.textContent = '当前还没有可识别的抖音评论作者'; list.appendChild(empty);
+      }
+      for (const info of records) {
+        const key = keyOf(info);
+        const row = document.createElement('label'); row.className = 'ob-dc-row';
+        row.setAttribute('data-key', key);
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(key);
+        checkbox.addEventListener('change', () => { if (checkbox.checked) selected.add(key); else selected.delete(key); render(); });
+        const body = document.createElement('div');
+        const name = document.createElement('div'); name.className = 'ob-dc-name'; name.textContent = info.label || key;
+        body.appendChild(name);
+        if (info.note) { const note = document.createElement('div'); note.className = 'ob-dc-note'; note.textContent = info.note; body.appendChild(note); }
+        row.append(checkbox, body); list.appendChild(row);
+      }
+      count.textContent = records.length + ' 位评论作者';
+      checkAll.checked = !!records.length && records.every((info) => selected.has(keyOf(info)));
+      checkAll.indeterminate = !checkAll.checked && records.some((info) => selected.has(keyOf(info)));
+      batch.disabled = !selected.size;
+      batch.textContent = '屏蔽选中(' + selected.size + ')';
+    }
+    checkAll.onchange = () => {
+      for (const info of getRecords()) {
+        const key = keyOf(info);
+        if (checkAll.checked) selected.add(key); else selected.delete(key);
+      }
+      render();
+    };
+    batch.onclick = () => {
+      const records = getRecords().filter((info) => selected.has(keyOf(info)));
+      if (!records.length) return;
+      blockMany(records, batch, '屏蔽选中的 ' + records.length + ' 位抖音评论作者', () => { selected.clear(); render(); });
+    };
+    let expansionRunning = false;
+    const expandAll = async () => {
+      if (expansionRunning) return;
+      if (!adapter.commentManager || typeof adapter.commentManager.expandAll !== 'function') return;
+      expansionRunning = true;
+      expand.disabled = true; status.textContent = '正在展开带明确回复数量的子评论…';
+      try {
+        const result = await adapter.commentManager.expandAll((clicked) => {
+          if (panel.isConnected) status.textContent = '已展开 ' + clicked + ' 个回复入口，正在等待评论加载…';
+        });
+        status.textContent = result.clicked
+          ? '已尝试展开 ' + result.clicked + ' 个回复入口；未提供明确展开控件的评论不会被猜测。'
+          : '当前页面没有找到可安全展开的回复入口，已显示当前已加载评论。';
+      } catch (error) {
+        status.textContent = '展开失败：' + String(error && error.message || error).slice(0, 100);
+      }
+      expansionRunning = false; expand.disabled = false; render();
+    };
+    expand.onclick = expandAll;
+    status.textContent = '正在自动加载带明确回复数量的子评论…';
+    render();
+    expandAll();
   }
 
   let refreshBulkBlock = () => {};
@@ -2686,9 +2960,12 @@
     const setFabVisible = (visible) => {
       if (fab) fab.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
       // 入口消失（关闭功能、切换页面、原生弹窗打开）时不留悬挂面板。
-      if (!visible) closeBulkScopePanel();
+      if (!visible) { closeBulkScopePanel(); if (a.commentManager) closeDouyinCommentManager(); }
     };
-    const isOwnBulkPanel = (el) => !!el && el.id === 'ob-bulk-scope';
+    const isOwnBulkPanel = (el) => !!el && (
+      el.id === 'ob-bulk-scope'
+      || !!(el.closest && el.closest('#ob-douyin-comment-manager'))
+    );
     function hasOpenModal() {
       return querySelectorAllDeep(document, MODAL_SEL).some((el) => isVisible(el) && !isOwnBulkPanel(el));
     }
@@ -2703,6 +2980,7 @@
         fab.className = 'ob-bulk';
         fab.style.position = 'fixed'; fab.style.left = '14px'; fab.style.bottom = '14px';
         fab.onclick = () => {
+          if (a.commentManager) { openDouyinCommentManager(a); return; }
           // 支持整区抓取的平台先问范围与时间；其余平台保持原有的直接批量行为。
           if (a.bulkScope && typeof a.bulkScope.fetchAll === 'function') { openBulkScopePanel(a, fab); return; }
           const list = collectUsers(document);
@@ -4262,6 +4540,22 @@
     return value;
   }
 
+  const PLATFORM_LABELS = { bili: 'B站', weibo: '微博', zhihu: '知乎', tieba: '贴吧', x: 'X', douyin: '抖音' };
+  function platformGroupForPerson(person) {
+    const groups = new Set((person && person.identities || []).map((key) => {
+      const prefix = String(key || '').split(':')[0];
+      return PLATFORM_LABELS[prefix] ? prefix : 'other';
+    }));
+    if (groups.size === 1) return Array.from(groups)[0];
+    return groups.size > 1 ? 'mixed' : 'other';
+  }
+
+  function platformLabel(group) {
+    if (group === 'mixed') return '跨平台身份';
+    if (group === 'other') return '其他身份';
+    return PLATFORM_LABELS[group] || group;
+  }
+
   function openOptions() {
     let panel = $('#ob-panel');
     if (panel) { panel.remove(); return; }
@@ -4334,10 +4628,28 @@
       const list = panel.querySelector('#ob-list');
       list.innerHTML = '';
       const ps = Store.persons();
+      const grouped = new Map();
       for (const id in ps) {
         const p = ps[id];
-        const row = document.createElement('div');
-        row.className = 'ob-item';
+        const group = platformGroupForPerson(p);
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push({ id, person: p });
+      }
+      const order = ['bili', 'weibo', 'douyin', 'zhihu', 'tieba', 'x', 'mixed', 'other'];
+      for (const group of order) {
+        const entries = grouped.get(group);
+        if (!entries || !entries.length) continue;
+        const section = document.createElement('section');
+        section.className = 'ob-platform-group';
+        const heading = document.createElement('h4');
+        heading.className = 'ob-platform-title';
+        heading.textContent = platformLabel(group) + '（' + entries.length + '）';
+        section.appendChild(heading);
+        for (const entry of entries) {
+          const id = entry.id; const p = entry.person;
+          const row = document.createElement('div');
+          row.className = 'ob-item';
+          if (p.note) row.title = '屏蔽依据：' + p.note;
         const details = document.createElement('div');
         const name = document.createElement('div'); name.textContent = p.label || '未命名';
         const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).map(formatIdentityForDisplay).join('  ');
@@ -4351,7 +4663,9 @@
         del.className = 'ob-del'; del.textContent = '删除';
         del.onclick = () => { Store.removePerson(id); refresh(); if (currentScanner) currentScanner.schedule(); };
         row.appendChild(del);
-        list.appendChild(row);
+          section.appendChild(row);
+        }
+        list.appendChild(section);
       }
       const s = Store.settings();
       panel.querySelector('#ob-enabled').checked = s.enabled;

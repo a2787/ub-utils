@@ -157,13 +157,24 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                 </div>
                 <div class="list2">
                   <div class="vue-recycle-scroller ready page-mode">
-                    <div class="vue-recycle-scroller__item-wrapper">
-                      <div class="vue-recycle-scroller__item-view">
-                        <div class="wbpro-scroller-item">
-                          <div class="item2">
-                            <div class="con2">
-                              <div class="text"><a class="_default_129qs_2" href="/u/123460002" usercard="123460002">弹窗回复作者</a><span>:</span><span>回复正文</span></div>
-                              <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                      <div class="vue-recycle-scroller__item-wrapper">
+                        <div class="vue-recycle-scroller__item-view">
+                          <div class="wbpro-scroller-item" style="height:72px;padding-bottom:12px">
+                            <div class="item2">
+                              <div class="con2">
+                                <div class="text"><a class="_default_129qs_2" href="/u/123460002" usercard="123460002">弹窗回复作者</a><span>:</span><span>回复正文</span></div>
+                                <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="vue-recycle-scroller__item-view">
+                          <div class="wbpro-scroller-item" style="height:72px;padding-bottom:12px">
+                            <div class="item2">
+                              <div class="con2">
+                                <div class="text"><a class="_default_129qs_2" href="/u/123460003" usercard="123460003">弹窗后续作者</a><span>:</span><span>后续回复正文</span></div>
+                                <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -233,7 +244,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const dyDmFixture = `<!doctype html><html><body>
       <div class="basePlayerContainer"><a data-e2e="video-avatar" href="/user/MS4wLjABAAAuthor">作者头像</a></div>
       <div class="danmu">
-        <div id="dm-normal" data-danmu-id="dm-normal" data-is-danmu-author="false" data-is-like="false" data-danmaku-user-id="7654321" data-digg-count="0"><div class="danMuText"><span>普通弹幕</span></div></div>
+        <div id="dm-normal" style="position:absolute;left:160px;top:40px;width:180px;height:24px" data-danmu-id="dm-normal" data-is-danmu-author="false" data-is-like="false" data-danmaku-user-id="7654321" data-digg-count="0"><div class="danMuText"><span>普通弹幕</span></div></div>
         <div id="dm-author" data-danmu-id="dm-author" data-is-danmu-author="true" data-danmaku-user-id="7654322"><div class="danMuText"><span>作者弹幕</span></div></div>
         <div id="dm-unknown" data-danmu-id="dm-unknown"><div class="danMuText"><span>无身份弹幕</span></div></div>
       </div>
@@ -263,6 +274,12 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       result.buttonPresent = !!btn;
       result.buttonInside = !!btn && normal.contains(btn);
       result.genericButtonAbsent = !document.querySelector('.ob-block-btn');
+      const buttonRect = btn && btn.getBoundingClientRect();
+      const textRect = normal.querySelector('.danMuText') && normal.querySelector('.danMuText').getBoundingClientRect();
+      result.buttonLeftOfText = !!buttonRect && !!textRect && buttonRect.left < textRect.left;
+      result.buttonOverlapsTextEdge = !!buttonRect && !!textRect && buttonRect.right > textRect.left && buttonRect.left < textRect.left;
+      result.buttonVerticallyParallel = !!buttonRect && !!textRect
+        && Math.abs((buttonRect.top + buttonRect.height / 2) - (textRect.top + textRect.height / 2)) < 3;
       if (!btn) return result;
       btn.click();
       await pause(80);
@@ -283,12 +300,98 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       return result;
     });
     if (dyDm.fixtureOk && !dyDm.unknownButton && !dyDm.unknownHidden
-      && dyDm.buttonPresent && dyDm.buttonInside && dyDm.genericButtonAbsent
+      && dyDm.buttonPresent && dyDm.buttonInside && dyDm.buttonLeftOfText && dyDm.buttonOverlapsTextEdge
+      && dyDm.buttonVerticallyParallel && dyDm.genericButtonAbsent
       && dyDm.confirmShown && dyDm.confirmUid && dyDm.blocked && dyDm.hidden && dyDm.restored
       && dyDm.authorHidden && dyDm.authorRestored) {
-      report.pass.push('douyin-danmaku-ui: hover follow button blocks uid, hides and restores; author danmaku maps to video author secuid');
+      report.pass.push('douyin-danmaku-ui: hover button sits left/overlapping the text, blocks uid, hides/restores; author danmaku maps to video author secuid');
     } else report.fail.push('douyin-danmaku-ui: ' + JSON.stringify(dyDm));
     await dyDmPage.close();
+
+    // 抖音评论菜单与批量管理器：人工合成评论结构；portal 举报项必须复用最近一次
+    // 三个点点击记录的评论身份，管理器则通过语义展开控件收集未手动展开的子评论。
+    const dyCommentPage = await browser.newPage();
+    const dyCommentFixture = `<!doctype html><html><body>
+      <div data-e2e="comment-item" id="dy-comment-root">
+        <a data-e2e="comment-username" href="/user/MS4wLjABAACommentRoot">根评论作者</a>
+        <span>根评论正文</span>
+        <button id="dy-comment-more" type="button">三个点</button>
+        <button id="dy-comment-expand" type="button">展开 2 条回复</button>
+      </div>
+      <div id="dy-comment-menu"><button id="dy-report-comment" type="button">举报评论</button></div>
+      <script>
+        document.getElementById('dy-comment-expand').addEventListener('click', function () {
+          if (document.getElementById('dy-reply-one')) return;
+          const root = document.getElementById('dy-comment-root');
+          root.insertAdjacentHTML('beforeend',
+            '<div data-e2e="comment-item" id="dy-reply-one"><a data-e2e="comment-username" href="/user/MS4wLjABAACommentOne">子评论作者甲</a><span>子评论甲</span></div>' +
+            '<div data-e2e="comment-item" id="dy-reply-two"><a data-e2e="comment-username" href="/user/MS4wLjABAACommentTwo">子评论作者乙</a><span>子评论乙</span></div>');
+          this.textContent = '已展开 2 条回复';
+        });
+      </script>
+    </body></html>`;
+    await dyCommentPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyCommentFixture }));
+    await dyCommentPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await dyCommentPage.goto('https://www.douyin.com/test', { waitUntil: 'domcontentloaded' });
+    await dyCommentPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const dyComments = await dyCommentPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const root = document.querySelector('#dy-comment-root');
+      const more = document.querySelector('#dy-comment-more');
+      const report = document.querySelector('#dy-report-comment');
+      const result = { fixtureOk: !!(root && more && report) };
+      if (!result.fixtureOk) return result;
+      more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+      await pause(1050);
+      const quick = document.querySelector('#dy-comment-menu .ob-quick');
+      result.menuQuickPresent = !!quick;
+      if (quick) {
+        quick.click();
+        await pause(80);
+        const confirm = document.getElementById('ob-confirm');
+        result.menuConfirmHasRootAuthor = !!(confirm && confirm.textContent.includes('根评论作者')
+          && confirm.textContent.includes('douyin:secuid:MS4wLjABAACommentRoot'));
+        if (confirm) confirm.querySelector('.ob-no').click();
+      }
+      const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+      result.fabPresent = !!fab;
+      if (!fab) return result;
+      fab.click();
+      await pause(100);
+      result.managerPresent = !!document.querySelector('#ob-douyin-comment-manager');
+      result.managerStaysOpen = result.managerPresent;
+      if (!result.managerPresent) return result;
+      const manager = document.querySelector('#ob-douyin-comment-manager');
+      result.initialRows = manager.querySelectorAll('.ob-dc-row').length;
+      await pause(900);
+      const expandButton = manager.querySelector('.ob-dc-expand');
+      if (expandButton) expandButton.click();
+      await pause(500);
+      result.expandedRows = manager.querySelectorAll('.ob-dc-row').length;
+      result.expandedAuthors = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
+        .every((sec) => Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:' + sec));
+      const checkAll = manager.querySelector('.ob-dc-checkall input');
+      if (checkAll) checkAll.click();
+      await pause(80);
+      const batch = manager.querySelector('.ob-dc-batch');
+      result.batchSelected = !!batch && !batch.disabled && /3/.test(batch.textContent);
+      if (batch) batch.click();
+      await pause(80);
+      const confirm = document.getElementById('ob-confirm');
+      if (confirm) confirm.querySelector('.ob-ok').click();
+      await pause(180);
+      result.allBlocked = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
+        .every((sec) => window.OB.Index.isBlocked('douyin:secuid:' + sec));
+      return result;
+    });
+    if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuConfirmHasRootAuthor
+      && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
+      && dyComments.initialRows >= 1 && dyComments.expandedRows === 3 && dyComments.expandedAuthors
+      && dyComments.batchSelected && dyComments.allBlocked) {
+      report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block and the manager expands/blocks loaded child-comment authors together');
+    } else report.fail.push('douyin-comment-tools: ' + JSON.stringify(dyComments));
+    await dyCommentPage.close();
 
     const weiboPage = await browser.newPage();
     const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + WEIBO_LEGACY_REPLY_FIXTURE + '</body></html>';
@@ -491,13 +594,17 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const layer = document.querySelector('.woo-modal-main > .wbpro-layer');
       const rootRow = layer && layer.querySelector('.wbpro-list > .item1');
       const replyRow = layer && layer.querySelector('.wbpro-scroller-item > .item2');
-      if (!layer || !rootRow || !replyRow) return { fixtureOk: false };
+      const replyRows = layer ? Array.from(layer.querySelectorAll('.wbpro-scroller-item > .item2')) : [];
+      const nextReplyRow = replyRows[1] || null;
+      if (!layer || !rootRow || !replyRow || !nextReplyRow) return { fixtureOk: false };
       const rootInfo = adapter.extract(rootRow);
       const replyInfo = adapter.extract(replyRow);
       const replySelected = adapter.selectors.some((selector) => replyRow.matches(selector));
       const replyButton = replyRow.querySelector('.ob-weibo-comment-block');
       const rootButton = rootRow.querySelector('.ob-weibo-comment-block');
+      const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
       let blocked = false; let confirmText = ''; let replyHidden = false; let rootVisible = false; let restored = false;
+      let nextMovedUp = false;
       if (replyButton) {
         replyButton.click();
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -508,6 +615,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         blocked = window.OB.Index.isBlocked('weibo:uid:123460002');
         replyHidden = replyRow.getBoundingClientRect().height === 0;
         rootVisible = rootRow.getBoundingClientRect().height > 0;
+        nextMovedUp = nextReplyRow.getBoundingClientRect().top < nextBeforeTop - 1;
         const toast = document.getElementById('ob-toast');
         if (toast) toast.querySelector('button').click();
         await new Promise((resolve) => setTimeout(resolve, 140));
@@ -526,6 +634,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         blocked,
         replyHidden,
         rootVisible,
+        nextMovedUp,
         restored,
       };
     });
@@ -535,7 +644,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.replyLabel === '弹窗回复作者'
       && weiboModal.rootButtonPresent && weiboModal.replyButtonPresent
       && weiboModal.confirmText.includes('弹窗回复作者')
-      && weiboModal.blocked && weiboModal.replyHidden && weiboModal.rootVisible && weiboModal.restored) {
+      && weiboModal.blocked && weiboModal.replyHidden && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();

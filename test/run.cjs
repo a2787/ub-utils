@@ -205,6 +205,35 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup)
     ? report.pass.push('E 设置面板：含"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
 
+  // E2 设置名单按平台分组，并保留可悬停查看的屏蔽依据（人工合成身份）。
+  const e2 = await page.evaluate(async () => {
+    const panel = document.getElementById('ob-panel');
+    if (!panel || !window.OB) return { panel:false };
+    window.OB.Store.addIdentityGroups([
+      { keys:['weibo:uid:123450010'], label:'微博测试作者', note:'微博评论：人工合成正文' },
+      { keys:['douyin:secuid:MS4wLjABAASettings'], label:'抖音测试作者', note:'抖音弹幕：人工合成正文' },
+    ]);
+    const close = panel.querySelector('.ob-close'); if (close) close.click();
+    document.getElementById('ob-gear').click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const current = document.getElementById('ob-panel');
+    const groups = Array.from(current ? current.querySelectorAll('.ob-platform-group') : [])
+      .map((group) => group.querySelector('.ob-platform-title') && group.querySelector('.ob-platform-title').textContent);
+    const weiboRow = current && Array.from(current.querySelectorAll('.ob-item'))
+      .find((row) => row.textContent.includes('微博测试作者'));
+    return {
+      grouped: groups.some((text) => /^微博（\d+）/.test(text || ''))
+        && groups.some((text) => /^抖音（\d+）/.test(text || '')),
+      groupCount: groups.length,
+      reasonTitle: !!(weiboRow && weiboRow.title.includes('屏蔽依据：微博评论：人工合成正文')),
+      reasonText: !!(weiboRow && weiboRow.querySelector('.ob-note')
+        && weiboRow.querySelector('.ob-note').textContent.includes('微博评论：人工合成正文')),
+    };
+  });
+  (e2.grouped && e2.reasonTitle && e2.reasonText)
+    ? report.pass.push('E2 设置名单：按平台分组，行内备注并可通过鼠标悬停查看屏蔽依据')
+    : report.fail.push('E2 设置名单分组/屏蔽依据失败：' + JSON.stringify(e2));
+
   // F. 全局影子穿透兜底：Frank(666) 在双层嵌套 Shadow DOM 内也应被隐藏
   const f = await page.evaluate(`(() => {
     function findNested(uid){
