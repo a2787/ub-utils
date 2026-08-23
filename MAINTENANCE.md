@@ -1163,8 +1163,10 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-- userscript `@version` 提高为 `0.23.0`；工作区已完成实现与验证，待按仓库授权流程提交、推送、
-  创建 `v0.23.0` tag 和同版本 GitHub Release。
+- userscript `@version` 为 `0.23.0`；功能提交 `8fcb9be5051094db613fa043bc7a21fdcdc6fdca`
+  已推送到 `origin/master`，`v0.23.0` tag 已创建并推送；GitHub Release 已发布：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.23.0`。本次交接状态修订提交会继续追加到
+  `master`，不改写已发布 tag 或 Release。
 
 **下一项最有价值的验证**
 
