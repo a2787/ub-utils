@@ -947,8 +947,13 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-- 当前工作区已改到 userscript `@version 0.18.0`，验证矩阵复核完毕，按仓库既有授权
-  执行 `v0.18.0` 提交、推送、打 tag 与 GitHub Release。
+- v0.18.0 已发布（2026-08-23）：提交 `4725f8b` 已推送 `master`，tag `v0.18.0` 与
+  GitHub Release https://github.com/a2787/ub-utils/releases/tag/v0.18.0 创建成功。
+  Release 说明与 CHANGELOG 0.18.0 一致并区分三类证据标签；匿名 API 复核为公开、
+  非草稿、非预发布。raw `master` 更新 URL 现指向 0.18.0。
+- 交付过程记录：发布子 Agent 两次因上游 API 错误中断，未执行任何 git 或发布动作；
+  主 Agent 接管完成 Release 创建，认证令牌从 Windows 凭据管理器在进程内读取，未落盘、
+  未写入日志或文档。
 
 **下一项最有价值的验证**
 
