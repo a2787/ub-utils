@@ -57,6 +57,8 @@ fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\n' + USERSCRIPT
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真实结构回归页</title></head><body>
 <div id="related"></div>
 <bili-comments id="comments"></bili-comments>
+<!-- 人工合成：2026-08-23 真站视频页作者区 up-detail-top > a.up-name。 -->
+<div class="up-detail-top"><a class="up-name" href="//space.bilibili.com/888">Video Author</a></div>
 <section class="bpx-player-dm-wrap" id="dm-panel">
   <ul class="bui-long-list-list">
     <li class="bui-long-list-item" style="height:24px"><div class="dm-info-row">
@@ -1317,6 +1319,92 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && bulkScopeAll.blocked && bulkScopeAll.skippedUnknown && bulkScopeAll.restored)
       report.pass.push('QB-AB 批量面板跨过周期扫描并加载全部评论与子回复，按时间筛选跳过缺时间的未知记录');
     else report.fail.push('QB-AB 批量范围面板（全量/时间筛选）错误：' + JSON.stringify(bulkScopeAll));
+
+    // 人工合成：视频页作者区 `.up-name` 旁出现「本地拉黑作者」，点击后按 uid 屏蔽并撤销。
+    const videoAuthor = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const mount = document.querySelector('.up-detail-top');
+      const name = mount && mount.querySelector('.up-name');
+      if (!mount || !name) return { found: false };
+      const button = mount.querySelector(':scope > .ob-bili-author-block');
+      if (!button) return { found: true, button: false };
+      const before = { text: button.textContent, nextIsName: button.previousElementSibling === name };
+      button.click(); await pause(80);
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (!confirm) return { ...before, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await pause(150);
+      const blocked = window.OB.Index.isBlocked('bili:uid:888');
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await pause(150); }
+      const restored = !window.OB.Index.isBlocked('bili:uid:888');
+      return { ...before, found: true, button: true, confirm: true, confirmText, blocked, restored };
+    });
+    if (videoAuthor.found && videoAuthor.button && videoAuthor.text === '本地拉黑作者' && videoAuthor.nextIsName
+      && videoAuthor.confirm && /Video Author/.test(videoAuthor.confirmText) && /bili:uid:888/.test(videoAuthor.confirmText)
+      && videoAuthor.blocked && videoAuthor.restored)
+      report.pass.push('QB-AC 视频页作者区显示「本地拉黑作者」，点击后按 uid 屏蔽并撤销');
+    else report.fail.push('QB-AC 视频作者入口错误：' + JSON.stringify(videoAuthor));
+
+    // 人工合成：动态详情页作者模块 `.opus-module-author` 使用 __INITIAL_STATE__ 的 mid。
+    const OPUS_FIXTURE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
+      <div class="opus-module-author">
+        <div class="opus-module-author__left"></div>
+        <div class="opus-module-author__center">
+          <div class="opus-module-author__name">Opus Author</div>
+          <div class="opus-module-author__pub"><div class="opus-module-author__pub__text">2026-08-23</div></div>
+        </div>
+        <div class="opus-module-author__right"></div>
+      </div>
+      <script>window.__INITIAL_STATE__ = { detail: { module_author: { mid: '999', name: 'Opus Author' } } };</script>
+    </body></html>`;
+    const opusPage = await browser.newPage();
+    opusPage.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') report.console.push('[opus ' + m.type() + '] ' + m.text()); });
+    opusPage.on('pageerror', (e) => report.pageErrors.push('[opus] ' + String(e)));
+    await opusPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: OPUS_FIXTURE }));
+    await opusPage.addInitScript({ path: path.join(ROOT, 'test', '_initqb.js') });
+    await opusPage.goto('https://www.bilibili.com/opus/12345678901234567890', { waitUntil: 'domcontentloaded' });
+    await opusPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await wait(1200);
+    const opusAuthor = await opusPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !document.querySelector('.opus-module-author__center .ob-bili-author-block')) await pause(100);
+      const center = document.querySelector('.opus-module-author__center');
+      let button = center && center.querySelector(':scope > .ob-bili-author-block');
+      if (!button) {
+        try { window.OB.adapters.bilibili.onScan(); } catch (e) {}
+        await pause(300);
+        button = center && center.querySelector(':scope > .ob-bili-author-block');
+      }
+      if (!center || !button) {
+        return {
+          found: !!center,
+          button: !!button,
+        };
+      }
+      const name = center.querySelector('.opus-module-author__name');
+      const before = { text: button.textContent, nextIsPub: button.nextElementSibling && button.nextElementSibling.classList.contains('opus-module-author__pub') };
+      button.click(); await pause(80);
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (!confirm) return { ...before, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await pause(150);
+      const blocked = window.OB.Index.isBlocked('bili:uid:999');
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await pause(150); }
+      const restored = !window.OB.Index.isBlocked('bili:uid:999');
+      return { ...before, found: true, button: true, name: name && name.textContent, confirm: true, confirmText, blocked, restored };
+    });
+    await opusPage.close();
+    if (opusAuthor.found && opusAuthor.button && opusAuthor.text === '本地拉黑作者' && opusAuthor.nextIsPub
+      && opusAuthor.name === 'Opus Author' && opusAuthor.confirm
+      && /Opus Author/.test(opusAuthor.confirmText) && /bili:uid:999/.test(opusAuthor.confirmText)
+      && opusAuthor.blocked && opusAuthor.restored)
+      report.pass.push('QB-AD 动态详情页作者模块显示「本地拉黑作者」，按 __INITIAL_STATE__ mid 屏蔽并撤销');
+    else report.fail.push('QB-AD 动态作者入口错误：' + JSON.stringify(opusAuthor));
   } catch (error) {
     report.fail.push('FATAL: ' + (error && error.message || error));
   }

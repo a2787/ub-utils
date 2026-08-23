@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.20.0
+// @version       0.21.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -809,6 +809,15 @@
       line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
     }
     .ob-weibo-comment-block:hover { background: #fdeceb !important; }
+    /* 微博帖子作者与 B站视频/动态作者行内的常驻拉黑入口。 */
+    .ob-weibo-author-block, .ob-bili-author-block {
+      flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 20px !important;
+      border: 1px solid #e2a39c !important; border-radius: 4px !important; padding: 1px 7px !important;
+      background: rgba(255, 255, 255, 0.94) !important; color: #c0392b !important; font-size: 11px !important;
+      line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
+      margin-left: 8px !important; vertical-align: middle !important;
+    }
+    .ob-weibo-author-block:hover, .ob-bili-author-block:hover { background: #fdeceb !important; }
     /* B站右侧弹幕列表里的本地发送者屏蔽入口 */
     .ob-dm-block {
       flex: 0 0 auto !important; margin-left: 8px !important; padding: 2px 6px !important;
@@ -1741,6 +1750,45 @@
     function clearCommentButtons() {
       for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) button.remove();
     }
+    function clearAuthorButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-author-block')) button.remove();
+    }
+    // 帖子作者常驻入口：挂在作者链接所在行（真站捕获为
+    // `article.woo-panel-main > header.woo-box-flex`，旧版为 `.card-feed .content > .info`）。
+    // 只处理最外层卡片，避免 `.card-feed` 嵌套在 `.card-wrap[mid]` 里时重复注入。
+    function syncAuthorButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-author-block')) {
+        if (!button.closest || !button.closest(SEL.card)) button.remove();
+      }
+      const enabled = Store.getSetting('enabled') && Store.getSetting('showQuickBlock');
+      const cards = collectWeiboItems(document, SEL.card)
+        .filter((item) => !item.closest(SEL.card) || item.closest(SEL.card) === item);
+      for (const card of cards) {
+        const link = findUserLink(card);
+        const mount = link && link.isConnected
+          ? ((card.querySelector('header') && card.querySelector('header').contains(link)) ? card.querySelector('header') : link.parentElement)
+          : null;
+        if (!mount) continue;
+        let button = mount.querySelector(':scope > .ob-weibo-author-block');
+        const info = extract(card);
+        if (!enabled || !info.keys.length || Index.isBlocked(info.keys)) {
+          if (button) button.remove();
+          continue;
+        }
+        if (button) continue;
+        button = document.createElement('button');
+        button.type = 'button'; button.className = 'ob-weibo-author-block'; button.textContent = '本地拉黑作者';
+        button.title = '本地拉黑此微博作者'; button.setAttribute('aria-label', '本地拉黑此微博作者');
+        button.addEventListener('click', (event) => {
+          event.stopPropagation(); event.preventDefault();
+          const current = extract(card);
+          if (!current.keys.length) return;
+          showConfirm(current.label, current.keys, button);
+        });
+        if (link.parentElement === mount) mount.insertBefore(button, link.nextSibling);
+        else mount.appendChild(button);
+      }
+    }
     function syncCommentButtons() {
       for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) {
         if (!button.closest || !button.closest(SEL.comment)) button.remove();
@@ -1797,8 +1845,8 @@
       },
       bulkFabLabel: (n) => '🚫 拉黑已加载微博/评论作者(' + n + ')',
       containerOf: (item) => findContainer(item),
-      onScan: syncCommentButtons,
-      onDisabled: clearCommentButtons,
+      onScan: () => { syncCommentButtons(); syncAuthorButtons(); },
+      onDisabled: () => { clearCommentButtons(); clearAuthorButtons(); },
     };
   })();
 
@@ -1936,6 +1984,11 @@
       dyn: '.bili-dyn-item, .bili-dynamic-card, [data-dyn-id]',
       videoCard: '.bili-video-card, .video-card, a[href*="//www.bilibili.com/video/"]',
       space: '.space-item, .list-item',
+      // 2026-08-23 真站捕获：视频页作者名为 `.up-name`（在 `.up-detail-top` 内）。
+      videoAuthor: 'a.up-name[href*="space.bilibili.com/"]',
+      // 2026-08-23 真站捕获：动态详情页作者模块 `.opus-module-author`，uid 在
+      // `__INITIAL_STATE__.detail.module_author.mid`（页面里的 space 链接是登录用户自己的）。
+      opusAuthor: '.opus-module-author',
     };
 
     function dataIdentity(d) {
@@ -2002,6 +2055,70 @@
       // B站视频页的举报弹窗并不含发送者；只有实际列出空间链接的用户列表才可批量处理。
       const scope = root || document;
       return querySelectorAllDeep(scope, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
+    }
+
+    function isOpusPage() {
+      return /^\/opus\/\d+/i.test(location.pathname);
+    }
+
+    function opusAuthorInfo() {
+      if (!isOpusPage()) return null;
+      const state = window.__INITIAL_STATE__;
+      const author = state && state.detail && state.detail.module_author;
+      const mid = normId(author && author.mid);
+      if (!/^\d+$/.test(mid) || mid === '0') return null;
+      return { keys: [makeIdentityKey('bili:uid', mid)], label: normId(author && author.name) || ('UID ' + mid), container: null };
+    }
+
+    function videoAuthorInfo() {
+      if (!isVideoCommentPage()) return null;
+      return userFromSpaceLink(document.querySelector(SEL.videoAuthor));
+    }
+
+    function makeBiliAuthorButton(info) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'ob-bili-author-block';
+      button.textContent = '本地拉黑作者';
+      button.title = '本地拉黑该内容作者'; button.setAttribute('aria-label', '本地拉黑该内容作者');
+      button.addEventListener('click', (event) => {
+        event.stopPropagation(); event.preventDefault();
+        showConfirm(info.label, info.keys, button);
+      });
+      return button;
+    }
+
+    function syncBiliAuthorButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) {
+        const keep = button.__obBiliAuthorKind === 'video' ? !!button.closest('.up-detail-top') : !!button.closest('.opus-module-author');
+        if (!keep) button.remove();
+      }
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      const vInfo = videoAuthorInfo();
+      if (vInfo && vInfo.keys.length && !Index.isBlocked(vInfo.keys)) {
+        const name = document.querySelector(SEL.videoAuthor);
+        const mount = name && name.parentElement;
+        if (mount && !mount.querySelector(':scope > .ob-bili-author-block')) {
+          const button = makeBiliAuthorButton(vInfo);
+          button.__obBiliAuthorKind = 'video';
+          mount.insertBefore(button, name.nextSibling);
+        }
+      }
+      const oInfo = opusAuthorInfo();
+      if (oInfo && oInfo.keys.length && !Index.isBlocked(oInfo.keys)) {
+        const center = document.querySelector('.opus-module-author__center')
+          || document.querySelector('.opus-module-author');
+        if (center && !center.querySelector(':scope > .ob-bili-author-block')) {
+          const button = makeBiliAuthorButton(oInfo);
+          button.__obBiliAuthorKind = 'opus';
+          const pub = center.querySelector('.opus-module-author__pub');
+          if (pub) center.insertBefore(button, pub);
+          else center.appendChild(button);
+        }
+      }
+    }
+
+    function clearBiliAuthorButtons() {
+      for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) button.remove();
     }
 
     // ---- 视频评论区整区抓取（只读公开接口，用于批量拉黑的"加载全部"与时间筛选）----
@@ -2141,6 +2258,8 @@
       // 批量精细化只在视频评论区可用；动态页/空间页没有这套接口契约。
       bulkScope: { available: isVideoCommentPage, fetchAll: fetchAllCommentAuthors, unit: '评论作者' },
       containerOf: commentContainer,
+      onScan: syncBiliAuthorButtons,
+      onDisabled: clearBiliAuthorButtons,
     };
   })();
 

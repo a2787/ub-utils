@@ -1075,3 +1075,48 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 在播放中且作者发了弹幕的抖音视频上复跑 `node test/real-douyin-probe.cjs`，确认作者弹幕
 映射的真站路径；随后处理 B站右侧弹幕列表登录态展开与原生举报操作条复核。
+
+### 2026-08-24 - v0.21.0 工作区 - B站与微博帖子作者快捷入口
+
+**范围**
+
+为 B站视频/动态详情页和微博正文/旧版信息流补充作者级「本地拉黑作者」入口。入口只在作者
+身份可可靠解析时出现；点击仍只写入本地名单，不触发平台官方拉黑、举报或关注。
+
+**改动文件**
+
+- `omniblock.user.js`：新增 `.ob-bili-author-block`；视频页使用真站捕获的 `.up-name` 空间链接，
+  动态详情页使用 `__INITIAL_STATE__.detail.module_author.mid`，并修复作者中心容器挂载；新增
+  `.ob-weibo-author-block`，覆盖 `article.woo-panel-main > header` 与旧版 `.card-wrap .card-feed`
+  作者行。
+- `test/quickblock.cjs`：新增人工合成 B站视频作者/动态作者入口闭环断言，31 项全部通过。
+- `test/adapters.cjs`：新增人工合成微博正文与旧版信息流作者入口闭环断言，20 项全部通过。
+- `README.md`、`CHANGELOG.md`：同步用户可见行为、证据边界与版本说明。
+
+**证据**
+
+- `real-site verified`（2026-08-24，隔离未登录会话，脱敏页面 `weibo.com/...`）：真实详情页显示
+  「本地拉黑作者」；22 条评论中 17 条根评论、5 条楼中楼，21 条解析出身份、26 个行内入口可见。
+- `structure regression`：`node test/quickblock.cjs` 31/31、`node test/adapters.cjs` 20/20；
+  `node --check omniblock.user.js`、`git diff --check` 通过。人工合成夹具覆盖 B站视频/动态作者和
+  微博正文/旧版信息流作者入口的挂载、确认、规范 UID 写入、隐藏/撤销。
+- `blocked`：本轮 B站隔离未登录公开视频页虽成功发现并加载播放器，但未加载真实评论组件
+  （`commentRendererCount=0`，`quickButtonCount=0`），批量入口与评论作者入口无法验证；探针还
+  记录了页面 `appendChild` 错误。微博本次选中的回复能打开确认框并隐藏，但虚拟列表在撤销阶段
+  回收根评论，未完成根评论保持可见与撤销恢复；完整回复事务不能替代作者入口的真实证据。
+
+**限制**
+
+- B站动态作者入口依赖 `__INITIAL_STATE__.detail.module_author.mid`；页面状态缺失或 mid 不可靠时
+  不注入。B站视频入口依赖 `.up-name` 空间链接，需随真站结构变化重新捕获。
+- 微博正文/旧版信息流作者入口只使用作者行的 UID，不把正文提及用户或评论作者当作帖子作者。
+
+**版本/发布状态**
+
+- userscript `@version` 提高为 `0.21.0`；完成本轮验证后再提交、推送、创建 `v0.21.0` tag 和
+  同版本 GitHub Release。
+
+**下一项最有价值的验证**
+
+在隔离未登录且能加载评论的公开 B站视频页复跑 `node test/real-bilibili-probe.cjs --verify-local`，
+并单独观察视频作者 `.up-name` 入口；随后在真实动态详情页复核 `module_author.mid` 作者入口。

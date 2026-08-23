@@ -24,6 +24,12 @@ test/_probe_comment_structure.cjs
 test/_probe_dy_danmu.cjs
 test/_probe_dy_author.cjs
 
+# 2026-08-24 作者入口一次性真站结构探针；仅供当轮排查，不属于可交付测试。
+test/_probe_bili_dyn.cjs
+test/_probe_bili_opus_state.cjs
+test/_probe_bili_video_author.cjs
+test/_probe_wb_author.cjs
+
 # 2026-08-20 的一次性运行产物，与当前测试无关：run.cjs 现在只写忽略的
 # test/_shot_*.png，这三张旧截图没有任何代码或文档引用。
 test/shot-*.png

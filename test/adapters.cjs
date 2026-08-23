@@ -352,6 +352,24 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       if (toast) toast.querySelector('button').click();
       await new Promise((resolve) => setTimeout(resolve, 120));
       const likersRestored = ['weibo:uid:123450003', 'weibo:uid:123450004'].every((key) => !window.OB.Index.isBlocked(key));
+      // 帖子作者常驻入口：真站 `article.woo-panel-main > header` 作者链接旁。
+      const authorButtons = Array.from(document.querySelectorAll('.ob-weibo-author-block'));
+      const authorButton = authorButtons[0] || null;
+      let authorConfirm = false; let authorNamed = false; let authorBlocked = false; let authorRestored = false;
+      if (authorButton) {
+        authorButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const authorConfirmBox = document.getElementById('ob-confirm');
+        authorConfirm = !!authorConfirmBox;
+        authorNamed = !!(authorConfirmBox && authorConfirmBox.textContent.includes('微博作者'));
+        if (authorConfirmBox) authorConfirmBox.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        authorBlocked = window.OB.Index.isBlocked('weibo:uid:1234567890');
+        const authorToast = document.getElementById('ob-toast');
+        if (authorToast) authorToast.querySelector('button').click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        authorRestored = !window.OB.Index.isBlocked('weibo:uid:1234567890');
+      }
       return {
         selected: comments.map((item) => adapter.selectors.some((selector) => item.matches(selector))),
         keys: infos.map((info) => info && info.keys || []),
@@ -359,6 +377,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         containersAreRows: infos.every((info, index) => info && info.container === comments[index]),
         collectedKeys: users.flatMap((info) => info.keys),
         buttonCount: buttons.length,
+        authorButtonCount: authorButtons.length,
         duplicateQuickCount,
         bulkText: bulk && bulk.textContent,
         confirmText,
@@ -374,6 +393,10 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         modalConfirm: true,
         likersBlocked,
         likersRestored,
+        authorConfirm,
+        authorNamed,
+        authorBlocked,
+        authorRestored,
         expandRowGuard,
       };
     });
@@ -396,6 +419,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboDetail.containersAreRows
       && expectedWeiboKeys.every((key) => weiboDetail.collectedKeys.includes(key))
       && weiboDetail.buttonCount === 3
+      && weiboDetail.authorButtonCount === 1
+      && weiboDetail.authorConfirm && weiboDetail.authorNamed && weiboDetail.authorBlocked && weiboDetail.authorRestored
       && weiboDetail.duplicateQuickCount === 0
       && weiboDetail.expandRowGuard
       && /微博\/评论作者\(4\)/.test(weiboDetail.bulkText || '')
@@ -409,6 +434,48 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       report.pass.push('weibo-legacy-reply-and-likers: old reply row gets local block, hidden-row wrapper collapses, and like-modal users bulk block');
     } else report.fail.push('weibo-legacy-reply-and-likers: ' + JSON.stringify(weiboDetail));
     await weiboPage.close();
+
+    // 旧版信息流卡片（.card-wrap[mid] > .card-feed .content .info）的帖子作者入口。
+    const wbCardPage = await browser.newPage();
+    const wbCardFixture = `<!doctype html><html><body>
+      <div class="card-wrap" mid="abc">
+        <div class="card-feed">
+          <div class="content">
+            <div class="info"><a class="name" href="/u/123450006" nick-name="帖子作者">帖子作者</a></div>
+          </div>
+        </div>
+      </div>
+    </body></html>`;
+    await wbCardPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: wbCardFixture }));
+    await wbCardPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await wbCardPage.goto('https://weibo.com/fixture-feed', { waitUntil: 'domcontentloaded' });
+    await wbCardPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    const wbCard = await wbCardPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const card = document.querySelector('.card-wrap[mid]');
+      const info = card && card.querySelector('.content > .info');
+      const button = info && info.querySelector(':scope > .ob-weibo-author-block');
+      if (!card || !info || !button) return { fixtureOk: !!card && !!info, button: !!button };
+      const afterName = button.previousElementSibling === info.querySelector('a.name');
+      button.click(); await pause(80);
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (!confirm) return { fixtureOk: true, button: true, afterName, confirm: false };
+      confirm.querySelector('.ob-ok').click(); await pause(120);
+      const blocked = window.OB.Index.isBlocked('weibo:uid:123450006');
+      const toast = document.getElementById('ob-toast');
+      if (toast) toast.querySelector('button').click();
+      await pause(120);
+      const restored = !window.OB.Index.isBlocked('weibo:uid:123450006');
+      return { fixtureOk: true, button: true, afterName, confirm: true, confirmText, blocked, restored };
+    });
+    if (wbCard.fixtureOk && wbCard.button && wbCard.afterName && wbCard.confirm
+      && /帖子作者/.test(wbCard.confirmText || '') && /weibo:uid:123450006/.test(wbCard.confirmText || '')
+      && wbCard.blocked && wbCard.restored) {
+      report.pass.push('weibo-post-author: feed card author entry sits beside the name, blocks uid and restores');
+    } else report.fail.push('weibo-post-author: ' + JSON.stringify(wbCard));
+    await wbCardPage.close();
 
     // 「共 N 条回复」展开弹窗：真站里回复行被 vue-recycle-scroller 包裹，
     // 旧的 `.wbpro-list .list2 > .item2` 直接子元素路径匹配不到，因此弹窗内没有入口。
