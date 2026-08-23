@@ -159,7 +159,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                   <div class="vue-recycle-scroller ready page-mode">
                       <div class="vue-recycle-scroller__item-wrapper">
                         <div class="vue-recycle-scroller__item-view">
-                          <div class="wbpro-scroller-item" style="height:72px;padding-bottom:12px">
+                          <!-- 人工合成固定虚拟行：用内联 !important 模拟前端回收器重新写回的高度，
+                               旧版只靠文档 CSS 无法把这层压成零高度。 -->
+                          <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
                             <div class="item2">
                               <div class="con2">
                                 <div class="text"><a class="_default_129qs_2" href="/u/123460002" usercard="123460002">弹窗回复作者</a><span>:</span><span>回复正文</span></div>
@@ -169,7 +171,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                           </div>
                         </div>
                         <div class="vue-recycle-scroller__item-view">
-                          <div class="wbpro-scroller-item" style="height:72px;padding-bottom:12px">
+                          <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
                             <div class="item2">
                               <div class="con2">
                                 <div class="text"><a class="_default_129qs_2" href="/u/123460003" usercard="123460003">弹窗后续作者</a><span>:</span><span>后续回复正文</span></div>
@@ -312,13 +314,19 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     // 三个点点击记录的评论身份，管理器则通过语义展开控件收集未手动展开的子评论。
     const dyCommentPage = await browser.newPage();
     const dyCommentFixture = `<!doctype html><html><body>
+      <!-- 人工合成：真实抖音评论侧栏的 #relatedVideoCard.LookModalFrameFast 结构。 -->
+      <div id="relatedVideoCard" class="LookModalFrameFast">
       <div data-e2e="comment-item" id="dy-comment-root">
         <a data-e2e="comment-username" href="/user/MS4wLjABAACommentRoot">根评论作者</a>
         <span>根评论正文</span>
         <button id="dy-comment-more" type="button">三个点</button>
         <button id="dy-comment-expand" type="button">展开 2 条回复</button>
       </div>
-      <div id="dy-comment-menu"><button id="dy-report-comment" type="button">举报评论</button></div>
+      <!-- 人工合成：2026-08-24 真站捕获的举报项是 role=tooltip 下的普通 div，
+           不是 button/menuitem；旧 isMenuItem 判定会因此漏掉本地入口。 -->
+      <div id="dy-comment-menu" class="semi-tooltip-wrapper" role="tooltip">
+        <div class="semi-tooltip-content"><div id="dy-report-comment" data-e2e="video-comment-more-report">举报评论</div></div>
+      </div>
       <script>
         document.getElementById('dy-comment-expand').addEventListener('click', function () {
           if (document.getElementById('dy-reply-one')) return;
@@ -329,6 +337,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
           this.textContent = '已展开 2 条回复';
         });
       </script>
+      </div>
     </body></html>`;
     await dyCommentPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyCommentFixture }));
     await dyCommentPage.addInitScript({ content: shim('') + '\n' + userscript });
@@ -602,8 +611,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const replySelected = adapter.selectors.some((selector) => replyRow.matches(selector));
       const replyButton = replyRow.querySelector('.ob-weibo-comment-block');
       const rootButton = rootRow.querySelector('.ob-weibo-comment-block');
+      const replyWrapper = replyRow.closest('.wbpro-scroller-item');
       const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
-      let blocked = false; let confirmText = ''; let replyHidden = false; let rootVisible = false; let restored = false;
+      let blocked = false; let confirmText = ''; let replyHidden = false; let replyWrapperHidden = false; let rootVisible = false; let restored = false; let wrapperRestored = false;
       let nextMovedUp = false;
       if (replyButton) {
         replyButton.click();
@@ -614,6 +624,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         await new Promise((resolve) => setTimeout(resolve, 140));
         blocked = window.OB.Index.isBlocked('weibo:uid:123460002');
         replyHidden = replyRow.getBoundingClientRect().height === 0;
+        replyWrapperHidden = !!replyWrapper && replyWrapper.getBoundingClientRect().height === 0;
         rootVisible = rootRow.getBoundingClientRect().height > 0;
         nextMovedUp = nextReplyRow.getBoundingClientRect().top < nextBeforeTop - 1;
         const toast = document.getElementById('ob-toast');
@@ -621,6 +632,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         await new Promise((resolve) => setTimeout(resolve, 140));
         restored = !window.OB.Index.isBlocked('weibo:uid:123460002')
           && replyRow.getBoundingClientRect().height > 0;
+        wrapperRestored = !!replyWrapper && replyWrapper.getBoundingClientRect().height > 0;
       }
       return {
         fixtureOk: true,
@@ -633,9 +645,11 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         confirmText,
         blocked,
         replyHidden,
+        replyWrapperHidden,
         rootVisible,
         nextMovedUp,
         restored,
+        wrapperRestored,
       };
     });
     if (weiboModal.fixtureOk && weiboModal.replySelected
@@ -644,7 +658,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.replyLabel === '弹窗回复作者'
       && weiboModal.rootButtonPresent && weiboModal.replyButtonPresent
       && weiboModal.confirmText.includes('弹窗回复作者')
-      && weiboModal.blocked && weiboModal.replyHidden && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored) {
+      && weiboModal.blocked && weiboModal.replyHidden && weiboModal.replyWrapperHidden
+      && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();

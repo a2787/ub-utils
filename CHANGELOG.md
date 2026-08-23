@@ -3,6 +3,34 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 0.24.0 - 2026-08-24
+
+### 抖音评论入口与微博补位修复
+
+- **抖音评论单条入口**：适配当前评论“三个点”打开的 `role="tooltip"` portal，普通文本形式的
+  「举报评论」旁现在也会插入「🚫 本地拉黑」，并继续复用刚打开的评论身份。
+- **抖音评论批量入口**：评论详情侧栏的 `#relatedVideoCard.LookModalFrameFast` 虽然类名含
+  `Modal`，但它本身是评论承载层；脚本不再因此隐藏左下角「🚫 抖音评论屏蔽(N)」入口。
+- **微博评论补位**：只包住被屏蔽评论的虚拟包装器会被压为真正的零高度；即使前端以内联固定
+  高度/内边距复写包装器，撤销时也会恢复原样。
+
+### 验证边界
+
+- `real-site verified`：2026-08-24 当前用户浏览器中的抖音页实际捕获到 23 条评论、`role="tooltip"`
+  举报项和 `#relatedVideoCard.LookModalFrameFast` 评论承载层；微博隔离公开详情页实际观察到
+  楼中楼隐藏后根评论从 139px 上移到 87px，撤销恢复。
+- `structure regression`：`node test/adapters.cjs` 21/21、`node test/run.cjs` 12/12、
+  `node test/state.cjs` 7/7、`node test/quickblock.cjs` 32/32、`node test/douyin.cjs` 2/2；
+  `node --check omniblock.user.js` 与 `git diff --check` 通过。新增真实抖音 tooltip/详情侧栏夹具
+  和固定高度微博虚拟包装器夹具。
+- `blocked`：v0.24.0 尚未在用户当前登录浏览器安装后复核；默认抖音探针仍停在验证码中间页，
+  用户所说的微博具体空洞场景也尚未在同一真实页面执行脚本本地拉黑操作。
+
+### 限制
+
+微博方案只对脚本能够安全识别为“仅包含被隐藏评论”的包装器强制零高度；canvas、绝对定位或
+不接受高度变化的虚拟列表仍需要真实页面单独复核。
+
 ## 0.23.0 - 2026-08-24
 
 ### B站加载回归修复

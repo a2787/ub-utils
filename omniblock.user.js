@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.23.0
+// @version       0.24.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -698,7 +698,9 @@
     .ob-bar:hover { background: #ececf0; }
     [data-ob-blocked="1"].ob-expanded > * { max-height: none !important; overflow: visible !important; opacity: 1 !important; pointer-events: auto !important; }
     [data-ob-blocked="1"].ob-hidden { display: none !important; }
-    .ob-blocked-wrapper { min-height: 0 !important; height: auto !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important; }
+    /* 微博虚拟列表的行包装器有时保留固定高度/内边距；包装器只有在不含可见兄弟内容时
+       才会被脚本标记，因此这里可以安全地把它压成真正的零高度，确保下一条评论补位。 */
+    .ob-blocked-wrapper { box-sizing: border-box !important; min-height: 0 !important; height: 0 !important; max-height: 0 !important; flex-basis: 0 !important; padding: 0 !important; margin: 0 !important; border-width: 0 !important; overflow: hidden !important; }
 
     /* 抖音推荐流遮罩 */
     #ob-feed-cover {
@@ -1031,6 +1033,46 @@
 
   const blockedContainers = new Set();
   const inlineDisplayStates = new WeakMap();
+  const blockedWrapperInlineStates = new WeakMap();
+  const BLOCKED_WRAPPER_INLINE_PROPS = [
+    'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
+    'padding', 'margin', 'border-width', 'overflow',
+  ];
+
+  function collapseWrapperInlineStyle(wrapper) {
+    if (!wrapper || !wrapper.style) return;
+    if (!blockedWrapperInlineStates.has(wrapper)) {
+      const previous = {};
+      for (const prop of BLOCKED_WRAPPER_INLINE_PROPS) {
+        previous[prop] = {
+          value: wrapper.style.getPropertyValue(prop),
+          priority: wrapper.style.getPropertyPriority(prop),
+        };
+      }
+      blockedWrapperInlineStates.set(wrapper, previous);
+    }
+    wrapper.style.setProperty('box-sizing', 'border-box', 'important');
+    wrapper.style.setProperty('min-height', '0', 'important');
+    wrapper.style.setProperty('height', '0', 'important');
+    wrapper.style.setProperty('max-height', '0', 'important');
+    wrapper.style.setProperty('flex-basis', '0', 'important');
+    wrapper.style.setProperty('padding', '0', 'important');
+    wrapper.style.setProperty('margin', '0', 'important');
+    wrapper.style.setProperty('border-width', '0', 'important');
+    wrapper.style.setProperty('overflow', 'hidden', 'important');
+  }
+
+  function restoreWrapperInlineStyle(wrapper) {
+    if (!wrapper || !wrapper.style) return;
+    const previous = blockedWrapperInlineStates.get(wrapper);
+    if (!previous) return;
+    for (const prop of BLOCKED_WRAPPER_INLINE_PROPS) {
+      const state = previous[prop];
+      if (state && state.value) wrapper.style.setProperty(prop, state.value, state.priority);
+      else wrapper.style.removeProperty(prop);
+    }
+    blockedWrapperInlineStates.delete(wrapper);
+  }
 
   function needsInlineHide(container) {
     if (!container || !container.getRootNode) return false;
@@ -1115,6 +1157,7 @@
     let wrapper = container && container.parentElement;
     while (wrapper && wrapper.classList && wrapper.classList.contains('ob-blocked-wrapper')) {
       const parent = wrapper.parentElement;
+      restoreWrapperInlineStyle(wrapper);
       wrapper.classList.remove('ob-blocked-wrapper');
       if (!wrapper.getAttribute('class')) wrapper.removeAttribute('class');
       wrapper = parent;
@@ -1164,6 +1207,7 @@
       if (!style || style.display === 'none' || style.visibility === 'hidden') break;
       if (!(node.offsetHeight > 0 || node.scrollHeight > 0)) break;
       node.classList.add('ob-blocked-wrapper');
+      collapseWrapperInlineStyle(node);
       node = node.parentElement;
     }
   }
@@ -2493,7 +2537,7 @@
       const root = el.getRootNode && el.getRootNode();
       if (root && root.host && root.host.tagName === 'BILI-COMMENT-MENU') return true;
     }
-    if (el.closest && el.closest('.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog')) return true;
+    if (el.closest && el.closest('.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog,[role="tooltip"],.semi-tooltip-wrapper')) return true;
     return false;
   }
 
@@ -2584,7 +2628,7 @@
   const QB_CANDIDATE = 'a,button,[role="menuitem"],[role="button"],li,.operation-option';
   // B站弹幕举报操作条的具体标签节点会随登录态和前端版本变化；在已经打开的菜单/对话框
   // 内，只补扫没有交互子节点的短文本叶子，避免把整页正文当成举报项。
-  const QB_MENU_ROOT = '.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog,.operation-list';
+  const QB_MENU_ROOT = '.menu,[role="menu"],.dropdown,.popup,.context-menu,.bili-popover,.modal,[role="dialog"],.dialog,.Dialog,.operation-list,[role="tooltip"],.semi-tooltip-wrapper';
   // 播放器浮动弹幕没有稳定公开 UID，也不接收指针事件（真站 CSS 写死
   // `pointer-events: none`）。弹幕模块用坐标命中解析出唯一 mid_hash 后写入这里，
   // 登录用户能弹出原生弹幕操作条时，「举报」菜单也可复用同一身份。
@@ -2656,6 +2700,7 @@
       // 某些 B站登录态弹幕举报窗使用无 role/class 的 div 作为选项。只在已打开菜单根内
       // 检查叶子项，身份仍必须来自当前唯一浮动弹幕 hash，因而不会给普通举报窗乱挂入口。
       for (const root of querySelectorAllDeep(document, QB_MENU_ROOT)) {
+        const tooltipRoot = root.matches && root.matches('[role="tooltip"],.semi-tooltip-wrapper');
         const leaves = querySelectorAllDeep(root, '*').filter((el) => {
           if (!el || el === root || !el.parentElement) return false;
           const text = textOf(el);
@@ -2663,7 +2708,9 @@
           if ((el.children || []).length > 2) return false;
           const interactive = el.querySelector && el.querySelector('a,button,[role="menuitem"],[role="button"],li');
           if (interactive) return false;
-          return (el.parentElement.children || []).length >= 2;
+          // 抖音当前 tooltip 的 `.semi-tooltip-content` 只有一个举报叶子；不能用
+          // “至少两个兄弟”规则把这个真实入口过滤掉。
+          return tooltipRoot || (el.parentElement.children || []).length >= 2;
         });
         for (const el of leaves) tryInject(el);
       }
@@ -3019,8 +3066,16 @@
       el.id === 'ob-bulk-scope'
       || !!(el.closest && el.closest('#ob-douyin-comment-manager'))
     );
+    function blocksPageBulkFab(el) {
+      // 抖音当前视频详情侧栏使用 `#relatedVideoCard.LookModalFrameFast`，虽然类名含
+      // Modal，但它本身就是评论承载面；把它当成遮挡弹窗会误删页面批量入口。
+      if (a.id === 'douyin' && el && el.id === 'relatedVideoCard'
+        && el.querySelector('[data-e2e="comment-item"], .comment-item')) return false;
+      return true;
+    }
     function hasOpenModal() {
-      return querySelectorAllDeep(document, MODAL_SEL).some((el) => isVisible(el) && !isOwnBulkPanel(el));
+      return querySelectorAllDeep(document, MODAL_SEL).some((el) => isVisible(el)
+        && !isOwnBulkPanel(el) && blocksPageBulkFab(el));
     }
     function refreshFab() {
       if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
