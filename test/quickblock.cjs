@@ -37,6 +37,10 @@ window.GM_xmlhttpRequest = (o) => {
   const cards = {
     '222': { mid:'222', name:'Candidate Bob', level_info:{ current_level:6 } },
     '33': { mid:'33', name:'Candidate 33', level_info:{ current_level:6 } },
+    // 人工合成：真实 CRC32 碰撞对（crc32("86821") === crc32("14740600") === 14e54344）。
+    // 两个账号都存活，用于锁住多候选必须人工确认的边界。
+    '86821': { mid:'86821', name:'Collision A', level_info:{ current_level:5 } },
+    '14740600': { mid:'14740600', name:'Collision B', level_info:{ current_level:4 } },
   };
   setTimeout(() => {
     const card = cards[uid] || null;
@@ -151,6 +155,8 @@ const SEGMENT = Buffer.concat([
   dmElem('11223344', 'repeat danmaku', 12000),
   dmElem('55667788', 'repeat danmaku', 12100),
   dmElem('fd09ed1d', 'known comment user danmaku', 13000),
+  // 人工合成：hash 14e54344 在 1–10 位 UID 空间内有两个存活候选（86821 / 14740600）。
+  dmElem('14e54344', 'ambiguous uid danmaku', 14000),
 ]);
 // 人工合成第 2 段：验证右侧列表滚到 6 分钟以后会按行时间按需读取对应 seg.so。
 const SEGMENT_2 = Buffer.concat([dmElem('abcdef12', 'later danmaku', 365000)]);
@@ -314,7 +320,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (close) close.click();
       return { exists: true, visible, text: tool.textContent, rows };
     });
-    if (pakkuIntercept.intercepted === 1 && pakkuIntercept.blockedRemoved && pakkuIntercept.unblockedKept && pakkuFallback.exists && pakkuFallback.visible && pakkuFallback.rows === 5)
+    if (pakkuIntercept.intercepted === 1 && pakkuIntercept.blockedRemoved && pakkuIntercept.unblockedKept && pakkuFallback.exists && pakkuFallback.visible && pakkuFallback.rows === 6)
       report.pass.push('QB-P PAKKU 等价包装器截走首段 XHR 后，工具仍主动读取且伪造响应先应用本地屏蔽');
     else report.fail.push('QB-P PAKKU/首段时序兼容失败：' + JSON.stringify({ pakkuIntercept, pakkuFallback }));
 
@@ -322,6 +328,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const keys = [
         'bili:dmhash:678f8529', 'bili:dmhash:a9900557', 'bili:dmhash:0a6216d9',
         'bili:dmhash:11223344', 'bili:dmhash:55667788', 'bili:dmhash:fd09ed1d',
+        'bili:dmhash:14e54344',
       ];
       window.OB.Store.addIdentityGroups(keys.map((key) => ({ keys: [key], label: 'all blocked fixture' })));
       try {
@@ -722,7 +729,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         count: document.querySelectorAll('#ob-dm-manager .ob-dm-sender').length,
       };
     });
-    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.groupedMeta && dmManagerSingle.confirmsTwo && dmManagerSingle.blocked && dmManagerSingle.settingsReadable && dmManagerSingle.restored && dmManagerSingle.count === 5)
+    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.groupedMeta && dmManagerSingle.confirmsTwo && dmManagerSingle.blocked && dmManagerSingle.settingsReadable && dmManagerSingle.restored && dmManagerSingle.count === 6)
       report.pass.push('QB-M 相同弹幕按文案聚合，单击屏蔽组内全部发送者并在名单解释 hash 作用');
     else report.fail.push('QB-M 弹幕文案聚合单条屏蔽错误：' + JSON.stringify(dmManagerSingle));
 
@@ -819,11 +826,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         exists: true, candidate: !!candidate, choose: !!choose, text: row.textContent,
         calls: window.__cardCalls.slice(), beforeConfirm,
       };
-      choose.click(); await new Promise((resolve) => setTimeout(resolve, 80));
-      const confirm = document.getElementById('ob-confirm');
-      const confirmText = confirm && confirm.textContent || '';
-      if (!confirm) return { exists: true, candidate: true, choose: true, confirm: false, confirmText };
-      confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      // 唯一且已正向校验的候选必须直接落库：不得再弹二次确认框。
+      const uniqueFlag = choose.getAttribute('data-ob-dm-uid-unique');
+      const chooseText = choose.textContent;
+      const warningText = (row.querySelector('.ob-dm-uid-warning') || {}).textContent || '';
+      choose.click(); await new Promise((resolve) => setTimeout(resolve, 150));
+      const confirmBox = document.getElementById('ob-confirm');
       const person = Object.values(window.OB.Store.persons()).find((item) => item.identities.includes('bili:uid:222'));
       window.OB.openOptions();
       const settingsRow = Array.from(document.querySelectorAll('#ob-list .ob-item')).find((item) => item.textContent.includes('B站 UID：222'));
@@ -832,6 +840,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const blockedBoth = !!person && window.OB.Index.isBlocked('bili:uid:222') && window.OB.Index.isBlocked('bili:dmhash:fd09ed1d');
       const identities = person ? person.identities.slice() : [];
       const toast = document.getElementById('ob-toast');
+      const toastText = toast && toast.textContent || '';
       const undo = toast && toast.querySelector('button');
       if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       return {
@@ -840,8 +849,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         candidateText: candidate.textContent,
         candidateHref: link && link.href,
         beforeConfirm,
-        confirm: true,
-        confirmText,
+        uniqueFlag,
+        chooseText,
+        warningText,
+        confirmShown: !!confirmBox,
+        toastText,
         calls: window.__cardCalls.slice(),
         label: person && person.label,
         identities,
@@ -853,13 +865,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (dmUidCandidate.exists && dmUidCandidate.candidate && /可能发送者/.test(dmUidCandidate.candidateText)
       && /Candidate Bob/.test(dmUidCandidate.candidateText) && /UID\s*222/.test(dmUidCandidate.candidateText)
       && /space\.bilibili\.com\/222/.test(dmUidCandidate.candidateHref || '') && dmUidCandidate.beforeConfirm
-      && dmUidCandidate.confirm && /可能发送者/.test(dmUidCandidate.confirmText)
+      && dmUidCandidate.uniqueFlag === '1' && dmUidCandidate.chooseText === '拉黑本人'
+      && /可直接拉黑/.test(dmUidCandidate.warningText) && dmUidCandidate.confirmShown === false
+      && /Candidate Bob/.test(dmUidCandidate.toastText)
       && dmUidCandidate.calls.length === 1 && dmUidCandidate.calls[0] === '222'
       && dmUidCandidate.label === 'Candidate Bob'
       && dmUidCandidate.identities.includes('bili:uid:222') && dmUidCandidate.identities.includes('bili:dmhash:fd09ed1d')
       && /B站 UID：222/.test(dmUidCandidate.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmUidCandidate.settingsText)
       && dmUidCandidate.blockedBoth && dmUidCandidate.restored) {
-      report.pass.push('QB-U UID 反查只展示可能发送者，手动确认后才合并 hash/UID 并可整体撤销');
+      report.pass.push('QB-U 唯一且已校验的 UID 候选免二次确认，直接合并 hash/UID 并可整体撤销');
     } else report.fail.push('QB-U 弹幕 UID 候选确认错误：' + JSON.stringify(dmUidCandidate));
 
     const dmUidCollision = await page.evaluate(async () => {
@@ -891,6 +905,57 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && dmUidCollision.untouched) {
       report.pass.push('QB-V CRC32 碰撞候选逐个校验，剔除不存在账号且查询本身不写入 UID');
     } else report.fail.push('QB-V 弹幕 UID 碰撞校验错误：' + JSON.stringify(dmUidCollision));
+
+    // 多个存活候选（真实 CRC32 碰撞对 86821 / 14740600）时必须保留人工确认，
+    // 免确认捷径只允许作用在唯一且已正向校验的候选上。
+    const dmUidAmbiguous = await page.evaluate(async () => {
+      const panel = document.getElementById('ob-dm-manager');
+      const findRow = () => panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('ambiguous uid danmaku'));
+      let row = findRow();
+      const query = row && row.querySelector('.ob-dm-uid-query');
+      if (!row || !query) return { exists: false, row: !!row, query: !!query };
+      query.click();
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        row = findRow();
+        const button = row && row.querySelector('.ob-dm-uid-query');
+        if (row && button && !button.disabled && row.querySelectorAll('.ob-dm-uid-candidate').length >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const buttons = row ? Array.from(row.querySelectorAll('.ob-dm-uid-link')) : [];
+      const warningText = (row && row.querySelector('.ob-dm-uid-warning') || {}).textContent || '';
+      const candidateText = row ? Array.from(row.querySelectorAll('.ob-dm-uid-candidate')).map((item) => item.textContent).join(' | ') : '';
+      const first = buttons[0];
+      const uniqueFlags = buttons.map((button) => button.getAttribute('data-ob-dm-uid-unique'));
+      const labels = buttons.map((button) => button.textContent);
+      if (!first) return { exists: true, candidateCount: buttons.length, warningText, candidateText };
+      first.click();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const confirmBox = document.getElementById('ob-confirm');
+      const blockedBeforeConfirm = window.OB.Index.isBlocked('bili:uid:86821') || window.OB.Index.isBlocked('bili:dmhash:14e54344');
+      if (confirmBox) confirmBox.querySelector('.ob-no').click();
+      const close = row && row.querySelector('.ob-dm-uid-query');
+      if (close) close.click();
+      return {
+        exists: true,
+        candidateCount: buttons.length,
+        candidateText,
+        warningText,
+        uniqueFlags,
+        labels,
+        confirmShown: !!confirmBox,
+        blockedBeforeConfirm,
+        stillClean: !window.OB.Index.isBlocked('bili:uid:86821') && !window.OB.Index.isBlocked('bili:dmhash:14e54344'),
+      };
+    });
+    if (dmUidAmbiguous.exists && dmUidAmbiguous.candidateCount === 2
+      && /Collision A/.test(dmUidAmbiguous.candidateText) && /Collision B/.test(dmUidAmbiguous.candidateText)
+      && /请打开主页核对/.test(dmUidAmbiguous.warningText)
+      && dmUidAmbiguous.uniqueFlags.every((flag) => flag === '0')
+      && dmUidAmbiguous.labels.every((label) => label === '确认并拉黑')
+      && dmUidAmbiguous.confirmShown && !dmUidAmbiguous.blockedBeforeConfirm && dmUidAmbiguous.stillClean) {
+      report.pass.push('QB-W 同一 hash 存在多个存活 UID 候选时仍要求人工确认，取消后不写入任何身份');
+    } else report.fail.push('QB-W 多候选确认边界错误：' + JSON.stringify(dmUidAmbiguous));
 
     const originalViewport = page.viewportSize() || { width: 1280, height: 720 };
     const layoutState = async () => page.evaluate(() => {
@@ -1110,16 +1175,148 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await pakkuBeforePage.waitForFunction(() => {
       const tool = document.getElementById('ob-dm-tool');
-      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(6)');
+      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(7)');
     }, null, { timeout: 2500, polling: 100 }).catch(() => {});
     const pakkuBeforeTool = await pakkuBeforePage.evaluate(() => {
       const tool = document.getElementById('ob-dm-tool');
       return { visible: !!tool && getComputedStyle(tool).display !== 'none', text: tool && tool.textContent };
     });
     await pakkuBeforePage.close();
-    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(6)'))
-      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 6 位发送者');
+    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(7)'))
+      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 7 位发送者');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
+
+    // 人工合成：视频页批量入口现在先弹范围/时间面板；“仅当前已加载 + 不限时间”
+    // 必须保持原有直接批量语义（当前 DOM 的全部评论作者，含楼中楼），不触发评论 API。
+    const bulkScopeLoaded = await page.evaluate(async () => {
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      if (!fab) return { exists: false };
+      fab.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const panel = document.getElementById('ob-bulk-scope');
+      if (!panel) return { exists: true, panel: false };
+      // 面板自身是 role=dialog，必须能跨过 1.2s 的弹窗周期扫描而不被误关。
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      const stayedOpen = document.getElementById('ob-bulk-scope') === panel;
+      const loaded = panel.querySelector('input[value="loaded"]');
+      const all = panel.querySelector('input[value="all"]');
+      const since = panel.querySelector('.ob-bs-since');
+      const ok = panel.querySelector('.ob-bs-ok');
+      const before = {
+        stayedOpen,
+        loaded: !!loaded && loaded.checked,
+        allEnabled: !!all && !all.disabled,
+        presets: since ? Array.from(since.options).map((o) => o.value) : [],
+        okText: ok && ok.textContent,
+      };
+      if (!stayedOpen) return before;
+      ok.click();
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !document.getElementById('ob-confirm')) await new Promise((resolve) => setTimeout(resolve, 25));
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      if (!confirm) return { ...before, confirm: false };
+      const parsedUids = Array.from(confirmText.matchAll(/bili:uid:(\d+)/g), (m) => m[1]);
+      const count = Number((confirmText.match(/拉黑 (\d+) 位评论作者/) || [])[1] || 0);
+      confirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const toast = document.getElementById('ob-toast');
+      const toastText = toast && toast.textContent || '';
+      const blocked = parsedUids.length > 0 && parsedUids.every((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      const restored = parsedUids.length > 0 && !parsedUids.some((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+      return { ...before, exists: true, panel: true, confirm: true, confirmText, toastText, parsedUids, count, blocked, restored };
+    });
+    if (bulkScopeLoaded.exists && bulkScopeLoaded.panel && bulkScopeLoaded.stayedOpen && bulkScopeLoaded.loaded && bulkScopeLoaded.allEnabled
+      && bulkScopeLoaded.presets.includes('3600') && bulkScopeLoaded.presets.includes('custom')
+      && bulkScopeLoaded.okText === '继续' && bulkScopeLoaded.confirm
+      && /拉黑 \d+ 位评论作者/.test(bulkScopeLoaded.confirmText) && bulkScopeLoaded.count > 0
+      && bulkScopeLoaded.parsedUids.length === bulkScopeLoaded.count
+      && new RegExp('已拉黑：拉黑 ' + bulkScopeLoaded.count + ' 位评论作者').test(bulkScopeLoaded.toastText)
+      && bulkScopeLoaded.blocked && bulkScopeLoaded.restored)
+      report.pass.push('QB-AA 批量范围面板跨过周期扫描不被误关，仅当前已加载且不限时间时按原路径拉黑并撤销');
+    else report.fail.push('QB-AA 批量范围面板（已加载模式）错误：' + JSON.stringify(bulkScopeLoaded));
+
+    // 人工合成：模拟 x/v2/reply/main 两页 + 两个根评论的子回复页；第三位子回复缺
+    // ctime。全量抓取必须翻完根与子页，时间筛选保留 5 位、跳过缺时间的 1 位。
+    const bulkScopeAll = await page.evaluate(async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const callLog = [];
+      window.__INITIAL_STATE__ = { aid: '12345', videoData: { aid: '12345' } };
+      const makeReply = (rpid, mid, name, ctime, rcount) => ({ rpid_str: String(rpid), mid_str: String(mid), member: { uname: name }, ctime, rcount });
+      window.fetch = async (input) => {
+        const url = String(input);
+        callLog.push(url);
+        const isMain = url.includes('/x/v2/reply/main');
+        const isSub = url.includes('/x/v2/reply/reply');
+        if (isMain) {
+          const next = Number(new URL(url).searchParams.get('next') || 0);
+          if (next === 0) {
+            return { ok: true, status: 200, json: async () => ({ code: 0, data: {
+              replies: [makeReply('r1', 5001, 'Main One', now - 2000, 3), makeReply('r2', 5002, 'Main Two', now - 1000, 0)],
+              cursor: { all_count: 3, is_end: false, next: 1 },
+            } }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ code: 0, data: {
+            replies: [makeReply('r3', 5003, 'Main Three', now - 500, 2)],
+            cursor: { all_count: 3, is_end: true, next: 2 },
+          } }) };
+        }
+        if (isSub) {
+          const root = String(new URL(url).searchParams.get('root') || '');
+          if (root === 'r1') {
+            return { ok: true, status: 200, json: async () => ({ code: 0, data: {
+              replies: [makeReply('s1', 6001, 'Sub One', now - 300, 0), makeReply('s2', 6002, 'Sub Two', now - 100, 0)],
+              page: { count: 2 },
+            } }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ code: 0, data: {
+            replies: [makeReply('s3', 6003, 'Sub Three', 0, 0)],
+            page: { count: 1 },
+          } }) };
+        }
+        return { ok: false, status: 404, json: async () => ({ code: -1 }) };
+      };
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      if (!fab) return { exists: false };
+      fab.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const panel = document.getElementById('ob-bulk-scope');
+      if (!panel) return { exists: true, panel: false };
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      const stayedOpen = document.getElementById('ob-bulk-scope') === panel;
+      panel.querySelector('input[value="all"]').click();
+      const since = panel.querySelector('.ob-bs-since');
+      since.value = '3600';
+      since.dispatchEvent(new Event('change'));
+      if (stayedOpen) panel.querySelector('.ob-bs-ok').click();
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !document.getElementById('ob-confirm')) await new Promise((resolve) => setTimeout(resolve, 25));
+      const confirm = document.getElementById('ob-confirm');
+      const confirmText = confirm && confirm.textContent || '';
+      const mainCalls = callLog.filter((url) => url.includes('/x/v2/reply/main')).length;
+      const subCalls = callLog.filter((url) => url.includes('/x/v2/reply/reply')).length;
+      if (!confirm) return { exists: true, panel: true, stayedOpen, confirm: false, mainCalls, subCalls, confirmText };
+      confirm.querySelector('.ob-ok').click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const toast = document.getElementById('ob-toast');
+      const toastText = toast && toast.textContent || '';
+      const blocked = ['5001', '5002', '5003', '6001', '6002'].every((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+      const skippedUnknown = !window.OB.Index.isBlocked('bili:uid:6003');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+      const restored = !['5001', '5002', '5003', '6001', '6002'].some((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+      return { exists: true, panel: true, stayedOpen, confirm: true, confirmText, toastText, mainCalls, subCalls, blocked, skippedUnknown, restored };
+    });
+    if (bulkScopeAll.exists && bulkScopeAll.panel && bulkScopeAll.stayedOpen && bulkScopeAll.confirm
+      && bulkScopeAll.mainCalls === 2 && bulkScopeAll.subCalls === 2
+      && /拉黑 5 位评论作者/.test(bulkScopeAll.confirmText)
+      && /缺少时间的 1 位已跳过/.test(bulkScopeAll.confirmText)
+      && /已拉黑：拉黑 5 位评论作者/.test(bulkScopeAll.toastText)
+      && bulkScopeAll.blocked && bulkScopeAll.skippedUnknown && bulkScopeAll.restored)
+      report.pass.push('QB-AB 批量面板跨过周期扫描并加载全部评论与子回复，按时间筛选跳过缺时间的未知记录');
+    else report.fail.push('QB-AB 批量范围面板（全量/时间筛选）错误：' + JSON.stringify(bulkScopeAll));
   } catch (error) {
     report.fail.push('FATAL: ' + (error && error.message || error));
   }

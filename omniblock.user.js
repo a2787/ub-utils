@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.18.0
+// @version       0.19.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -768,6 +768,29 @@
       z-index: 2147483646 !important;
     }
     .ob-bulk:hover { background: #a93226 !important; }
+    /* 批量拉黑的范围/时间筛选面板 */
+    #ob-bulk-scope {
+      position: fixed; z-index: 2147483647; width: 288px; box-sizing: border-box;
+      background: #fff; color: #222; border: 1px solid #ddd; border-radius: 8px;
+      box-shadow: 0 8px 26px rgba(0,0,0,.18); padding: 12px; font-size: 13px; line-height: 1.5;
+    }
+    #ob-bulk-scope .ob-bs-title { font-weight: 600; margin-bottom: 8px; }
+    #ob-bulk-scope fieldset { border: 0; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+    #ob-bulk-scope legend { padding: 0; margin-bottom: 2px; color: #666; font-size: 12px; }
+    #ob-bulk-scope label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    #ob-bulk-scope select, #ob-bulk-scope input[type="datetime-local"] {
+      width: 100%; box-sizing: border-box; font: inherit; font-size: 12px;
+      padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; background: #fff; color: #222;
+    }
+    #ob-bulk-scope .ob-bs-status { color: #666; font-size: 12px; margin: 6px 0 8px; min-height: 18px; word-break: break-all; }
+    #ob-bulk-scope .ob-bs-row { display: flex; gap: 8px; }
+    #ob-bulk-scope .ob-bs-row button { flex: 1; border: 0; border-radius: 6px; padding: 7px 0; cursor: pointer; font-size: 13px; }
+    #ob-bulk-scope .ob-bs-ok { background: #c0392b; color: #fff; }
+    #ob-bulk-scope .ob-bs-ok:disabled { background: #e0b3ad; cursor: default; }
+    #ob-bulk-scope .ob-bs-no { background: #eee; color: #444; }
+    @media (max-width: 640px) {
+      #ob-bulk-scope { width: calc(100vw - 24px); left: 12px !important; right: 12px; }
+    }
     /* 微博当前详情页评论操作区内的常驻入口。 */
     .ob-weibo-comment-block {
       flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 22px !important;
@@ -1903,6 +1926,126 @@
       return querySelectorAllDeep(scope, 'a[href*="space.bilibili.com/"]').map(userFromSpaceLink).filter(Boolean);
     }
 
+    // ---- 视频评论区整区抓取（只读公开接口，用于批量拉黑的"加载全部"与时间筛选）----
+    // 真实站点确认（2026-08-23）：wbi 签名版 main 接口匿名返回 -403，未签名的
+    // x/v2/reply/main 匿名返回 code 0，带 cursor 分页、mid 与 ctime；子回复用
+    // x/v2/reply/reply 按 root 翻页。因此这里只用后两个端点，不做任何写操作。
+    const REPLY_MAIN_API = 'https://api.bilibili.com/x/v2/reply/main';
+    const REPLY_SUB_API = 'https://api.bilibili.com/x/v2/reply/reply';
+    const REPLY_PAGE_SIZE = 20;
+    const REPLY_MAIN_PAGE_CAP = 60;   // 最多 60 页根评论（约 1200 条），避免长视频无限翻页
+    const REPLY_SUB_ROOT_CAP = 400;   // 最多展开 400 个有子回复的根评论
+    const REPLY_SUB_PAGE_CAP = 15;    // 单个根评论最多翻 15 页子回复
+
+    function isVideoCommentPage() {
+      return /^\/video\/(BV[0-9A-Za-z]+|av\d+)/i.test(location.pathname);
+    }
+
+    function videoAidFromPage() {
+      const state = window.__INITIAL_STATE__;
+      const candidates = [
+        state && state.aid,
+        state && state.videoData && state.videoData.aid,
+        state && state.videoInfo && state.videoInfo.aid,
+      ];
+      for (const value of candidates) {
+        const aid = normId(value);
+        if (/^\d+$/.test(aid) && aid !== '0') return aid;
+      }
+      const match = location.pathname.match(/^\/video\/av(\d+)/i);
+      return match ? match[1] : '';
+    }
+
+    async function fetchReplyJSON(url) {
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response || !response.ok) throw new Error('comment API HTTP ' + (response && response.status));
+      const payload = await response.json();
+      if (!payload || payload.code !== 0 || !payload.data) {
+        throw new Error('comment API code ' + (payload && payload.code));
+      }
+      return payload.data;
+    }
+
+    function replyRecord(reply) {
+      const mid = normId(reply && (reply.mid_str || reply.mid));
+      if (!/^\d+$/.test(mid) || mid === '0') return null;
+      const member = (reply && reply.member) || {};
+      const ctime = Number(reply && reply.ctime);
+      return {
+        keys: [makeIdentityKey('bili:uid', mid)],
+        label: normId(member.uname) || ('UID ' + mid),
+        ctime: Number.isFinite(ctime) && ctime > 0 ? ctime : 0,
+      };
+    }
+
+    // 抓取当前视频的全部根评论与已公开的子回复作者。onProgress 用于 UI 反馈；
+    // 任何一页失败都记为 partial，调用方必须据此提示"未取全"，不得当成完整名单。
+    async function fetchAllCommentAuthors(onProgress) {
+      if (!isVideoCommentPage()) throw new Error('not a video page');
+      if (typeof fetch !== 'function') throw new Error('fetch unavailable');
+      const aid = videoAidFromPage();
+      if (!aid) throw new Error('video id unavailable');
+      const records = [];
+      const subRoots = [];
+      let partial = false;
+      let next = 0;
+      let mainPages = 0;
+      let total = 0;
+      const report = () => { if (typeof onProgress === 'function') onProgress({ collected: records.length, total, partial }); };
+
+      while (mainPages < REPLY_MAIN_PAGE_CAP) {
+        let data;
+        try {
+          data = await fetchReplyJSON(REPLY_MAIN_API + '?oid=' + encodeURIComponent(aid)
+            + '&type=1&mode=3&ps=' + REPLY_PAGE_SIZE + '&next=' + encodeURIComponent(next));
+        } catch (e) { partial = true; break; }
+        mainPages++;
+        const replies = Array.isArray(data.replies) ? data.replies : [];
+        const cursor = data.cursor || {};
+        if (!total) total = Number(cursor.all_count) || 0;
+        for (const reply of replies) {
+          const record = replyRecord(reply);
+          if (record) records.push(record);
+          const rootId = normId(reply && (reply.rpid_str || reply.rpid));
+          const loaded = Array.isArray(reply && reply.replies) ? reply.replies : [];
+          for (const sub of loaded) {
+            const subRecord = replyRecord(sub);
+            if (subRecord) records.push(subRecord);
+          }
+          // 楼中楼只在接口里预置少量几条；rcount 更大说明还有未展开的子回复。
+          const rcount = Number(reply && reply.rcount) || 0;
+          if (rootId && rcount > loaded.length && subRoots.length < REPLY_SUB_ROOT_CAP) subRoots.push(rootId);
+        }
+        report();
+        if (cursor.is_end || !replies.length) break;
+        const nextCursor = Number(cursor.next);
+        if (!Number.isFinite(nextCursor) || nextCursor <= next) break;
+        next = nextCursor;
+      }
+      if (mainPages >= REPLY_MAIN_PAGE_CAP) partial = true;
+
+      for (const rootId of subRoots) {
+        for (let page = 1; page <= REPLY_SUB_PAGE_CAP; page++) {
+          let data;
+          try {
+            data = await fetchReplyJSON(REPLY_SUB_API + '?oid=' + encodeURIComponent(aid)
+              + '&type=1&root=' + encodeURIComponent(rootId) + '&ps=' + REPLY_PAGE_SIZE + '&pn=' + page);
+          } catch (e) { partial = true; break; }
+          const replies = Array.isArray(data.replies) ? data.replies : [];
+          for (const sub of replies) {
+            const record = replyRecord(sub);
+            if (record) records.push(record);
+          }
+          report();
+          const count = Number(data.page && data.page.count) || 0;
+          if (replies.length < REPLY_PAGE_SIZE || page * REPLY_PAGE_SIZE >= count) break;
+          if (page === REPLY_SUB_PAGE_CAP) partial = true;
+        }
+      }
+      report();
+      return { records, partial, total };
+    }
+
     return {
       id: 'bilibili',
       match: (h) => /(^|\.)bilibili\.com$/.test(h.hostname),
@@ -1917,6 +2060,8 @@
         return collectModalUsers(modal).length >= 2;
       },
       bulkFabLabel: (n) => '🚫 拉黑已加载评论作者(' + n + ')',
+      // 批量精细化只在视频评论区可用；动态页/空间页没有这套接口契约。
+      bulkScope: { available: isVideoCommentPage, fetchAll: fetchAllCommentAuthors, unit: '评论作者' },
       containerOf: commentContainer,
     };
   })();
@@ -2184,15 +2329,171 @@
   }
 
   let refreshBulkBlock = () => {};
+
+  // ---- 批量拉黑的范围与时间筛选（目前仅 B站视频评论区提供整区抓取能力）----
+  const BULK_SINCE_PRESETS = [
+    { value: '', label: '不限时间' },
+    { value: '3600', label: '最近 1 小时' },
+    { value: '21600', label: '最近 6 小时' },
+    { value: '86400', label: '最近 24 小时' },
+    { value: '259200', label: '最近 3 天' },
+    { value: '604800', label: '最近 7 天' },
+    { value: 'custom', label: '自定义时间点…' },
+  ];
+
+  let closeBulkScopeKeyHandler = null;
+  function closeBulkScopePanel() {
+    if (closeBulkScopeKeyHandler) {
+      document.removeEventListener('keydown', closeBulkScopeKeyHandler);
+      closeBulkScopeKeyHandler = null;
+    }
+    const existing = $('#ob-bulk-scope');
+    if (existing) existing.remove();
+  }
+
+  // 时间筛选只能作用在带可靠 ctime 的记录上；缺少时间的记录必须被排除，
+  // 否则"晚于某时间点"会把无法判定的人一起拉黑。
+  function filterRecordsSince(records, sinceSeconds) {
+    if (!sinceSeconds) return { kept: records, dropped: 0, unknown: 0 };
+    let dropped = 0;
+    let unknown = 0;
+    const kept = [];
+    for (const record of records) {
+      const ctime = Number(record && record.ctime) || 0;
+      if (!ctime) { unknown++; continue; }
+      if (ctime >= sinceSeconds) kept.push(record);
+      else dropped++;
+    }
+    return { kept, dropped, unknown };
+  }
+
+  function openBulkScopePanel(adapter, anchorEl) {
+    const scope = adapter && adapter.bulkScope;
+    closeBulkScopePanel();
+    const panel = document.createElement('div');
+    panel.id = 'ob-bulk-scope';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '批量拉黑范围');
+    const unit = (scope && scope.unit) || '用户';
+    panel.innerHTML = `
+      <div class="ob-bs-title">批量拉黑${unit}</div>
+      <fieldset class="ob-bs-range">
+        <legend>范围</legend>
+        <label><input type="radio" name="ob-bs-range" value="loaded" checked>仅当前已加载</label>
+        <label><input type="radio" name="ob-bs-range" value="all">加载全部评论与子回复</label>
+      </fieldset>
+      <fieldset>
+        <legend>只拉黑晚于此时间的发言</legend>
+        <select class="ob-bs-since"></select>
+        <input class="ob-bs-custom" type="datetime-local" style="display:none" aria-label="自定义起始时间">
+      </fieldset>
+      <div class="ob-bs-status"></div>
+      <div class="ob-bs-row"><button type="button" class="ob-bs-no">取消</button><button type="button" class="ob-bs-ok">继续</button></div>`;
+
+    const select = panel.querySelector('.ob-bs-since');
+    for (const preset of BULK_SINCE_PRESETS) {
+      const option = document.createElement('option');
+      option.value = preset.value; option.textContent = preset.label;
+      select.appendChild(option);
+    }
+    const custom = panel.querySelector('.ob-bs-custom');
+    const status = panel.querySelector('.ob-bs-status');
+    const ok = panel.querySelector('.ob-bs-ok');
+    select.onchange = () => {
+      custom.style.display = select.value === 'custom' ? '' : 'none';
+    };
+    panel.querySelector('.ob-bs-no').onclick = closeBulkScopePanel;
+    const keyHandler = (event) => {
+      if (event.key !== 'Escape') return;
+      closeBulkScopePanel();
+    };
+    closeBulkScopeKeyHandler = keyHandler;
+    document.addEventListener('keydown', keyHandler);
+
+    const rangeAll = panel.querySelector('input[value="all"]');
+    if (!scope || typeof scope.fetchAll !== 'function' || (typeof scope.available === 'function' && !scope.available())) {
+      rangeAll.disabled = true;
+      rangeAll.closest('label').title = '当前页面不支持整区加载';
+    }
+
+    let rect = { left: clamp(window.innerWidth / 2 - 144, 8, Math.max(8, window.innerWidth - 296)), top: Math.max(8, window.innerHeight / 2 - 140) };
+    if (anchorEl && anchorEl.getBoundingClientRect) {
+      const r = anchorEl.getBoundingClientRect();
+      rect = {
+        left: clamp(r.left, 8, Math.max(8, window.innerWidth - 296)),
+        top: clamp(r.top - 300, 8, Math.max(8, window.innerHeight - 300)),
+      };
+    }
+    panel.style.left = rect.left + 'px';
+    panel.style.top = rect.top + 'px';
+    document.body.appendChild(panel);
+
+    function resolveSince() {
+      if (select.value === 'custom') {
+        if (!custom.value) return { error: '请填写自定义起始时间' };
+        const parsed = Date.parse(custom.value);
+        if (!Number.isFinite(parsed)) return { error: '自定义时间格式无效' };
+        return { since: Math.floor(parsed / 1000) };
+      }
+      const seconds = Number(select.value);
+      if (!select.value || !Number.isFinite(seconds) || seconds <= 0) return { since: 0 };
+      return { since: Math.floor(Date.now() / 1000) - seconds };
+    }
+
+    ok.onclick = async () => {
+      const sinceResult = resolveSince();
+      if (sinceResult.error) { status.textContent = sinceResult.error; return; }
+      const wantAll = panel.querySelector('input[name="ob-bs-range"]:checked').value === 'all';
+      ok.disabled = true;
+      let records = [];
+      let partial = false;
+      try {
+        if (wantAll) {
+          status.textContent = '正在加载全部评论...';
+          const result = await scope.fetchAll((progress) => {
+            if (!panel.isConnected) return;
+            status.textContent = '已读取 ' + progress.collected + ' 位' + unit
+              + (progress.total ? '（评论区共约 ' + progress.total + ' 条）' : '');
+          });
+          records = result.records || [];
+          partial = !!result.partial;
+        } else {
+          records = collectUsers(document);
+        }
+      } catch (e) {
+        status.textContent = '加载失败：' + String(e && e.message || e).slice(0, 80);
+        ok.disabled = false;
+        return;
+      }
+      if (!panel.isConnected) return;
+      const filtered = filterRecordsSince(records, sinceResult.since);
+      const list = uniqueUsers(filtered.kept);
+      if (!list.length) {
+        status.textContent = sinceResult.since ? '该时间之后没有可拉黑的' + unit : '没有可拉黑的' + unit;
+        ok.disabled = false;
+        return;
+      }
+      const notes = [];
+      if (sinceResult.since) notes.push('已按时间排除 ' + filtered.dropped + ' 位');
+      if (filtered.unknown) notes.push('缺少时间的 ' + filtered.unknown + ' 位已跳过');
+      if (partial) notes.push('部分分页未取全');
+      closeBulkScopePanel();
+      blockMany(list, anchorEl, '拉黑 ' + list.length + ' 位' + unit + (notes.length ? '（' + notes.join('，') + '）' : ''));
+    };
+  }
+
   function setupBulkBlock() {
     const a = currentAdapter; if (!a) return;
     let fab = null;
     const MODAL_SEL = '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal';
     const setFabVisible = (visible) => {
       if (fab) fab.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
+      // 入口消失（关闭功能、切换页面、原生弹窗打开）时不留悬挂面板。
+      if (!visible) closeBulkScopePanel();
     };
+    const isOwnBulkPanel = (el) => !!el && el.id === 'ob-bulk-scope';
     function hasOpenModal() {
-      return querySelectorAllDeep(document, MODAL_SEL).some(isVisible);
+      return querySelectorAllDeep(document, MODAL_SEL).some((el) => isVisible(el) && !isOwnBulkPanel(el));
     }
     function refreshFab() {
       if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
@@ -2204,7 +2505,13 @@
         fab.type = 'button'; fab.setAttribute('data-ob-kind', 'page');
         fab.className = 'ob-bulk';
         fab.style.position = 'fixed'; fab.style.left = '14px'; fab.style.bottom = '14px';
-        fab.onclick = () => { const list = collectUsers(document); if (!list.length) { showToast('本页没有可拉黑的用户'); return; } blockMany(list, fab); };
+        fab.onclick = () => {
+          // 支持整区抓取的平台先问范围与时间；其余平台保持原有的直接批量行为。
+          if (a.bulkScope && typeof a.bulkScope.fetchAll === 'function') { openBulkScopePanel(a, fab); return; }
+          const list = collectUsers(document);
+          if (!list.length) { showToast('本页没有可拉黑的用户'); return; }
+          blockMany(list, fab);
+        };
         const mountFab = () => { if (document.body) document.body.appendChild(fab); else setTimeout(mountFab, 300); };
         mountFab();
       }
@@ -2244,7 +2551,10 @@
     }
     function scanModals() {
       if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { clearModalControls(); return; }
-      for (const md of querySelectorAllDeep(document, MODAL_SEL)) tryModal(md);
+      for (const md of querySelectorAllDeep(document, MODAL_SEL)) {
+        if (isOwnBulkPanel(md)) continue;
+        tryModal(md);
+      }
     }
     function refreshAll() { refreshFab(); scanModals(); }
     // 周期扫描（弹窗可能在 Shadow DOM 内，定时器 + 影子穿透更稳）
@@ -3003,6 +3313,30 @@
       for (const hash of group.hashes) await lookupDmUidCandidates(hash);
     }
 
+    function dmUidLinkNote(content) {
+      return '弹幕 hash 唯一命中并经用户卡片正向校验；评论按 UID、弹幕按 hash 屏蔽。代表弹幕：' + content;
+    }
+
+    // 唯一候选：CRC32 反查只得到一个 UID，且该 UID 已由 api.bilibili.com 用户卡片
+    // 正向校验回同一 hash，此时无需再让用户确认，直接入库并提供撤销。
+    function blockUniqueDmUidCandidate(hash, candidate, content) {
+      const keys = [makeIdentityKey('bili:dmhash', hash), makeIdentityKey('bili:uid', candidate.uid)];
+      let result;
+      try {
+        result = Store.confirmIdentityLink(keys, candidate.name, dmUidLinkNote(content));
+      } catch (e) {
+        showToast('拉黑失败：' + (e && e.message || e));
+        return;
+      }
+      if (result.rejected) { showToast('无法识别可靠身份'); return; }
+      expandedDmUidGroups.delete(content);
+      refreshDmTool();
+      scanDmPanels();
+      showToast('已拉黑：' + candidate.name + '（UID ' + candidate.uid + '）', result.undo || null);
+      if (currentScanner) currentScanner.schedule();
+    }
+
+    // 多候选：CRC32 碰撞下无法判定本人，必须保留人工核对，不得静默拉黑。
     function confirmDmUidCandidate(hash, candidate, content, anchorEl) {
       const keys = [makeIdentityKey('bili:dmhash', hash), makeIdentityKey('bili:uid', candidate.uid)];
       const note = '从 CRC32 候选中手动选择；评论按 UID、弹幕按 hash 屏蔽。代表弹幕：' + content;
@@ -3027,7 +3361,14 @@
       results.className = 'ob-dm-uid-results';
       const warning = document.createElement('div');
       warning.className = 'ob-dm-uid-warning';
-      warning.textContent = '仅查询 1–10 位 UID；CRC32 可能碰撞，请打开主页核对后确认。';
+      // 文案随实际风险变化：只有出现多候选（CRC32 碰撞）时才要求人工核对。
+      const ambiguous = group.hashes.some((hash) => {
+        const state = dmUidLookups.get(hash);
+        return !!state && state.status === 'ready' && (state.candidates.length > 1 || (state.candidates.length && state.partial));
+      });
+      warning.textContent = ambiguous
+        ? '仅查询 1–10 位 UID；该文案存在多个 CRC32 候选，请打开主页核对后再确认。'
+        : '仅查询 1–10 位 UID；唯一候选已通过用户卡片正向校验，可直接拉黑。';
       results.appendChild(warning);
       for (const hash of group.hashes) {
         const section = document.createElement('div');
@@ -3051,6 +3392,7 @@
           status.textContent = '未找到仍存在的 1–10 位 UID 候选';
           section.appendChild(status);
         } else {
+          const unique = state.candidates.length === 1 && !state.partial;
           for (const candidate of state.candidates) {
             const row = document.createElement('div');
             row.className = 'ob-dm-uid-candidate';
@@ -3063,10 +3405,13 @@
             summary.appendChild(profile);
             summary.appendChild(document.createTextNode(' · UID ' + candidate.uid));
             const choose = document.createElement('button');
-            choose.type = 'button'; choose.className = 'ob-dm-uid-link'; choose.textContent = '确认并拉黑';
+            choose.type = 'button'; choose.className = 'ob-dm-uid-link';
+            choose.textContent = unique ? '拉黑本人' : '确认并拉黑';
+            choose.setAttribute('data-ob-dm-uid-unique', unique ? '1' : '0');
             choose.addEventListener('click', (event) => {
               event.stopPropagation(); event.preventDefault();
-              confirmDmUidCandidate(hash, candidate, group.content, choose);
+              if (unique) blockUniqueDmUidCandidate(hash, candidate, group.content);
+              else confirmDmUidCandidate(hash, candidate, group.content, choose);
             });
             row.append(summary, choose);
             section.appendChild(row);

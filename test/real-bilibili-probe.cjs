@@ -19,6 +19,7 @@ const VERIFY_DANMAKU_UID = process.argv.includes('--verify-danmaku-uid');
 const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VERIFY_DANMAKU_UID;
 const VERIFY_FLOATING_DANMAKU = process.argv.includes('--verify-floating-danmaku');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
+const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const shim = `
@@ -285,6 +286,99 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       await sleep(900);
     }
     result.bulkBeforeInteraction = bulkBeforeInteraction;
+
+    if (VERIFY_BULK_SCOPE) {
+      // 真实页面上验证批量范围面板：可打开、跨过 1.2s 周期扫描不被误关、
+      // “仅当前已加载”完整事务可撤销；随后只读探测评论 API 契约。
+      result.bulkScope = await page.evaluate(async () => {
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+        if (!fab) return { found: false };
+        fab.click(); await pause(120);
+        const panel = document.getElementById('ob-bulk-scope');
+        if (!panel) return { found: true, panel: false };
+        await pause(1400);
+        const stayedOpen = document.getElementById('ob-bulk-scope') === panel;
+        const loaded = panel.querySelector('input[value="loaded"]');
+        const all = panel.querySelector('input[value="all"]');
+        const since = panel.querySelector('.ob-bs-since');
+        const state = {
+          found: true,
+          panel: true,
+          stayedOpen,
+          loaded: !!loaded && loaded.checked,
+          allEnabled: !!all && !all.disabled,
+          presets: since ? Array.from(since.options).map((o) => o.value) : [],
+        };
+        if (!stayedOpen) return state;
+        const cancel = panel.querySelector('.ob-bs-no');
+        if (cancel) cancel.click();
+        await pause(150);
+        fab.click(); await pause(120);
+        const panel2 = document.getElementById('ob-bulk-scope');
+        if (!panel2) return { ...state, secondOpen: false };
+        panel2.querySelector('.ob-bs-ok').click();
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && !document.getElementById('ob-confirm')) await pause(25);
+        const confirm = document.getElementById('ob-confirm');
+        if (!confirm) return { ...state, secondOpen: true, confirm: false };
+        const confirmText = confirm.textContent || '';
+        const uids = Array.from(confirmText.matchAll(/bili:uid:(\d+)/g), (m) => m[1]);
+        confirm.querySelector('.ob-ok').click(); await pause(250);
+        const blocked = uids.length > 0 && uids.every((uid) => window.OB.Index.isBlocked('bili:uid:' + uid));
+        const toast = document.getElementById('ob-toast');
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await pause(250); }
+        const restored = uids.length > 0 && !uids.some((uid) => window.OB.Index.isBlocked('bili:uid:' + uid));
+        return { ...state, secondOpen: true, confirm: true, confirmText, uidCount: uids.length, blocked, restored };
+      });
+      const bs = result.bulkScope || {};
+      if (!bs.found || !bs.panel || !bs.stayedOpen || !bs.loaded || !bs.allEnabled
+        || !bs.presets.includes('3600') || !bs.secondOpen || !bs.confirm
+        || !bs.uidCount || !bs.blocked || !bs.restored) {
+        result.errors.push('验证失败：真实页面的批量范围面板未提供可用的已加载批量事务，或周期扫描误关了面板');
+      }
+
+      result.commentApiContract = await page.evaluate(async () => {
+        const state = window.__INITIAL_STATE__ || {};
+        const aid = String(state.aid || (state.videoData && state.videoData.aid) || '');
+        if (!/^\d+$/.test(aid)) return { blocked: 'page has no numeric aid' };
+        const get = async (url) => {
+          const res = await fetch(url, { credentials: 'include' });
+          return res.json();
+        };
+        const main = await get('https://api.bilibili.com/x/v2/reply/main?oid=' + aid + '&type=1&mode=3&ps=20&next=0');
+        const replies = (main && main.data && main.data.replies) || [];
+        const first = replies[0] || null;
+        const root = replies.find((r) => Number(r && r.rcount) > 0) || null;
+        let sub = null;
+        if (root) {
+          const payload = await get('https://api.bilibili.com/x/v2/reply/reply?oid=' + aid + '&type=1&root=' + String(root.rpid_str || root.rpid) + '&ps=20&pn=1');
+          const subs = (payload && payload.data && payload.data.replies) || [];
+          sub = {
+            code: payload && payload.code,
+            count: subs.length,
+            hasCtime: !!subs[0] && !!subs[0].ctime,
+            hasMid: !!subs[0] && !!String(subs[0].mid_str || subs[0].mid),
+          };
+        }
+        return {
+          code: main && main.code,
+          replies: replies.length,
+          hasCtime: !!first && !!first.ctime,
+          hasMid: !!first && !!String(first.mid_str || first.mid),
+          cursorIsEnd: !!(main && main.data && main.data.cursor && main.data.cursor.is_end),
+          sub,
+        };
+      });
+      const api = result.commentApiContract || {};
+      const apiRootOk = api.code === 0 && api.replies > 0 && api.hasCtime && api.hasMid;
+      const apiSubOk = !api.sub || api.sub.skipped
+        || (api.sub.code === 0 && api.sub.count > 0 && api.sub.hasCtime && api.sub.hasMid);
+      if (!apiRootOk || !apiSubOk) {
+        result.errors.push('验证失败：真实评论 API 契约未返回可分页的 mid/ctime 根评论与子回复');
+      }
+    }
 
     if (VERIFY_SUB_COMMENT) {
       await page.waitForFunction(() => {
@@ -589,15 +683,58 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
           if (!choose || !uidMatch || !hashMatch) continue;
           const uid = uidMatch[1];
           const hash = hashMatch[1].toLowerCase();
+          const unique = choose.getAttribute('data-ob-dm-uid-unique') === '1';
+          const warning = (current && current.querySelector('.ob-dm-uid-warning') || {}).textContent || '';
+          const uniqueButton = unique && choose.textContent === '拉黑本人';
+          const ambiguousButton = !unique && choose.textContent === '确认并拉黑';
           choose.click(); await pause(100);
           const confirm = document.getElementById('ob-confirm');
-          const confirmText = confirm && confirm.textContent || '';
-          if (!confirm) return { found: true, panel: true, attempted: attempted.length, candidateFound: true, confirm: false };
-          confirm.querySelector('.ob-ok').click(); await pause(250);
           const person = Object.values(window.OB.Store.persons()).find((item) =>
             item.identities.includes('bili:uid:' + uid) && item.identities.includes('bili:dmhash:' + hash)
           );
+          if (unique) {
+            // 唯一且已正向校验的候选直接落库，不再弹二次确认。
+            if (confirm || !person) {
+              const close = panel.querySelector('.ob-dm-close');
+              if (close) close.click();
+              return {
+                found: true, panel: true, attempted: attempted.length, lookupStates,
+                candidateFound: true, path: 'unique', uniqueButton, warning,
+                uidResolved: true, hashResolved: true, directBlock: false,
+                confirm: !!confirm, linked: !!person, blockedBoth: false, restored: false,
+              };
+            }
+            const blockedBoth = window.OB.Index.isBlocked('bili:uid:' + uid) && window.OB.Index.isBlocked('bili:dmhash:' + hash);
+            const toast = document.getElementById('ob-toast');
+            const undo = toast && toast.querySelector('button');
+            if (undo) { undo.click(); await pause(250); }
+            const close = panel.querySelector('.ob-dm-close');
+            if (close) close.click();
+            return {
+              found: true, panel: true, attempted: attempted.length, lookupStates,
+              candidateFound: true, path: 'unique', uniqueButton, warning,
+              uidResolved: true, hashResolved: true, directBlock: true,
+              confirm: false, linked: true, blockedBoth,
+              restored: !!undo && !window.OB.Index.isBlocked('bili:uid:' + uid) && !window.OB.Index.isBlocked('bili:dmhash:' + hash),
+            };
+          }
+          // 多候选（CRC32 碰撞）仍必须人工核对后确认。
+          const confirmText = confirm && confirm.textContent || '';
+          if (!confirm) {
+            const close = panel.querySelector('.ob-dm-close');
+            if (close) close.click();
+            return {
+              found: true, panel: true, attempted: attempted.length, lookupStates,
+              candidateFound: true, path: 'ambiguous', ambiguousButton, warning,
+              uidResolved: true, hashResolved: true, directBlock: false,
+              confirm: false, linked: false, blockedBoth: false, restored: false,
+            };
+          }
+          confirm.querySelector('.ob-ok').click(); await pause(250);
           const blockedBoth = window.OB.Index.isBlocked('bili:uid:' + uid) && window.OB.Index.isBlocked('bili:dmhash:' + hash);
+          const personAfterConfirm = Object.values(window.OB.Store.persons()).find((item) =>
+            item.identities.includes('bili:uid:' + uid) && item.identities.includes('bili:dmhash:' + hash)
+          );
           const toast = document.getElementById('ob-toast');
           const undo = toast && toast.querySelector('button');
           if (undo) { undo.click(); await pause(250); }
@@ -609,12 +746,15 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
             attempted: attempted.length,
             lookupStates,
             candidateFound: true,
-            candidateMarked: /可能发送者/.test(candidate.textContent || ''),
+            path: 'ambiguous',
+            ambiguousButton,
+            warning,
             uidResolved: /^\d+$/.test(uid),
             hashResolved: /^[0-9a-f]{8}$/.test(hash),
+            directBlock: false,
             confirm: true,
             confirmMarked: /可能发送者/.test(confirmText),
-            linked: !!person,
+            linked: !!personAfterConfirm,
             blockedBoth,
             restored: !!undo && !window.OB.Index.isBlocked('bili:uid:' + uid) && !window.OB.Index.isBlocked('bili:dmhash:' + hash),
           };
@@ -624,8 +764,11 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         return { found: true, panel: true, attempted: attempted.length, candidateFound: false, lookupStates };
       });
       const uid = result.danmakuUid || {};
-      if (!uid.found || !uid.panel || !uid.candidateFound || !uid.candidateMarked || !uid.uidResolved || !uid.hashResolved || !uid.confirm || !uid.confirmMarked || !uid.linked || !uid.blockedBoth || !uid.restored || !result.uidCardRequestCount) {
-        result.errors.push('验证失败：真实弹幕 hash 未完成 UID 候选校验、手动关联与撤销');
+      const uniqueOk = uid.path === 'unique' && uid.uniqueButton && uid.directBlock && !uid.confirm && uid.linked;
+      const ambiguousOk = uid.path === 'ambiguous' && uid.ambiguousButton && uid.confirm && uid.confirmMarked && uid.linked;
+      if (!uid.found || !uid.panel || !uid.candidateFound || !uid.uidResolved || !uid.hashResolved
+        || !uid.blockedBoth || !uid.restored || !result.uidCardRequestCount || (!uniqueOk && !ambiguousOk)) {
+        result.errors.push('验证失败：真实弹幕 hash 未按新语义完成 UID 处理（唯一候选免确认 / 碰撞候选确认）与撤销');
       }
     }
 
