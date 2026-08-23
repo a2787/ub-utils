@@ -3,6 +3,31 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 0.20.0 - 2026-08-23
+
+### 新增
+
+- **抖音弹幕本地拉黑入口**：把鼠标移到正在飘的一条弹幕上，弹幕上方会浮出「🚫 拉黑」
+  按钮并随弹幕一起移动（弹幕层 `pointer-events:none`，但节点自身可交互）。点击后按
+  `data-danmaku-user-id` 保存 `douyin:uid`，该弹幕和之后同一发送者的弹幕都会零占位
+  消失，撤销可恢复。没有身份属性的弹幕不显示按钮、不会被误隐藏。
+- **抖音作者弹幕映射**：`data-is-danmu-author="true"` 的作者弹幕会额外绑定当前视频
+  作者（`[data-e2e="video-avatar"]` 的 sec_uid）；屏蔽作者本人后，作者自己的弹幕
+  一并隐藏，无需在抖音数字 uid 和 sec_uid 之间做不可靠映射。
+
+### 验证边界
+
+- `real-site verified`（2026-08-23，用户已登录调试浏览器中的临时只读标签页，
+  `douyin.com/...?...`；写入仅限注入的内存 GM 存储，标签页已关闭）：真实弹幕节点
+  带 `data-danmaku-user-id`，悬停出现节点内的「🚫 拉黑」按钮，确认框包含正确的
+  `douyin:uid`，点击后该弹幕隐藏、撤销恢复。
+- `structure regression`：`node test/adapters.cjs` 19/19（新增作者弹幕身份契约与
+  弹幕浮层 UI 闭环）、`node test/quickblock.cjs` 29/29、`node test/run.cjs` 11/11、
+  `node test/state.cjs` 7/7、`node test/douyin.cjs` 2/2；语法检查与 `git diff --check`
+  通过。
+- `blocked`：隔离未登录浏览器打开 `douyin.com` 首页仍是「验证码中间页」，无候选条目；
+  本轮验证视频没有渲染作者自己的弹幕（数量为 0），作者弹幕映射只由人工合成夹具覆盖。
+
 ## 0.19.0 - 2026-08-23
 
 ### 新增

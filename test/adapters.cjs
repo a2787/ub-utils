@@ -78,7 +78,13 @@ const cases = [
   },
   {
     id: 'douyin', name: 'douyin-danmaku', url: 'https://www.douyin.com/test', selector: '[data-danmu-id]', expected: 'douyin:uid:7654321', expectVanished: true,
-    body: '<div data-danmu-id="dm-1" data-danmu-user-id="7654321">抖音弹幕</div>',
+    // 2026-08-23 登录态捕获：弹幕节点为 data-danmu-id + data-danmaku-user-id。
+    body: '<div class="danmu"><div id="dm-1" style="position:absolute"><div data-danmu-id="dm-1" data-is-danmu-author="false" data-is-like="false" data-danmaku-user-id="7654321" data-digg-count="0"><div class="danMuText"><span>抖音弹幕</span></div></div></div></div>',
+  },
+  {
+    id: 'douyin', name: 'douyin-danmaku-author', url: 'https://www.douyin.com/test', selector: '[data-danmu-id="dm-a"]', expected: 'douyin:secuid:MS4wLjABAAAuthor', expectVanished: true,
+    // 作者自己的弹幕：data-is-danmu-author=true 时按当前视频作者 sec_uid 隐藏。
+    body: '<div class="basePlayerContainer"><a data-e2e="video-avatar" href="/user/MS4wLjABAAAuthor">作者头像</a></div><div class="danmu"><div id="dm-a" style="position:absolute"><div data-danmu-id="dm-a" data-is-danmu-author="true" data-danmaku-user-id="7654322"><div class="danMuText"><span>作者弹幕</span></div></div></div></div>',
   },
 ];
 
@@ -221,6 +227,68 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       } else report.fail.push(label + ': ' + JSON.stringify(result));
       await page.close();
     }
+
+    // 抖音弹幕 UI：跟随浮层、点击拉黑、无身份边界与作者弹幕映射（人工合成真实捕获结构）。
+    const dyDmPage = await browser.newPage();
+    const dyDmFixture = `<!doctype html><html><body>
+      <div class="basePlayerContainer"><a data-e2e="video-avatar" href="/user/MS4wLjABAAAuthor">作者头像</a></div>
+      <div class="danmu">
+        <div id="dm-normal" data-danmu-id="dm-normal" data-is-danmu-author="false" data-is-like="false" data-danmaku-user-id="7654321" data-digg-count="0"><div class="danMuText"><span>普通弹幕</span></div></div>
+        <div id="dm-author" data-danmu-id="dm-author" data-is-danmu-author="true" data-danmaku-user-id="7654322"><div class="danMuText"><span>作者弹幕</span></div></div>
+        <div id="dm-unknown" data-danmu-id="dm-unknown"><div class="danMuText"><span>无身份弹幕</span></div></div>
+      </div>
+    </body></html>`;
+    await dyDmPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyDmFixture }));
+    await dyDmPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await dyDmPage.goto('https://www.douyin.com/test', { waitUntil: 'domcontentloaded' });
+    await dyDmPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const dyDm = await dyDmPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const waitFor = async (fn, ms) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (fn()) return true; await pause(50); } return !!fn(); };
+      const normal = document.querySelector('#dm-normal');
+      const author = document.querySelector('#dm-author');
+      const unknown = document.querySelector('#dm-unknown');
+      const hidden = (el) => getComputedStyle(el).display === 'none' || el.getBoundingClientRect().height === 0;
+      const hover = (el) => el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      const result = { fixtureOk: !!(normal && author && unknown) };
+      if (!result.fixtureOk) return result;
+      hover(unknown);
+      await pause(80);
+      result.unknownButton = !!unknown.querySelector('.ob-dy-dm-block');
+      result.unknownHidden = hidden(unknown);
+      hover(normal);
+      await pause(80);
+      const btn = normal.querySelector('.ob-dy-dm-block');
+      result.buttonPresent = !!btn;
+      result.buttonInside = !!btn && normal.contains(btn);
+      result.genericButtonAbsent = !document.querySelector('.ob-block-btn');
+      if (!btn) return result;
+      btn.click();
+      await pause(80);
+      const confirm = document.getElementById('ob-confirm');
+      result.confirmShown = !!confirm;
+      result.confirmUid = !!(confirm && /douyin:uid:7654321/.test(confirm.textContent));
+      if (confirm) confirm.querySelector('.ob-ok').click();
+      result.blocked = await waitFor(() => window.OB.Index.isBlocked('douyin:uid:7654321'), 1500);
+      result.hidden = await waitFor(() => hidden(normal), 1500);
+      const toast = document.getElementById('ob-toast');
+      const undo = toast && toast.querySelector('button');
+      if (undo) { undo.click(); await pause(80); }
+      result.restored = await waitFor(() => !window.OB.Index.isBlocked('douyin:uid:7654321') && !hidden(normal), 1500);
+      window.OB.Store.addIdentityGroups([{ keys: ['douyin:secuid:MS4wLjABAAAuthor'], label: '作者' }]);
+      result.authorHidden = await waitFor(() => hidden(author), 1500);
+      window.OB.Store.removeIdentity('douyin:secuid:MS4wLjABAAAuthor');
+      result.authorRestored = await waitFor(() => !hidden(author), 1500);
+      return result;
+    });
+    if (dyDm.fixtureOk && !dyDm.unknownButton && !dyDm.unknownHidden
+      && dyDm.buttonPresent && dyDm.buttonInside && dyDm.genericButtonAbsent
+      && dyDm.confirmShown && dyDm.confirmUid && dyDm.blocked && dyDm.hidden && dyDm.restored
+      && dyDm.authorHidden && dyDm.authorRestored) {
+      report.pass.push('douyin-danmaku-ui: hover follow button blocks uid, hides and restores; author danmaku maps to video author secuid');
+    } else report.fail.push('douyin-danmaku-ui: ' + JSON.stringify(dyDm));
+    await dyDmPage.close();
 
     const weiboPage = await browser.newPage();
     const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + WEIBO_LEGACY_REPLY_FIXTURE + '</body></html>';

@@ -21,6 +21,8 @@ test/_wbmodal*.json
 test/_cdp.cjs
 test/_probe_comment_api.cjs
 test/_probe_comment_structure.cjs
+test/_probe_dy_danmu.cjs
+test/_probe_dy_author.cjs
 
 # 2026-08-20 的一次性运行产物，与当前测试无关：run.cjs 现在只写忽略的
 # test/_shot_*.png，这三张旧截图没有任何代码或文档引用。

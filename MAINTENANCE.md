@@ -14,6 +14,7 @@
 | `test/adapters.cjs` | 微博、知乎、贴吧、X、抖音的身份契约回归夹具。 |
 | `test/douyin.cjs` | 人工合成的抖音推荐流节点复用、跳过上限和延迟守卫回归。 |
 | `test/real-bilibili-probe.cjs` | 隔离、只读的真实 B 站探针，可启用严格断言。 |
+| `test/real-douyin-probe.cjs` | 抖音登录态只读探针：连接用户调试浏览器，临时标签页注入内存存储。 |
 | `test/real-platform-probe.cjs` | 其余平台的隔离、只读真实页面探针。 |
 | `test/discover.cjs` | 真实探针的目标发现器：从平台公开入口页选出只读目标并提供脱敏形式。 |
 | `test/runtime.cjs` | 浏览器测试的公共启动器；自动确定仓库根目录与可用运行时。 |
@@ -1020,3 +1021,57 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 在已登录的真实 B站视频页用调试端口只读会话展开右侧弹幕列表，确认行内「本地拉黑」与
 原生举报项入口；随后在用户已打开的抖音视频评论页做抖音适配器的登录态只读复核。
+
+### 2026-08-23 - v0.20.0 工作区 - 抖音弹幕屏蔽完善
+
+**范围**
+
+承接上一轮交接的“抖音登录态只读复核”遗留项，完善抖音网页弹幕屏蔽：弹幕悬停跟随式
+拉黑入口、作者弹幕按当前视频作者 sec_uid 映射、无身份弹幕不误隐藏。未改微博/B站
+适配行为。
+
+**改动文件**
+
+- `omniblock.user.js`：抖音弹幕节点（真实捕获 `data-danmu-id` + `data-danmaku-user-id`）
+  上挂载 `.ob-dy-dm-block` 跟随浮层（弹幕层 `pointer-events:none` 但节点自身可交互；
+  按钮挂节点内部随 transform 移动，指针移出节点即收起）；`data-is-danmu-author=true`
+  的作者弹幕额外绑定 `[data-e2e="video-avatar"]` 的 sec_uid；通用固定悬浮按钮对抖音
+  弹幕改为抑制，避免双按钮；新增 `suppressGenericHover` 适配器钩子。
+- `test/adapters.cjs`：douyin-danmaku 夹具改为真实属性；新增 douyin-danmaku-author
+  身份契约和 douyin-danmaku-ui 闭环（悬停按钮、点击拉黑、隐藏、撤销、作者映射、
+  无身份边界），19 项全部通过。
+- `test/real-douyin-probe.cjs`（新增）：登录态只读探针，连接用户调试浏览器
+  `127.0.0.1:9222`，开临时标签页注入内存 GM 存储的 userscript，只操作脚本自身 UI，
+  不读取 Cookie、不点平台写入控件，结束后关闭标签页。
+- `.gitignore`、`README.md`、`CHANGELOG.md`、`MAINTENANCE.md`：同步诊断产物忽略规则、
+  用户可见行为、0.20.0 更新说明与本交接。
+
+**证据**
+
+- `real-site verified`（2026-08-23，用户已登录调试浏览器，临时只读标签页，页面脱敏为
+  `douyin.com/...?...`，写入仅限内存 stub，标签页已关闭）：真实弹幕节点
+  `data-danmu-id`/`data-danmaku-user-id` 存在；悬停出现节点内「🚫 拉黑」按钮，确认框
+  含正确 `douyin:uid`；拉黑后该弹幕隐藏、撤销恢复。
+- `structure regression`：`node test/adapters.cjs` 19/19、`node test/quickblock.cjs`
+  29/29、`node test/run.cjs` 11/11、`node test/state.cjs` 7/7、
+  `node test/douyin.cjs` 2/2；`node --check` 与 `git diff --check` 通过。
+- `blocked`：隔离未登录 `douyin.com` 首页为「验证码中间页」；本轮视频
+  `data-is-danmu-author=true` 弹幕数量为 0，作者弹幕映射只有人工合成夹具证据。
+
+**限制**
+
+- 抖音弹幕只提供数字 uid，不提供昵称；拉黑后名单显示 `douyin:uid:<数字>`，隐藏不依赖
+  昵称解析。
+- 作者弹幕映射依赖当前页面 `[data-e2e="video-avatar"]`；该锚点变化时需重新真实捕获。
+- 登录态探针的临时标签页会短暂占用用户浏览器，但所有名单写入都在内存 stub，关闭标签页
+  即消失；未触碰用户真实 Tampermonkey 存储。
+
+**版本/发布状态**
+
+- userscript `@version` 提高为 `0.20.0`；本条记录创建时改动尚未提交、推送、打 tag 或
+  创建 Release。
+
+**下一项最有价值的验证**
+
+在播放中且作者发了弹幕的抖音视频上复跑 `node test/real-douyin-probe.cjs`，确认作者弹幕
+映射的真站路径；随后处理 B站右侧弹幕列表登录态展开与原生举报操作条复核。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.19.0
+// @version       0.20.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -718,6 +718,16 @@
     }
     .ob-block-btn:hover { background: #ffe9e7 !important; }
 
+    /* 抖音弹幕跟随浮层：挂在弹幕节点内，随滚动弹幕一起移动 */
+    .ob-dy-dm-block {
+      position: absolute !important; right: 2px !important; top: -22px !important;
+      z-index: 2147483646 !important; height: 20px; line-height: 20px; padding: 0 7px;
+      background: rgba(28, 28, 28, 0.92) !important; color: #fff !important;
+      border-radius: 4px; font-size: 12px; cursor: pointer; white-space: nowrap;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35); user-select: none;
+    }
+    .ob-dy-dm-block:hover { background: #a93226 !important; }
+
     /* 右键浮动菜单 */
     #ob-ctx {
       position: fixed; z-index: 2147483647; background: #fff; color: #222;
@@ -1298,6 +1308,8 @@
     const adapter = currentAdapter;
     if (!adapter || !adapter.selectors) return;
     const found = (e.target && e.target.composedPath) ? findItem(e.target, adapter) : null;
+    // 适配器自带跟随式入口（如抖音弹幕）时，不再叠加通用固定按钮。
+    if (found && adapter.suppressGenericHover && adapter.suppressGenericHover(found.el)) { if (hoverOwner) clearHover(); return; }
     if (!found || !found.info.keys.length || Index.isBlocked(found.info.keys)) { if (hoverOwner) clearHover(); return; }
     if (hoverOwner === found.el) return;
     clearHover();
@@ -1369,14 +1381,79 @@
       return { keys, label: name, container: item };
     }
 
+    function currentVideoAuthorSecUid() {
+      // 2026-08-23 登录态捕获：视频信息区作者头像为
+      // `[data-e2e="video-avatar"][href*="/user/"]`，href 里带 sec_uid。
+      const player = document.querySelector('.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
+      const root = player || document;
+      const link = root.querySelector('[data-e2e="video-avatar"][href*="/user/"]') || root.querySelector('a[data-e2e="video-avatar"]');
+      return secUidFromHref(attr(link, 'href'));
+    }
+
     function extractDanmaku(item) {
       const uid = normId(attr(item, 'data-danmaku-user-id') || attr(item, 'data-danmu-user-id') || attr(item, 'data-user-id') || attr(item, 'data-uid'));
       const sec = secUidFromHref(attr(item, 'data-sec-uid') || attr(item, 'href') || '');
       const keys = [];
       appendIdentityKey(keys, 'douyin:uid', uid);
       appendIdentityKey(keys, 'douyin:secuid', sec);
-      if (!keys.length) return null;   // 无身份属性则跳过（抖音弹幕兜底见计划 M5）
+      // 作者自己的弹幕：当前视频作者（sec_uid）被屏蔽时也一并隐藏，无需 uid 映射。
+      if (attr(item, 'data-is-danmu-author') === 'true') {
+        appendIdentityKey(keys, 'douyin:secuid', currentVideoAuthorSecUid());
+      }
+      if (!keys.length) return null;
       return { keys, label: '', container: item };
+    }
+
+    // 抖音弹幕是持续滚动的节点，通用固定悬浮按钮会停在原地。这里把按钮挂进
+    // 弹幕节点内部随 transform 一起移动；弹幕层 pointer-events:none，但节点
+    // 自身是 auto，可以接收鼠标事件。
+    const DY_DM_BTN = 'ob-dy-dm-block';
+    let dyDmHoverItem = null;
+    let dyDmHoverBtn = null;
+    let dyPointer = null;
+    function clearDyDanmakuHover() {
+      if (dyDmHoverBtn && dyDmHoverBtn.parentNode) dyDmHoverBtn.parentNode.removeChild(dyDmHoverBtn);
+      if (dyDmHoverItem) dyDmHoverItem.__obDyDmHover = false;
+      dyDmHoverItem = null;
+      dyDmHoverBtn = null;
+    }
+    function attachDyDanmakuButton(item, info) {
+      const existing = item.querySelector ? item.querySelector('.' + DY_DM_BTN) : null;
+      if (existing) return;
+      item.__obDyDmHover = true;
+      dyDmHoverItem = item;
+      const btn = document.createElement('div');
+      btn.className = DY_DM_BTN;
+      btn.textContent = '🚫 拉黑';
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('aria-label', '本地拉黑该弹幕发送者');
+      btn.title = '本地拉黑该弹幕发送者';
+      btn.onpointerdown = (e) => { e.stopPropagation(); };
+      btn.onclick = (e) => {
+        e.stopPropagation(); e.preventDefault();
+        showConfirm('该弹幕发送者', info.keys, btn);
+      };
+      item.appendChild(btn);
+      dyDmHoverBtn = btn;
+    }
+    if (document.addEventListener) {
+      document.addEventListener('pointermove', (e) => { dyPointer = { x: e.clientX, y: e.clientY }; }, true);
+      document.addEventListener('mouseover', (e) => {
+        if (!Store.getSetting('enabled') || !Store.getSetting('showHoverButton')) { clearDyDanmakuHover(); return; }
+        const item = e.target && e.target.closest ? e.target.closest(SEL.danmaku) : null;
+        if (!item) { clearDyDanmakuHover(); return; }
+        const info = extractDanmaku(item);
+        if (!info || !info.keys.length || Index.isBlocked(info.keys)) { clearDyDanmakuHover(); return; }
+        if (item !== dyDmHoverItem) clearDyDanmakuHover();
+        attachDyDanmakuButton(item, info);
+      }, true);
+      // 弹幕持续移动：指针位置不再落在该节点内时立刻收掉浮层，避免按钮停在原地。
+      document.addEventListener('pointermove', () => {
+        if (!dyDmHoverItem || !dyPointer) return;
+        const el = document.elementFromPoint(dyPointer.x, dyPointer.y);
+        if (!el || !dyDmHoverItem.contains(el)) clearDyDanmakuHover();
+      }, true);
+      document.addEventListener('mouseleave', clearDyDanmakuHover, true);
     }
 
     // 推荐流自动切：视觉遮罩 + 点下一条，带四道安全阀
@@ -1487,6 +1564,7 @@
         if (item.matches && item.matches(SEL.danmaku)) return extractDanmaku(item);
         return extractGeneric(item);
       },
+      suppressGenericHover: (el) => !!(el && el.matches && el.matches(SEL.danmaku)),
       containerOf: (item) => item,
       onScan: feedTick,
       onDisabled: disableFeed,

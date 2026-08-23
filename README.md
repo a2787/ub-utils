@@ -15,7 +15,8 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
   相同文案按组显示，单击或勾选批量会屏蔽组内全部发送者，并按 `mid_hash` 过滤；
   已屏蔽的评论 UID 会经 CRC32 正向映射到弹幕；也可主动查询 1–10 位 UID 候选并在人工
   核对后关联评论身份；唯一候选经用户卡片正向校验后直接关联，无需人工确认）
-- **抖音视频弹幕**（网页弹幕带发送者属性时按 uid 隐藏）
+- **抖音视频弹幕**（网页弹幕带 `data-danmaku-user-id` 时按 uid 隐藏；悬停弹幕会浮出
+  随弹幕移动的「🚫 拉黑」按钮；视频作者自己的弹幕会按当前作者 sec_uid 一并隐藏）
 - **抖音推荐流**：刷到被屏蔽作者 → 视觉遮罩 + 自动切下一条（唯一一处"模拟操作"，带安全阀）
 
 隐藏方式：已识别的评论和弹幕始终无提示、零占位消失；帖子、动态、搜索卡等其他内容
@@ -98,6 +99,9 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   高度也会一起收掉，不留空白。
   左下角批量入口同时统计当前微博作者和已加载评论作者，点赞/转发等用户列表弹窗里
   也有「拉黑全部」。
+- 抖音视频弹幕：把鼠标移到正在飘的一条弹幕上，弹幕上方会浮出「🚫 拉黑」按钮并跟随
+  弹幕移动，点击后确认即本地拉黑该发送者，这条弹幕和之后同一发送者的弹幕都会消失；
+  视频作者自己的弹幕在作者被屏蔽时也会一起消失。
 - 抖音推荐流刷到被屏蔽作者会自动跳过（可选关闭，改为只盖遮罩）。
 
 ### 各平台身份填写说明
@@ -140,6 +144,11 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   出现；同一文案有多个发送者时身份不唯一，脚本不提供这个入口，改由右下角工具按文案
   分组批量处理。若你已登录且网站弹出了自带的弹幕「举报」菜单，脚本会在该项旁统一显示
   「🚫 本地拉黑」，并复用同一身份。
+- **抖音弹幕**：弹幕层同样写死 `pointer-events: none`，但弹幕节点自身可接收鼠标事件。
+  脚本把「🚫 拉黑」按钮挂进弹幕节点内，随滚动弹幕一起移动；点击后按
+  `data-danmaku-user-id` 保存 `douyin:uid`，该弹幕和后续同发送者弹幕零占位消失。
+  `data-is-danmu-author="true"` 的作者弹幕会额外映射当前视频作者 sec_uid，屏蔽作者本人
+  时作者弹幕一并隐藏。没有身份属性的弹幕不显示按钮、不会被误隐藏。
 - **微博评论**：当前详情页的单条评论操作区常驻「本地拉黑」，使用该行自己的 UID；
   根评论与楼中楼都覆盖（真站结构分别是 `.item1 > .item1in > .con1 > .info > .opt` 和
   `.item2 > .con2 > .info > .opt`），也兼容 `node-type="reply_list"` / `.list_ul` /
@@ -206,7 +215,7 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 | 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：2026-08-22 隔离浏览器仍被重定向到 `zhihu.com/signin`。 |
 | 贴吧 | `structure regression`：`data-field` 中的 `user_id` 身份契约通过；集合容器不扫描。 | `blocked`：2026-08-22 隔离浏览器落在「百度安全验证」滑块页，无法复核真实列表或帖子页（2026-08-20 曾在公开列表页观察到 8 个候选中 6 个解析出 UID）。 |
 | X | `structure regression`：人工合成 `article[data-testid="tweet"]` 与 `/handle` 契约通过。 | `blocked`：未登录状态只有登录页。 |
-| 抖音 | `structure regression`：人工合成评论、搜索卡、个人作品列表身份契约和推荐流安全阀回归通过。 | `blocked`：2026-08-22 隔离浏览器打开 `douyin.com` 首页后没有可解析条目，评论、弹幕和推荐流仍需正常会话复核。 |
+| 抖音 | `real-site verified`：2026-08-23 用户已登录调试浏览器中的临时只读标签页（`douyin.com/...?...`，写入仅限内存 stub，标签页已关闭）。真实弹幕节点带 `data-danmaku-user-id`，悬停出现随弹幕移动的「🚫 拉黑」，点击后确认框含正确 uid，拉黑后该弹幕零占位消失、撤销恢复。 | `blocked`：2026-08-23 隔离浏览器打开 `douyin.com` 首页仍是「验证码中间页」；本轮视频没有渲染作者自己的弹幕（`data-is-danmu-author=true` 数量为 0），作者弹幕映射只由人工合成夹具覆盖。 |
 
 可重复运行的检查：
 
@@ -214,9 +223,10 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
 node test/quickblock.cjs          # B站楼中楼、弹幕分组、列表分段、浮动弹幕坐标命中、UID 候选、批量范围面板、PAKKU 与 XHR 共 29 项回归
-node test/adapters.cjs            # 五个平台身份契约及微博详情/楼中楼/展开弹窗批量共 17 项结构回归
+node test/adapters.cjs            # 五个平台身份契约、微博详情/楼中楼/展开弹窗批量、抖音弹幕浮层共 19 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku
+node test/real-douyin-probe.cjs   # 登录态只读探针：需用户调试浏览器 127.0.0.1:9222，临时标签页注入内存存储
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
 node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
 ```
