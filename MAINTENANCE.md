@@ -1316,8 +1316,9 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-- 当前源码 `@version` 为 `0.25.0`，待完成暂存前隐私检查后按仓库已授权流程提交、推送、
-  创建 `v0.25.0` tag 和同版本 GitHub Release。
+- 当前源码 `@version` 为 `0.25.0`；提交 `179ab94` 已推送 `origin/master`，`v0.25.0` tag
+  已创建并推送；GitHub Release 已发布：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.25.0`。
 
 **下一项最有价值的验证**
 
