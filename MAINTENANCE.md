@@ -1459,8 +1459,10 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 **版本/发布状态**
 
-- 源码已提升到 `@version 0.28.0`；功能提交 `c4ebb869f8dff55ab13f6718d86ffb52adcd23c9` 已在
-  本地完成，docs 提交、推送、tag 和 GitHub Release 尚待执行。
+- 源码已提升到 `@version 0.28.0`；功能提交 `c4ebb869f8dff55ab13f6718d86ffb52adcd23c9`、
+  文档提交 `d2d982c702f57088931eb58e7a5d94b3a19569d1` 已推送 `origin/master`；`v0.28.0` tag
+  已创建并推送，GitHub Release 已发布：
+  `https://github.com/a2787/ub-utils/releases/tag/v0.28.0`。
 
 **下一项最有价值的验证**
 
