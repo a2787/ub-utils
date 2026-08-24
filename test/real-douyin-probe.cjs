@@ -110,17 +110,50 @@ const target = withIdentity.find((el) => {
 if (!target) { out.noTarget = true; return out; }
 const targetInfo = adapter.extract(target);
 const uidKey = targetInfo.keys.find((key) => key.startsWith('douyin:uid:'));
+const commentFab = document.querySelector('.ob-bulk[data-ob-kind="page"][data-ob-douyin-toolbar="1"]');
+const gear = document.getElementById('ob-gear');
+const toolbarPosition = (node) => node ? {
+  left: getComputedStyle(node).left,
+  right: getComputedStyle(node).right,
+  bottom: getComputedStyle(node).bottom,
+} : null;
+out.commentToolPresent = !!commentFab;
+out.commentToolPosition = toolbarPosition(commentFab);
+out.gearPosition = toolbarPosition(gear);
+out.commentToolRightColumn = !!commentFab && getComputedStyle(commentFab).right === '14px'
+  && getComputedStyle(commentFab).bottom === '106px';
+out.gearRightColumn = !!gear && getComputedStyle(gear).right === '14px'
+  && getComputedStyle(gear).bottom === '14px';
 const dmTool = document.getElementById('ob-douyin-dm-tool');
 out.managerToolPresent = !!dmTool;
 out.managerToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
 out.managerToolText = dmTool && dmTool.textContent;
+out.managerToolPosition = toolbarPosition(dmTool);
+out.managerToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px'
+  && getComputedStyle(dmTool).bottom === '62px';
 if (dmTool) {
   dmTool.click();
   await pause(120);
   const manager = document.getElementById('ob-douyin-dm-manager');
   out.managerPresent = !!manager;
   out.managerRows = manager ? manager.querySelectorAll('.ob-dd-row').length : 0;
+  const managerSearch = manager && manager.querySelector('.ob-dd-search');
+  const managerScan = manager && manager.querySelector('.ob-dd-scan');
+  out.managerSearchPresent = !!managerSearch;
+  out.managerScanPresent = !!managerScan;
   const rowKeys = manager ? Array.from(manager.querySelectorAll('.ob-dd-row')).map((row) => row.getAttribute('data-key')).filter(Boolean) : [];
+  if (managerSearch && rowKeys.length) {
+    const sampleName = manager.querySelector('.ob-dd-name');
+    managerSearch.value = ((sampleName && sampleName.textContent) || rowKeys[0]).trim();
+    managerSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    await pause(80);
+    out.managerSearchWorks = manager.querySelectorAll('.ob-dd-row').length > 0;
+    managerSearch.value = '';
+    managerSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    await pause(80);
+  } else {
+    out.managerSearchWorks = null;
+  }
   const checkAll = manager && manager.querySelector('.ob-dd-checkall input');
   if (checkAll) checkAll.click();
   await pause(80);
@@ -137,6 +170,31 @@ if (dmTool) {
   out.managerRestored = rowKeys.length > 0 && rowKeys.every((key) => !OB.Index.isBlocked(key));
   const managerClose = manager && manager.querySelector('.ob-dd-close');
   if (managerClose) managerClose.click();
+}
+if (commentFab) {
+  commentFab.click();
+  await pause(500);
+  const commentManager = document.getElementById('ob-douyin-comment-manager');
+  out.commentManagerPresent = !!commentManager;
+  out.commentSearchPresent = !!(commentManager && commentManager.querySelector('.ob-dc-search'));
+  out.commentLoadPresent = !!(commentManager && commentManager.querySelector('.ob-dc-load'));
+  const commentRows = commentManager && commentManager.querySelectorAll('.ob-dc-row');
+  if (commentManager && commentRows && commentRows.length) {
+    const sampleName = commentManager.querySelector('.ob-dc-name');
+    const commentSearch = commentManager.querySelector('.ob-dc-search');
+    if (commentSearch) {
+      commentSearch.value = ((sampleName && sampleName.textContent) || commentRows[0].textContent || '').trim();
+      commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
+      await pause(80);
+      out.commentSearchWorks = commentManager.querySelectorAll('.ob-dc-row').length > 0;
+      commentSearch.value = '';
+      commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } else {
+    out.commentSearchWorks = null;
+  }
+  const commentClose = commentManager && commentManager.querySelector('.ob-dc-close');
+  if (commentClose) commentClose.click();
 }
 target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
 await pause(120);
@@ -207,8 +265,13 @@ return out;
     const probe = report.probe || {};
     if (!probe.hasOB || !probe.adapterReady || !probe.danmakuCount || !probe.withIdentity) {
       report.blocked.push('临时标签页未渲染出带发送者身份的抖音弹幕（' + JSON.stringify({ danmakuCount: probe.danmakuCount, withIdentity: probe.withIdentity }) + '）');
-    } else if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerPresent || !probe.managerRows
+    } else if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
+      || !probe.commentToolPresent || !probe.commentToolRightColumn || !probe.gearRightColumn
+      || !probe.managerPresent || !probe.managerRows || !probe.managerSearchPresent
+      || !probe.managerScanPresent || probe.managerSearchWorks === false
       || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored
+      || !probe.commentManagerPresent || !probe.commentSearchPresent || !probe.commentLoadPresent
+      || probe.commentSearchWorks === false
       || !probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
       || !probe.blocked || !probe.hidden || !probe.restored || probe.noTarget) {
       report.blocked.push('抖音弹幕本地拉黑闭环未完成：' + JSON.stringify(probe));

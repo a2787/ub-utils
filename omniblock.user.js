@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.33.0
+// @version       0.34.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.33.0-douyin-danmaku-manager';
+  const RUNTIME_BUILD = '0.34.0-douyin-manager-layout-search-loader';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -788,6 +788,10 @@
       z-index: 2147483646 !important;
     }
     .ob-bulk:hover { background: #a93226 !important; }
+    .ob-bulk[data-ob-douyin-toolbar="1"] {
+      box-sizing: border-box; min-height: 34px; max-width: min(260px, calc(100vw - 28px));
+      margin: 0 !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     /* 批量拉黑的范围/时间筛选面板 */
     #ob-bulk-scope {
       position: fixed; z-index: 2147483647; width: 288px; box-sizing: border-box;
@@ -976,10 +980,16 @@
     #ob-douyin-comment-manager .ob-dc-close { width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: #555; cursor: pointer; font-size: 18px; }
     #ob-douyin-comment-manager .ob-dc-close:hover { background: #f1f1f1; }
     #ob-douyin-comment-manager .ob-dc-toolbar { flex-wrap: wrap; margin-bottom: 10px; }
-    #ob-douyin-comment-manager .ob-dc-expand, #ob-douyin-comment-manager .ob-dc-retry {
+    #ob-douyin-comment-manager .ob-dc-search {
+      flex: 1 1 220px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
+      border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
+    }
+    #ob-douyin-comment-manager .ob-dc-expand, #ob-douyin-comment-manager .ob-dc-load,
+    #ob-douyin-comment-manager .ob-dc-retry {
       min-height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px; background: #fff; color: #333; cursor: pointer; font-size: 12px;
     }
-    #ob-douyin-comment-manager .ob-dc-expand:hover:not(:disabled), #ob-douyin-comment-manager .ob-dc-retry:hover:not(:disabled) { background: #f4f4f4; }
+    #ob-douyin-comment-manager .ob-dc-expand:hover:not(:disabled), #ob-douyin-comment-manager .ob-dc-load:hover:not(:disabled),
+    #ob-douyin-comment-manager .ob-dc-retry:hover:not(:disabled) { background: #f4f4f4; }
     #ob-douyin-comment-manager button:disabled { color: #aaa; cursor: default; }
     #ob-douyin-comment-manager .ob-dc-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
     #ob-douyin-comment-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
@@ -1025,6 +1035,12 @@
       flex: 1 1 220px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
       border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
     }
+    #ob-douyin-dm-manager .ob-dd-scan {
+      flex: 0 0 auto; min-height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px;
+      background: #fff; color: #333; cursor: pointer; font-size: 12px; white-space: nowrap;
+    }
+    #ob-douyin-dm-manager .ob-dd-scan:hover:not(:disabled) { background: #f4f4f4; }
+    #ob-douyin-dm-manager .ob-dd-scan:disabled { color: #aaa; cursor: default; }
     #ob-douyin-dm-manager .ob-dd-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
     #ob-douyin-dm-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
     #ob-douyin-dm-manager .ob-dd-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
@@ -1952,6 +1968,77 @@
       return { clicked: count, users: querySelectorAllDeep(document, SEL.comment).length };
     }
 
+    function commentScrollTargets() {
+      const out = []; const seen = new Set();
+      const add = (node) => {
+        if (!node || node.nodeType !== 1 || seen.has(node)) return;
+        let style;
+        try { style = getComputedStyle(node); } catch (e) { style = null; }
+        const overflow = style ? (String(style.overflowY || '') + ' ' + String(style.overflow || '')) : '';
+        const scrollable = node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/i.test(overflow);
+        // #relatedVideoCard 是已捕获的抖音评论承载层；只有它实际有滚动空间时才使用，
+        // 避免把同名但不承载列表的壳误当成加载目标。
+        const knownCommentPanel = node.id === 'relatedVideoCard'
+          && node.querySelector && node.querySelector('[data-e2e="comment-item"], .comment-item')
+          && node.scrollHeight > node.clientHeight + 8;
+        if (scrollable || knownCommentPanel) { seen.add(node); out.push(node); }
+      };
+      for (const comment of querySelectorAllDeep(document, SEL.comment)) {
+        let current = comment;
+        for (let guard = 0; current && guard < 24; guard++) {
+          if (current.nodeType === 1) add(current);
+          current = composedParent(current);
+        }
+      }
+      const page = document.scrollingElement;
+      if (!out.length && page && page.scrollHeight > page.clientHeight + 8) out.push(page);
+      return out;
+    }
+
+    // 抖音评论没有公开、稳定且可安全复用的“全部评论”页面接口；滚动真实列表是唯一不触发
+    // 平台写入的通用办法。调用方会在每次滚动后先缓存已识别作者，虚拟行回收后也不会丢失。
+    async function loadMoreCommentItems(onProgress) {
+      const targets = commentScrollTargets();
+      const currentCount = () => querySelectorAllDeep(document, SEL.comment).length;
+      if (!targets.length) return { supported: false, scrolls: 0, comments: currentCount() };
+      const original = targets.map((target) => ({ target, top: target.scrollTop, left: target.scrollLeft }));
+      let scrolls = 0; let stablePasses = 0; let lastSignature = '';
+      const report = () => {
+        if (typeof onProgress === 'function') onProgress({ scrolls, comments: currentCount(), targets: targets.length });
+      };
+      try {
+        for (let pass = 0; pass < 24; pass++) {
+          let grew = false;
+          for (const target of targets) {
+            const maxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+            if (maxTop <= 0) continue;
+            const before = currentCount();
+            const nearTop = pass ? Math.max(0, maxTop - target.clientHeight) : 0;
+            const positions = pass ? [nearTop, maxTop] : [0, Math.round(maxTop / 2), maxTop];
+            for (const top of positions) {
+              target.scrollTop = top;
+              try { target.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (e) {}
+              await new Promise((resolve) => setTimeout(resolve, 260));
+              scrolls++;
+              if (currentCount() > before) grew = true;
+              report();
+            }
+          }
+          const signature = targets.map((target) => target.scrollHeight + ':' + target.scrollTop).join('|') + ':' + currentCount();
+          if (signature === lastSignature && !grew) stablePasses++;
+          else stablePasses = 0;
+          lastSignature = signature;
+          if (stablePasses >= 2) break;
+        }
+      } finally {
+        for (const state of original) {
+          state.target.scrollTop = state.top;
+          state.target.scrollLeft = state.left;
+        }
+      }
+      return { supported: true, scrolls, comments: currentCount(), stablePasses };
+    }
+
     function isVideoPage() {
       return /^\/video\//i.test(location.pathname)
         || !!document.querySelector('.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
@@ -2149,7 +2236,7 @@
       videoKey,
       collectDanmaku,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
-      commentManager: { expandAll: expandAllCommentReplies },
+      commentManager: { expandAll: expandAllCommentReplies, loadMore: loadMoreCommentItems },
       rememberMenuContext: rememberCommentMenuContext,
       menuContextInfo,
       extract(item) {
@@ -3204,12 +3291,18 @@
     if (douyinCommentManager) { closeDouyinCommentManager(); return; }
     if (!document.body) return;
     const selected = new Set();
+    const commentRecords = new Map();
+    let commentPageKey = '';
+    let searchText = '';
+    let loadingRunning = false;
     douyinCommentManager = document.createElement('div');
     douyinCommentManager.id = 'ob-douyin-comment-manager';
     douyinCommentManager.innerHTML = `
       <div class="ob-dc-box" role="dialog" aria-modal="true" aria-labelledby="ob-dc-title">
         <div class="ob-dc-head"><h2 id="ob-dc-title">抖音评论屏蔽</h2><button class="ob-dc-close" type="button" aria-label="关闭">×</button></div>
         <div class="ob-dc-toolbar">
+          <input class="ob-dc-search" type="search" placeholder="搜索已加载评论" aria-label="搜索已加载评论">
+          <button class="ob-dc-load" type="button">尽量加载评论</button>
           <button class="ob-dc-expand" type="button">加载全部子评论</button>
           <label class="ob-dc-checkall"><input type="checkbox">全选当前列表</label>
           <div class="ob-dc-status"></div>
@@ -3226,25 +3319,51 @@
     document.addEventListener('keydown', douyinCommentManagerKeyHandler);
 
     const keyOf = (info) => (info && info.keys || []).join('|');
-    const getRecords = () => uniqueUsers(collectUsers(document, 'comment-manager'));
+    const currentPageKey = () => typeof adapter.videoKey === 'function'
+      ? adapter.videoKey() : location.pathname + location.search;
+    const getRecords = () => {
+      const nextKey = currentPageKey();
+      if (commentPageKey && nextKey !== commentPageKey) { commentRecords.clear(); selected.clear(); }
+      commentPageKey = nextKey;
+      for (const info of uniqueUsers(collectUsers(document, 'comment-manager'))) {
+        const key = keyOf(info);
+        if (!key) continue;
+        const existing = commentRecords.get(key);
+        if (!existing) commentRecords.set(key, { ...info });
+        else {
+          if (!existing.label && info.label) existing.label = info.label;
+          if (!existing.note && info.note) existing.note = info.note;
+        }
+      }
+      return Array.from(commentRecords.values()).filter((info) => !Index.isBlocked(info.keys));
+    };
+    const filterRecords = (records) => {
+      const term = String(searchText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!term) return records;
+      return records.filter((info) => [info.label, info.note, ...(info.keys || [])]
+        .join(' ').toLowerCase().includes(term));
+    };
     const status = panel.querySelector('.ob-dc-status');
     const count = panel.querySelector('.ob-dc-count');
     const list = panel.querySelector('.ob-dc-list');
     const checkAll = panel.querySelector('.ob-dc-checkall input');
     const batch = panel.querySelector('.ob-dc-batch');
+    const search = panel.querySelector('.ob-dc-search');
+    const load = panel.querySelector('.ob-dc-load');
     const expand = panel.querySelector('.ob-dc-expand');
 
     function render() {
       if (!panel.isConnected) return;
       const records = getRecords();
+      const filtered = filterRecords(records);
       const available = new Set(records.map(keyOf));
       for (const key of Array.from(selected)) if (!available.has(key)) selected.delete(key);
       list.textContent = '';
-      if (!records.length) {
+      if (!filtered.length) {
         const empty = document.createElement('div'); empty.className = 'ob-dc-empty';
-        empty.textContent = '当前还没有可识别的抖音评论作者'; list.appendChild(empty);
+        empty.textContent = searchText.trim() ? '没有匹配的已加载评论' : '当前还没有可识别的抖音评论作者'; list.appendChild(empty);
       }
-      for (const info of records) {
+      for (const info of filtered) {
         const key = keyOf(info);
         const row = document.createElement('label'); row.className = 'ob-dc-row';
         row.setAttribute('data-key', key);
@@ -3256,14 +3375,18 @@
         if (info.note) { const note = document.createElement('div'); note.className = 'ob-dc-note'; note.textContent = info.note; body.appendChild(note); }
         row.append(checkbox, body); list.appendChild(row);
       }
-      count.textContent = records.length + ' 位评论作者';
-      checkAll.checked = !!records.length && records.every((info) => selected.has(keyOf(info)));
-      checkAll.indeterminate = !checkAll.checked && records.some((info) => selected.has(keyOf(info)));
+      count.textContent = filtered.length === records.length
+        ? records.length + ' 位评论作者'
+        : '匹配 ' + filtered.length + ' / 共 ' + records.length + ' 位评论作者';
+      checkAll.checked = !!filtered.length && filtered.every((info) => selected.has(keyOf(info)));
+      checkAll.indeterminate = !checkAll.checked && filtered.some((info) => selected.has(keyOf(info)));
       batch.disabled = !selected.size;
       batch.textContent = '屏蔽选中(' + selected.size + ')';
     }
+    search.value = searchText;
+    search.oninput = () => { searchText = search.value; render(); };
     checkAll.onchange = () => {
-      for (const info of getRecords()) {
+      for (const info of filterRecords(getRecords())) {
         const key = keyOf(info);
         if (checkAll.checked) selected.add(key); else selected.delete(key);
       }
@@ -3273,6 +3396,24 @@
       const records = getRecords().filter((info) => selected.has(keyOf(info)));
       if (!records.length) return;
       blockMany(records, batch, '屏蔽选中的 ' + records.length + ' 位抖音评论作者', () => { selected.clear(); render(); });
+    };
+    load.onclick = async () => {
+      if (loadingRunning || !adapter.commentManager || typeof adapter.commentManager.loadMore !== 'function') return;
+      loadingRunning = true; load.disabled = true; expand.disabled = true;
+      status.textContent = '正在滚动评论区并等待懒加载…';
+      try {
+        const result = await adapter.commentManager.loadMore((progress) => {
+          getRecords();
+          status.textContent = '已滚动 ' + progress.scrolls + ' 次，当前观察到 ' + progress.comments + ' 个评论节点…';
+          render();
+        });
+        status.textContent = result.supported
+          ? '已尽量滚动当前评论容器；平台回收/未提供的评论不会被猜测。'
+          : '未找到可安全滚动的评论容器，请手动滚动评论区后再打开弹窗。';
+      } catch (error) {
+        status.textContent = '加载评论失败：' + String(error && error.message || error).slice(0, 100);
+      }
+      loadingRunning = false; load.disabled = false; expand.disabled = false; render();
     };
     let expansionRunning = false;
     const expandAll = async () => {
@@ -3295,7 +3436,9 @@
     expand.onclick = expandAll;
     status.textContent = '正在自动加载带明确回复数量的子评论…';
     render();
-    expandAll();
+    // 先展开当前已加载的明确回复，再做只读滚动尽量加载；用户仍可再次点击按钮重试。
+    // 两步串行，避免滚动与平台回复渲染同时发生时互相覆盖状态。
+    expandAll().then(() => { if (panel.isConnected) load.click(); });
   }
 
   let douyinDanmakuTool = null;
@@ -3318,6 +3461,8 @@
     const selected = new Set();
     let videoKey = '';
     let searchText = '';
+    let scanRunning = false;
+    let scanStatus = '';
 
     const keyOf = (info) => (info && info.keys || []).join('|');
     const collectRecords = () => {
@@ -3326,6 +3471,7 @@
       if (videoKey && nextVideoKey !== videoKey) {
         videoKey = nextVideoKey;
         records.clear(); selected.clear();
+        scanStatus = '';
         closeDouyinDanmakuManager();
       } else if (!videoKey) videoKey = nextVideoKey;
       for (const info of adapter.collectDanmaku(document) || []) {
@@ -3396,7 +3542,66 @@
         });
       };
       const totalMessages = filtered.reduce((sum, info) => sum + (Number(info.messageCount) || 1), 0);
-      douyinDanmakuManager.querySelector('.ob-dd-status').textContent = filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕';
+      douyinDanmakuManager.querySelector('.ob-dd-status').textContent = scanStatus
+        || (filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕');
+      const scan = douyinDanmakuManager.querySelector('.ob-dd-scan');
+      scan.disabled = scanRunning;
+      scan.textContent = scanRunning ? '扫描中…' : '尽量加载弹幕';
+    }
+
+    async function scanDanmakuTimeline() {
+      if (scanRunning) return;
+      const video = querySelectorAllDeep(document, 'video')[0];
+      const duration = Number(video && video.duration);
+      if (!video || !Number.isFinite(duration) || duration <= 0) {
+        scanStatus = '播放器尚未提供可扫描的总时长';
+        render();
+        return;
+      }
+      const requestedKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
+      const originalTime = Number(video.currentTime) || 0;
+      const wasPlaying = !video.paused && !video.ended;
+      const sampleCount = Math.min(60, Math.max(6, Math.ceil(duration / 15)));
+      let completed = 0;
+      scanRunning = true;
+      scanStatus = '正在扫描弹幕时间轴 0/' + sampleCount + '…';
+      render();
+      const seekAndWait = (time) => new Promise((resolve) => {
+        let finished = false;
+        const done = () => {
+          if (finished) return;
+          finished = true;
+          try { video.removeEventListener('seeked', done); } catch (e) {}
+          resolve();
+        };
+        try { video.addEventListener('seeked', done, { once: true }); } catch (e) {}
+        try { video.currentTime = time; } catch (e) { done(); return; }
+        setTimeout(done, 650);
+      });
+      try {
+        if (wasPlaying) video.pause();
+        for (let index = 0; index < sampleCount; index++) {
+          const currentKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
+          if (currentKey !== requestedKey) break;
+          const time = sampleCount === 1 ? 0 : Math.min(Math.max(0, duration - 0.05), duration * index / (sampleCount - 1));
+          await seekAndWait(time);
+          await new Promise((resolve) => setTimeout(resolve, 180));
+          collectRecords();
+          completed = index + 1;
+          scanStatus = '正在扫描弹幕时间轴 ' + completed + '/' + sampleCount + '…';
+          render();
+        }
+      } finally {
+        try { video.currentTime = Math.min(Math.max(0, originalTime), Math.max(0, duration - 0.05)); } catch (e) {}
+        if (wasPlaying) {
+          try { const playing = video.play(); if (playing && playing.catch) playing.catch(() => {}); } catch (e) {}
+        }
+        scanRunning = false;
+        scanStatus = completed
+          ? '已扫描 ' + completed + '/' + sampleCount + ' 个时间点；平台未渲染的弹幕不会被猜测。'
+          : '未完成弹幕时间轴扫描；可稍后重试。';
+        render();
+      }
     }
 
     function open() {
@@ -3408,6 +3613,7 @@
           <div class="ob-dd-head"><h2 id="ob-dd-title">抖音弹幕屏蔽</h2><button class="ob-dd-close" type="button" title="关闭" aria-label="关闭">×</button></div>
           <div class="ob-dd-toolbar">
             <input class="ob-dd-search" type="search" placeholder="搜索已观察弹幕" aria-label="搜索已观察弹幕">
+            <button class="ob-dd-scan" type="button">尽量加载弹幕</button>
             <label class="ob-dd-checkall"><input type="checkbox">全选当前列表</label>
           </div>
           <div class="ob-dd-list"></div>
@@ -3419,6 +3625,7 @@
       const search = panel.querySelector('.ob-dd-search');
       search.value = searchText;
       search.oninput = () => { searchText = search.value; render(); };
+      panel.querySelector('.ob-dd-scan').onclick = () => { void scanDanmakuTimeline(); };
       douyinDanmakuManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDouyinDanmakuManager(); };
       document.addEventListener('keydown', douyinDanmakuManagerKeyHandler);
       document.body.appendChild(panel);
@@ -3640,7 +3847,14 @@
         fab = document.createElement('button');
         fab.type = 'button'; fab.setAttribute('data-ob-kind', 'page');
         fab.className = 'ob-bulk';
-        fab.style.position = 'fixed'; fab.style.left = '14px'; fab.style.bottom = '14px';
+        fab.style.position = 'fixed';
+        if (a.id === 'douyin') {
+          // 抖音播放器占据左下角；与齿轮、弹幕工具共用右侧固定列。
+          fab.setAttribute('data-ob-douyin-toolbar', '1');
+          fab.style.left = 'auto'; fab.style.right = '14px'; fab.style.bottom = '106px';
+        } else {
+          fab.style.left = '14px'; fab.style.right = 'auto'; fab.style.bottom = '14px';
+        }
         fab.onclick = () => {
           if (a.commentManager) { openDouyinCommentManager(a); return; }
           // 支持整区抓取的平台先问范围与时间；其余平台保持原有的直接批量行为。

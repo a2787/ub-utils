@@ -338,13 +338,14 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const dyCommentPage = await browser.newPage();
     const dyCommentFixture = `<!doctype html><html><body>
       <!-- 人工合成：真实抖音评论侧栏的 #relatedVideoCard.LookModalFrameFast 结构。 -->
-      <div id="relatedVideoCard" class="LookModalFrameFast">
+      <div id="relatedVideoCard" class="LookModalFrameFast" style="height:180px;overflow:auto">
       <!-- 人工合成：视频页可观察到的带发送者身份弹幕节点；同一作者出现两条，管理器应去重。 -->
       <div class="dy-danmaku-layer">
         <div id="dy-dm-one" data-danmu-id="dm-one" data-danmaku-user-id="900001">弹幕甲</div>
         <div id="dy-dm-one-again" data-danmu-id="dm-one-again" data-danmaku-user-id="900001">弹幕甲的另一条</div>
         <div id="dy-dm-two" data-danmu-id="dm-two" data-danmaku-user-id="900002">弹幕乙</div>
       </div>
+      <div style="height:220px"></div>
       <div data-e2e="comment-item" id="dy-comment-root">
         <a data-e2e="comment-username" href="/user/MS4wLjABAACommentRoot">根评论作者</a>
         <span>根评论正文</span>
@@ -357,6 +358,28 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         <div class="semi-tooltip-content"><div id="dy-report-comment" data-e2e="video-comment-more-report">举报评论</div></div>
       </div>
       <script>
+        const dyCard = document.getElementById('relatedVideoCard');
+        dyCard.addEventListener('scroll', function () {
+          if (dyCard.dataset.lazyLoaded || dyCard.scrollTop <= 0) return;
+          dyCard.dataset.lazyLoaded = '1';
+          dyCard.insertAdjacentHTML('beforeend', '<div data-e2e="comment-item" id="dy-comment-lazy"><a data-e2e="comment-username" href="/user/MS4wLjABAACommentLazy">滚动加载作者</a><span>滚动后才出现的评论</span></div>');
+        });
+        const dyVideo = document.createElement('video');
+        dyVideo.id = 'dy-video';
+        document.body.appendChild(dyVideo);
+        let dyVideoTime = 0;
+        Object.defineProperty(dyVideo, 'duration', { configurable: true, value: 45 });
+        Object.defineProperty(dyVideo, 'currentTime', {
+          configurable: true,
+          get: function () { return dyVideoTime; },
+          set: function (value) {
+            dyVideoTime = Number(value) || 0;
+            if (dyVideoTime > 20 && !document.getElementById('dy-dm-three')) {
+              document.querySelector('.dy-danmaku-layer').insertAdjacentHTML('beforeend', '<div id="dy-dm-three" data-danmu-id="dm-three" data-danmaku-user-id="900003">时间轴弹幕丙</div>');
+            }
+            dyVideo.dispatchEvent(new Event('seeked'));
+          },
+        });
         document.getElementById('dy-comment-expand').addEventListener('click', function () {
           if (document.getElementById('dy-reply-one')) return;
           const root = document.getElementById('dy-comment-root');
@@ -399,6 +422,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       }
       const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
       result.fabPresent = !!fab;
+      result.fabRightColumn = !!fab && fab.style.left === 'auto' && fab.style.right === '14px' && fab.style.bottom === '106px';
+      const gear = document.querySelector('#ob-gear');
+      result.gearRightColumn = !!gear && getComputedStyle(gear).right === '14px' && getComputedStyle(gear).bottom === '14px';
       if (!fab) return result;
       fab.click();
       await pause(100);
@@ -414,17 +440,31 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       result.expandedRows = manager.querySelectorAll('.ob-dc-row').length;
       result.expandedAuthors = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
         .every((sec) => Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:' + sec));
+      const commentSearch = manager.querySelector('.ob-dc-search');
+      if (commentSearch) {
+        commentSearch.value = '子评论作者乙';
+        commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        await pause(60);
+      }
+      result.commentSearchRows = manager.querySelectorAll('.ob-dc-row').length;
+      result.commentSearchMatch = Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentTwo');
+      if (commentSearch) {
+        commentSearch.value = '';
+        commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        await pause(60);
+      }
+      result.lazyCommentLoaded = Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentLazy');
       const checkAll = manager.querySelector('.ob-dc-checkall input');
       if (checkAll) checkAll.click();
       await pause(80);
       const batch = manager.querySelector('.ob-dc-batch');
-      result.batchSelected = !!batch && !batch.disabled && /3/.test(batch.textContent);
+      result.batchSelected = !!batch && !batch.disabled && /4/.test(batch.textContent);
       if (batch) batch.click();
       await pause(80);
       const confirm = document.getElementById('ob-confirm');
       if (confirm) confirm.querySelector('.ob-ok').click();
       await pause(180);
-      result.allBlocked = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
+      result.allBlocked = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo', 'MS4wLjABAACommentLazy']
         .every((sec) => window.OB.Index.isBlocked('douyin:secuid:' + sec));
       const managerClose = manager.querySelector('.ob-dc-close');
       if (managerClose) managerClose.click();
@@ -433,11 +473,25 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       result.dmToolPresent = !!dmTool;
       result.dmToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
       result.dmToolText = dmTool && dmTool.textContent;
+      result.dmToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px' && getComputedStyle(dmTool).bottom === '62px';
       if (dmTool) dmTool.click();
       await pause(100);
       const dmManager = document.querySelector('#ob-douyin-dm-manager');
       result.dmManagerPresent = !!dmManager;
       result.dmRows = dmManager ? dmManager.querySelectorAll('.ob-dd-row').length : 0;
+      const dmSearch = dmManager && dmManager.querySelector('.ob-dd-search');
+      if (dmSearch) {
+        dmSearch.value = '弹幕乙';
+        dmSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        await pause(60);
+      }
+      result.dmSearchRows = dmManager ? dmManager.querySelectorAll('.ob-dd-row').length : 0;
+      result.dmSearchMatch = !!dmManager && Array.from(dmManager.querySelectorAll('.ob-dd-row')).some((row) => row.getAttribute('data-key') === 'douyin:uid:900002');
+      if (dmSearch) {
+        dmSearch.value = '';
+        dmSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        await pause(60);
+      }
       const dmCheckAll = dmManager && dmManager.querySelector('.ob-dd-checkall input');
       if (dmCheckAll) dmCheckAll.click();
       await pause(80);
@@ -453,6 +507,14 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         const node = document.querySelector(selector);
         return node && (getComputedStyle(node).display === 'none' || node.getBoundingClientRect().height === 0);
       });
+      const dmScan = dmManager && dmManager.querySelector('.ob-dd-scan');
+      result.dmScanPresent = !!dmScan;
+      const scanVideo = document.querySelector('#dy-video');
+      if (scanVideo) scanVideo.currentTime = 9;
+      if (dmScan) dmScan.click();
+      await pause(1500);
+      result.dmTimelineLoaded = !!dmManager && Array.from(dmManager.querySelectorAll('.ob-dd-row')).some((row) => row.getAttribute('data-key') === 'douyin:uid:900003');
+      result.dmTimelineRestored = !!scanVideo && Math.abs(Number(scanVideo.currentTime) - 9) < 0.1;
       if (dmManager) {
         const closeDm = dmManager.querySelector('.ob-dd-close');
         if (closeDm) closeDm.click();
@@ -474,10 +536,13 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     });
     if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 1 && dyComments.menuConfirmHasRootAuthor
       && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
-      && dyComments.initialRows >= 1 && dyComments.expandedRows === 3 && dyComments.expandedAuthors
+      && dyComments.fabRightColumn && dyComments.gearRightColumn
+      && dyComments.initialRows >= 1 && dyComments.expandedRows >= 3 && dyComments.expandedAuthors
+      && dyComments.commentSearchRows === 1 && dyComments.commentSearchMatch && dyComments.lazyCommentLoaded
       && dyComments.batchSelected && dyComments.allBlocked && dyComments.dmToolPresent && dyComments.dmToolVisible
-      && /\(2\)/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
-      && dyComments.dmBatchSelected && dyComments.dmBlocked && dyComments.dmHidden
+      && dyComments.dmToolRightColumn && /\(2\)/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
+      && dyComments.dmSearchRows === 1 && dyComments.dmSearchMatch && dyComments.dmBatchSelected
+      && dyComments.dmBlocked && dyComments.dmHidden && dyComments.dmScanPresent && dyComments.dmTimelineLoaded && dyComments.dmTimelineRestored
       && /\(0\)/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 0) {
       report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block; comment manager expands/batches replies; video danmaku manager dedupes, batches, and resets on video change');
     } else report.fail.push('douyin-comment-tools: ' + JSON.stringify(dyComments));
