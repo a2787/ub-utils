@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.31.0
+// @version       0.32.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.31.0-weibo-virtual-row';
+  const RUNTIME_BUILD = '0.32.0-weibo-continuity';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1044,6 +1044,7 @@
   const virtualRowInlineStates = new WeakMap();
   const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
   const MAX_VIRTUAL_ROW_HEIGHT = 20000;
+  const MAX_VIRTUAL_ROW_GAP = 4096;
   const BLOCKED_WRAPPER_INLINE_PROPS = [
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
@@ -1280,7 +1281,15 @@
         continue;
       }
 
-      const abnormal = !Number.isFinite(entry.y) || Math.abs(entry.y) > MAX_VIRTUAL_ROW_HEIGHT;
+      const expectedBaseY = previousActive && Number.isFinite(previousActive.baseY) && previousActive.height > 0
+        ? previousActive.baseY + previousActive.height : NaN;
+      const discontinuous = Number.isFinite(entry.y) && Number.isFinite(expectedBaseY)
+        && Math.abs(entry.y - expectedBaseY) > MAX_VIRTUAL_ROW_GAP;
+      // 绝对位置可以随着长列表滚动而变大，只有没有相邻基线时才使用上限；
+      // 有相邻活动行时以连续性为准，覆盖当前真站约 -20000px 的错误活动行。
+      const abnormal = !Number.isFinite(entry.y)
+        || discontinuous
+        || (!Number.isFinite(expectedBaseY) && Math.abs(entry.y) > MAX_VIRTUAL_ROW_HEIGHT);
       let baseY = Number.isFinite(entry.y) && !abnormal ? entry.y : NaN;
       let baseSource = entry.source;
       if (abnormal && previousActive && Number.isFinite(previousActive.baseY) && previousActive.height > 0) {

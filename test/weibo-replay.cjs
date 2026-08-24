@@ -5,7 +5,7 @@
  * 文案和页面标识替换为人工合成值。它保留真正影响补位的层级：
  * vue-recycle-scroller__item-view > wbpro-scroller-item > item2，以及平台回收行的
  * opacity:0/translateY(-9999px)。另外模拟登录态首轮给 item-view 写入临时超大高度，
- * 并让平台周期性把后续行 transform 写回原值。
+ * 并让平台周期性把后续行 transform 写回约 -20000px 或科学计数法异常值。
  *
  * 默认运行当前工作区源码：node test/weibo-replay.cjs
  * 旧版可失败性：node test/weibo-replay.cjs --git-ref=v0.28.0
@@ -68,20 +68,20 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 </body></html>`;
 
 // 2026-08-24 用户 Chrome 当前页的第二种真实契约：顶层评论本身也被虚拟行包裹。
-// 这些行在首轮异常后会出现活动行 translateY(-1e6) + !important；作者、UID 和文案均为人工合成。
-const topRow = (transform, uid, label, height, extraStyle) => `
+// 这些行在首轮异常后会出现活动行 translateY(-20000px 附近) + !important；作者、UID 和文案均为人工合成。
+const topRow = (transform, uid, label, height, extraStyle, dataIndex, active = true) => `
   <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:${transform} translateX(0px)${extraStyle || ''};opacity:1">
-    <div class="wbpro-scroller-item" style="display:flex;box-sizing:border-box;height:${height}px !important">
+    <div class="wbpro-scroller-item" data-index="${dataIndex}" data-active="${active ? 'true' : 'false'}" style="display:flex;box-sizing:border-box;height:${height}px !important">
       <div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${uid}" usercard="${uid}">${label}</a><span>顶层评论正文</span></div><div class="info"><div class="opt"></div></div></div></div></div>
     </div>
   </div>`;
 const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="wbpro-list"><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper">
-  ${topRow('translateY(0px)', '100010', '顶层前置作者', 101)}
-  ${topRow('translateY(101px)', '100011', '顶层前置作者二', 63)}
-  ${topRow('translateY(164px)', '100001', '顶层被屏蔽作者', 63)}
-  ${topRow('translateY(-1.0001e+06px)', '100012', '顶层后续作者', 63, ' !important')}
-  ${topRow('translateY(-1.00004e+06px)', '100013', '顶层后续作者二', 110, ' !important')}
-  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0"><div class="wbpro-scroller-item" style="height:63px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100014" usercard="100014">非活动回收作者</a></div></div></div></div></div></div>
+  ${topRow('translateY(0px)', '100010', '顶层前置作者', 101, '', 0)}
+  ${topRow('translateY(101px)', '100011', '顶层前置作者二', 63, '', 1)}
+  ${topRow('translateY(164px)', '100001', '顶层被屏蔽作者', 63, '', 2)}
+  ${topRow('translateY(-19956px)', '100012', '顶层后续作者', 63, ' !important', 4)}
+  ${topRow('translateY(-19846px)', '100013', '顶层后续作者二', 110, ' !important', 5)}
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0"><div class="wbpro-scroller-item" data-index="17" data-active="false" style="height:63px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100014" usercard="100014">非活动回收作者</a></div></div></div></div></div></div>
 </div></div></div></body></html>`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -173,10 +173,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const match = (row.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)px/i);
         return match ? Number(match[1]) : NaN;
       };
+      let platformWrites = 0;
       const timer = setInterval(() => {
         const current = rows();
-        if (current[3]) current[3].style.setProperty('transform', 'translateY(-1.0001e+06px) translateX(0px)', 'important');
-        if (current[4]) current[4].style.setProperty('transform', 'translateY(-1.00004e+06px) translateX(0px)', 'important');
+        // 当前真站会在异常重排后把活动行写回约 -20000px；偶发科学计数法也要继续兼容。
+        const scientific = platformWrites % 2 === 1;
+        if (current[3]) current[3].style.setProperty('transform', scientific
+          ? 'translateY(-1.0001e+06px) translateX(0px)'
+          : 'translateY(-19956px) translateX(0px)', 'important');
+        if (current[4]) current[4].style.setProperty('transform', scientific
+          ? 'translateY(-1.00004e+06px) translateX(0px)'
+          : 'translateY(-19846px) translateX(0px)', 'important');
+        platformWrites++;
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
       clearInterval(timer);
