@@ -1414,3 +1414,56 @@ B站播放器浮动弹幕入口、微博楼中楼行内入口。
 
 - 发布后用户更新到 v0.27.0 并刷新当前微博页面，屏蔽一条评论后观察页面是否恢复流畅，且该评论下方内容是否
   继续显示并稳定补位；若仍卡顿，应先保留页面并通知我，不要切换浏览器。
+
+### 2026-08-24 - v0.28.0 工作区 - 微博非活动虚拟行整段空白
+
+**范围与复现**
+
+- 当前用户 Chrome 的微博详情页在 v0.27.0 下可读复现：第一个被本地屏蔽的虚拟行处于
+  平台回收状态（原始 `translateY(-9999px); opacity:0`），后续多行被脚本改写为约
+  `translateY(-1.00014e+06px) !important`，页面从该处向下全部空白；现场读取正常、未触发
+  验证码，也没有点击微博举报、官方拉黑、关注或发帖。
+- 根因是补位函数把非活动回收行当成可见行写入补偿 transform；`!important` 又阻止微博虚拟
+  列表在滚动复用时重新接管这些节点。
+
+**改动文件**
+
+- `omniblock.user.js`：识别 `opacity:0`/不可见的微博回收行；该类行保留平台 transform，
+  并清除旧的本地补位状态；只对活动行应用后续评论补位。
+- `test/adapters.cjs`：扩展人工合成的微博回复弹窗夹具，加入两个非活动回收行，并断言旧版
+  会改写它们、新版保持原始 transform。
+- `README.md`、`CHANGELOG.md`：同步 v0.28.0 的用户可见行为和验证边界。
+
+**证据**
+
+- `real-site verified`：2026-08-24 当前用户 Chrome 实际观察到上述负一百万像素 transform、
+  非活动行的原始回收样式和向下空白；这是 v0.27.0 的失败复现，不是 v0.28.0 修复后验收。
+- `structure regression`：`node test/adapters.cjs` 21/21；旧 v0.27.0 源码在新增夹具上为 20/21
+  并失败 `recycledRowUntouched`，当前源码通过；微博隔离探针 `node test/real-platform-probe.cjs
+  weibo --verify-local` 发现目标、无页面错误，局部屏蔽与撤销通过。
+- `blocked`：当前用户 Chrome 尚未安装 v0.28.0，精确页面的修复后结果不能提前宣称。
+
+**检查**
+
+- `node --check omniblock.user.js`：通过。
+- `node test/run.cjs`：12/12；`node test/state.cjs`：7/7；`node test/quickblock.cjs`：32/32。
+- `node test/adapters.cjs`：21/21；`node test/douyin.cjs`：2/2；无页面错误。
+- `node test/real-platform-probe.cjs weibo --verify-local`：`version 0.28.0`，自动发现目标、
+  `loaded:true`、`errors:[]`，局部屏蔽后隐藏/补位/撤销通过。
+- `git diff --check`：通过；隐私门禁 `rg`：无具体页面或账号标识命中。
+
+**当前限制**
+
+- 微博仍只对可识别的绝对定位 `vue-recycle-scroller__item-view`，且虚拟行自身只包含被隐藏评论的
+  情况做补位；其他虚拟列表实现仍需新的真实 DOM 捕获。
+
+**版本/发布状态**
+
+- 源码已提升到 `@version 0.28.0`；功能提交 `c4ebb869f8dff55ab13f6718d86ffb52adcd23c9` 已在
+  本地完成，docs 提交、推送、tag 和 GitHub Release 尚待执行。
+
+**下一项最有价值的验证**
+
+- 发布后用户在同一 Chrome 会话更新到 v0.28.0 并刷新当前微博详情页，确认屏蔽一条评论后页面不卡顿、
+  下方评论继续显示；再滚动使回收行重新活动，确认微博能接管原始 transform。若出现验证码或页面再次
+  卡顿，保留当前标签页并通知我，不要切换浏览器。
