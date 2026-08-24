@@ -47,7 +47,7 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
     <div class="item1">
       <div class="item1in"><div class="con1"><div class="text"><a href="/u/100">根评论作者</a></div><div class="info"><div class="opt"></div></div></div></div>
       <div class="list2">
-        <div class="vue-recycle-scroller ready page-mode"><div class="vue-recycle-scroller__item-wrapper">
+        <div class="vue-recycle-scroller ready page-mode"><div class="vue-recycle-scroller__item-wrapper" style="min-height:288px">
           <div class="vue-recycle-scroller__item-view" style="position:absolute;height:1000100px;transform:translateY(0px) translateX(0px)">
             <div class="wbpro-scroller-item" style="box-sizing:border-box;height:72px !important;padding-bottom:12px !important"><div class="item2"><div class="con2"><div class="text"><a href="/u/100001" usercard="100001">回放被屏蔽作者</a><span>回复正文</span></div><div class="info"><div class="opt"></div></div></div></div></div>
           </div>
@@ -75,7 +75,7 @@ const topRow = (transform, uid, label, height, extraStyle, dataIndex, active = t
       <div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${uid}" usercard="${uid}">${label}</a><span>顶层评论正文</span></div><div class="info"><div class="opt"></div></div></div></div></div>
     </div>
   </div>`;
-const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="wbpro-list"><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper">
+const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="wbpro-list"><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" style="min-height:400px">
   ${topRow('translateY(0px)', '100010', '顶层前置作者', 101, '', 0)}
   ${topRow('translateY(101px)', '100011', '顶层前置作者二', 63, '', 1)}
   ${topRow('translateY(164px)', '100001', '顶层被屏蔽作者', 63, '', 2)}
@@ -124,10 +124,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         return match ? Number(match[1]) : NaN;
       };
       const next = rows()[1];
+      const wrapper = next && next.parentElement;
       let platformWrites = 0;
       const timer = setInterval(() => {
         if (!next) return;
         next.style.setProperty('transform', 'translateY(72px) translateX(0px)', '');
+        if (wrapper) wrapper.style.setProperty('min-height', '288px', '');
         platformWrites++;
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
@@ -143,6 +145,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const nextCompensated = afterBlock[1] && afterBlock[1].y === 0;
       const recycledUntouched = afterBlock[2] && afterBlock[2].y === -9999 && afterBlock[2].priority === '';
       const beforeRestore = { blockedHeight: rows()[0].getBoundingClientRect().height, nextY: afterBlock[1] && afterBlock[1].y };
+      const wrapperAfterBlock = wrapper ? wrapper.getBoundingClientRect().height : 0;
       window.OB.Store.removeIdentity('weibo:uid:100001');
       await new Promise((resolve) => setTimeout(resolve, 240));
       const restoredRows = rows();
@@ -154,11 +157,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const y = parseY(row); return getComputedStyle(row).opacity !== '0' && Number.isFinite(y) && Math.abs(y) > 20000;
         }),
       };
-      return { platformWrites, afterBlock, hugeActive, nextCompensated, recycledUntouched, beforeRestore, restored };
+      const wrapperRestored = wrapper ? wrapper.getBoundingClientRect().height === 288 : false;
+      return { platformWrites, afterBlock, hugeActive, nextCompensated, recycledUntouched, beforeRestore, wrapperAfterBlock, wrapperRestored, restored };
     });
     if (stress.platformWrites >= 10 && !stress.hugeActive && stress.nextCompensated && stress.recycledUntouched
+      && stress.wrapperAfterBlock === 216 && stress.wrapperRestored
       && !stress.restored.blocked && stress.restored.nextY === 72 && !stress.restored.downstreamHuge) {
-      report.pass.push('回放压力：平台反复回写 transform 后仍稳定补位，回收行不被锁死，撤销恢复原位');
+      report.pass.push('回放压力：平台反复回写 transform/spacer 后仍稳定补位，回收行不被锁死，撤销恢复原位');
     } else report.fail.push('回放压力失败：' + JSON.stringify(stress));
 
     const topPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -176,6 +181,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       let platformWrites = 0;
       const timer = setInterval(() => {
         const current = rows();
+        const wrapper = current[0] && current[0].parentElement;
         // 当前真站会在异常重排后把活动行写回约 -20000px；偶发科学计数法也要继续兼容。
         const scientific = platformWrites % 2 === 1;
         if (current[3]) current[3].style.setProperty('transform', scientific
@@ -184,6 +190,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         if (current[4]) current[4].style.setProperty('transform', scientific
           ? 'translateY(-1.00004e+06px) translateX(0px)'
           : 'translateY(-19846px) translateX(0px)', 'important');
+        if (wrapper) wrapper.style.setProperty('min-height', '400px', '');
         platformWrites++;
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
@@ -192,6 +199,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const active = afterBlock.filter((row) => row.opacity !== '0');
       const hugeActive = active.slice(1).some((row) => Number.isFinite(row.y) && Math.abs(row.y) > 20000);
       const expected = afterBlock[3] && afterBlock[3].y === 164 && afterBlock[4] && afterBlock[4].y === 227;
+      const wrapper = rows()[0] && rows()[0].parentElement;
+      const wrapperAfterBlock = wrapper ? wrapper.getBoundingClientRect().height : 0;
       window.OB.Store.removeIdentity('weibo:uid:100001');
       await new Promise((resolve) => setTimeout(resolve, 240));
       const restoredRows = rows();
@@ -200,9 +209,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         downstreamY: restoredRows[4] ? parseY(restoredRows[4]) : NaN,
         downstreamHuge: restoredRows.slice(3).some((row) => Number.isFinite(parseY(row)) && Math.abs(parseY(row)) > 20000),
       };
-      return { afterBlock, hugeActive, expected, restored };
+      const wrapperRestored = wrapper ? wrapper.getBoundingClientRect().height === 400 : false;
+      return { afterBlock, hugeActive, expected, wrapperAfterBlock, wrapperRestored, restored };
     });
     if (!top.hugeActive && top.expected && !top.restored.downstreamHuge
+      && top.wrapperAfterBlock === 337 && top.wrapperRestored
       && top.restored.nextY === 227 && top.restored.downstreamY === 290) {
       report.pass.push('顶层虚拟评论回放：异常超大 transform 被恢复为连续位置，平台反复回写后仍补位，撤销恢复');
     } else report.fail.push('顶层虚拟评论回放失败：' + JSON.stringify(top));

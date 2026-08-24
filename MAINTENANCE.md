@@ -72,6 +72,70 @@
 
 ## 当前交接
 
+### 2026-08-25 - v0.35.0 候选 - 微博虚拟列表 spacer 补位
+
+**范围**
+
+本轮只修复微博评论本地屏蔽后的虚拟列表尾部空白。历史版本已经能把被屏蔽行的
+`translateY` 调回连续位置，但没有同步缩短同一个 `vue-recycle-scroller__item-wrapper` 的
+`min-height`；微博仍按旧总高度布局，因此评论区尾部留下与被隐藏行等高的空白。当前补丁在
+屏蔽期间记录列表原始尺寸，按同列表中实际隐藏虚拟行的累计高度扣减 `min-height` 或显式
+`height`，并在微博反复回写 spacer 时重新应用补偿；撤销时只恢复仍属于脚本补偿的尺寸，避免
+覆盖平台新的合法基线。
+
+**改动文件**
+
+- `omniblock.user.js`：新增虚拟列表尺寸状态、累计隐藏行高度补偿、平台 spacer 回写观察和撤销恢复；
+  版本为 v0.35.0，构建标识为 `0.35.0-weibo-virtual-spacer-douyin-manager`。
+- `test/weibo-replay.cjs`：人工合成的真实 DOM 契约加入 `item-wrapper` 的 `min-height`，压力回写
+  同时覆盖 transform/spacer，并断言隐藏后尺寸减少、撤销后恢复。
+- `test/real-platform-probe.cjs`：真实微博只读探针增加顶层虚拟评论 spacer 的单条隐藏/撤销断言；
+  不点击微博平台举报、官方拉黑、关注或发帖控件。
+- `README.md`、`CHANGELOG.md`：同步用户可见行为、根因和证据边界。
+
+**证据**
+
+- **`real-site verified`**：2026-08-25 隔离未登录浏览器打开公开微博详情页（脱敏形式
+  `weibo.com/...`），使用 v0.35.0 当前源码实际观察到：顶层虚拟评论隐藏 63px 行后，所属
+  `item-wrapper` 高度从 1568px 减至 1505px，撤销后尺寸和目标评论恢复；楼中楼独立隐藏时根评论
+  从 191px 减至 139px，撤销恢复。探针无页面错误，也没有触碰平台写入控件。
+- **`structure regression`**：`node test/weibo-replay.cjs` 3/3、`node test/adapters.cjs` 21/21；
+  `node test/weibo-replay.cjs --git-ref=4b5fdca` 的旧 v0.34.0 源码在新增两个 spacer 断言上失败，
+  说明旧实现只处理行位移、没有处理容器总高。
+- **`blocked`**：本轮未取得用户当前登录浏览器的“可登录验证”授权，因此没有连接用户调试会话，
+  也没有把当前用户名单或精确登录页面写入验证日志。隔离页证据不能替代登录态验收。
+
+**检查**
+
+- 已通过：`node --check omniblock.user.js`、`node --check test/real-platform-probe.cjs`、
+  `node --check test/weibo-replay.cjs`、`git diff --check`、`node test/weibo-replay.cjs`、
+  `node test/adapters.cjs`。
+- 已通过：`node test/real-platform-probe.cjs weibo --verify-local --url=...`；输出 `errors:[]`，
+  顶层 spacer 和楼中楼本地隐藏/撤销断言均通过。
+- 已完成：通用 UI 13/13、状态 7/7、B 站快捷/弹幕 32/32、抖音推荐流 2/2、跨平台适配器 21/21、
+  微博回放 3/3；`node test/maintenance-check.cjs` 的本地阶段全部通过，最终整体仅因其默认隔离
+  抖音/微博入口遭遇 `ERR_NETWORK_ACCESS_DENIED` 而按规则记为 `blocked`。最终隐私门禁已运行且无
+  具体页面标识命中；用户若授权，可再用 browser-harness 在本人当前登录页确认 v0.35.0 构建标识与实际补位。
+
+**限制**
+
+- 当前修复针对真实捕获的 `vue-recycle-scroller__item-wrapper`，只在列表明确提供可测的
+  `min-height` 或 inline `height` 时接管尺寸；其他虚拟列表实现、canvas 或不接受 inline 尺寸的
+  容器仍需新的 DOM 捕获。
+- 隔离探针验证的是公开未登录页面；用户当前登录态可能有不同的回收窗口和已屏蔽名单，不能在未
+  授权前替代复核。
+
+**版本/发布状态**
+
+- 工作区候选 v0.35.0，尚未提交、推送、创建 tag 或 GitHub Release；遵守本轮新 AGENTS.md 的
+  发布红线，等待登录态复核和用户明确发布决定。
+
+**下一项最有价值的验证**
+
+用户回复“可登录验证”后，保持本人专用调试浏览器的当前微博页面和 9222 端口不变；维护者只读
+连接并确认齿轮上的 `0.35.0-weibo-virtual-spacer-douyin-manager`，再屏蔽一条未在名单中的根评论
+和一条楼中楼，观察下方评论是否立即补位。整个过程不点击微博举报/官方拉黑等平台写入控件。
+
 ### 2026-08-24 - v0.34.0 候选 - 抖音管理器布局、搜索与尽量加载
 
 **范围**

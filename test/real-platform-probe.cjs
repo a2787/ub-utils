@@ -295,7 +295,119 @@ async function pickWeiboDetailTarget(browser, candidates) {
             const restoredRow = liveRows().find((item) => keyOf(item) === key) || row;
             const restored = !!undo && !window.OB.Index.isBlocked(key)
               && getComputedStyle(restoredRow).display !== 'none' && restoredRow.getBoundingClientRect().height > 0;
-            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored };
+
+            // 顶层评论在当前真站会被 vue-recycle-scroller 放进独立 item-view。
+            // 只验证脚本自身入口和本地名单，不触碰微博举报/官方拉黑等写入控件。
+            // 这里专门检查 item-wrapper 的 min-height 是否随隐藏行扣减；只移动行的
+            // transform 而不缩短这个 spacer，正是评论下方出现整段空白的原因。
+            const topCommentOf = (virtualRow) => {
+              const candidates = Array.from(virtualRow.querySelectorAll('.item1,.item2,.card-review[comment_id]'));
+              return candidates.find((comment) => {
+                let parent = comment.parentElement;
+                while (parent && parent !== virtualRow) {
+                  if (parent.matches && parent.matches('.item1,.item2,.card-review[comment_id]')) return false;
+                  parent = parent.parentElement;
+                }
+                return comment.matches('.item1');
+              }) || null;
+            };
+            const virtualRows = () => Array.from(document.querySelectorAll(
+              '.vue-recycle-scroller__item-wrapper > .vue-recycle-scroller__item-view',
+            ));
+            const inactive = (virtualRow) => {
+              const style = getComputedStyle(virtualRow);
+              return style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0';
+            };
+            const rowHeight = (virtualRow) => {
+              const content = virtualRow && virtualRow.firstElementChild;
+              return Number((content || virtualRow).getBoundingClientRect().height) || 0;
+            };
+            const sizeOf = (list) => Number(list && list.getBoundingClientRect().height) || 0;
+            const inlineSizeOf = (list) => list && (
+              list.style.getPropertyValue('min-height') || list.style.getPropertyValue('height') || ''
+            );
+            const virtualCandidate = virtualRows().map((virtualRow) => ({
+              virtualRow,
+              comment: topCommentOf(virtualRow),
+            })).find(({ virtualRow, comment }) => {
+              if (!comment || inactive(virtualRow) || !comment.querySelector('.ob-weibo-comment-block')) return false;
+              const info = adapter && adapter.extract(comment);
+              const list = virtualRow.parentElement;
+              return !!(info && info.keys && info.keys[0] && list && Number.parseFloat(inlineSizeOf(list)) > 0
+                && rowHeight(virtualRow) > 0);
+            });
+            let topLevelSpacer = { attempted: false };
+            if (!virtualCandidate) {
+              topLevelSpacer.blocked = 'blocked：本轮真实页没有带可测 spacer 的活动顶层虚拟评论';
+            } else {
+              const { virtualRow: targetVirtualRow, comment: targetComment } = virtualCandidate;
+              const targetInfo = adapter.extract(targetComment);
+              const targetKey = targetInfo && targetInfo.keys && targetInfo.keys[0];
+              const list = targetVirtualRow.parentElement;
+              const siblings = () => Array.from(list.children || [])
+                .filter((candidate) => candidate.matches && candidate.matches('.vue-recycle-scroller__item-view'));
+              const targetIndex = siblings().indexOf(targetVirtualRow);
+              const nextVirtualRow = siblings().slice(targetIndex + 1)
+                .find((candidate) => !inactive(candidate) && topCommentOf(candidate));
+              const nextBeforeTop = nextVirtualRow ? nextVirtualRow.getBoundingClientRect().top : NaN;
+              const targetHeight = rowHeight(targetVirtualRow);
+              const listBefore = sizeOf(list);
+              const inlineBefore = inlineSizeOf(list);
+              const topButton = targetComment.querySelector('.ob-weibo-comment-block');
+              topButton.click(); await pause(100);
+              const topConfirm = document.getElementById('ob-confirm');
+              if (!topConfirm || !topConfirm.querySelector('.ob-ok') || !targetKey) {
+                topLevelSpacer = { attempted: true, confirm: false };
+              } else {
+                topConfirm.querySelector('.ob-ok').click(); await pause(260);
+                const liveVirtualRows = () => virtualRows().map((virtualRow) => ({
+                  virtualRow,
+                  comment: topCommentOf(virtualRow),
+                }));
+                const liveTarget = liveVirtualRows().find(({ comment }) => comment && keyOf(comment) === targetKey);
+                const liveTargetRow = liveTarget && liveTarget.virtualRow;
+                const liveTargetComment = liveTarget && liveTarget.comment;
+                const liveNext = nextVirtualRow && nextVirtualRow.isConnected
+                  ? nextVirtualRow : (siblings().find((candidate) => candidate !== liveTargetRow && topCommentOf(candidate)) || null);
+                const listAfter = list.isConnected ? list : (liveTargetRow && liveTargetRow.parentElement);
+                const listAfterHeight = sizeOf(listAfter);
+                const targetHidden = !!liveTargetComment && (getComputedStyle(liveTargetComment).display === 'none'
+                  || rowHeight(liveTargetRow) === 0);
+                const spacerDelta = listBefore - listAfterHeight;
+                const spacerCompensated = targetHidden && targetHeight > 0
+                  && Math.abs(spacerDelta - targetHeight) <= 3;
+                const nextAfterTop = liveNext ? liveNext.getBoundingClientRect().top : NaN;
+                const nextShifted = Number.isFinite(nextBeforeTop) && Number.isFinite(nextAfterTop)
+                  ? nextAfterTop <= nextBeforeTop - targetHeight + 3 : true;
+                const topToast = document.getElementById('ob-toast');
+                const topUndo = topToast && topToast.querySelector('button');
+                if (topUndo) { topUndo.click(); await pause(260); }
+                const restoredList = list.isConnected ? list : (liveTargetRow && liveTargetRow.parentElement);
+                const restoredHeight = sizeOf(restoredList);
+                const restoredTopRow = virtualRows().map((virtualRow) => ({
+                  virtualRow,
+                  comment: topCommentOf(virtualRow),
+                })).find(({ comment }) => comment && keyOf(comment) === targetKey);
+                const spacerRestored = !!topUndo && Math.abs(restoredHeight - listBefore) <= 3
+                  && Math.abs(Number.parseFloat(inlineSizeOf(restoredList)) - Number.parseFloat(inlineBefore)) <= 3;
+                const targetRestored = !!topUndo && !window.OB.Index.isBlocked(targetKey)
+                  && !!restoredTopRow && getComputedStyle(restoredTopRow.comment).display !== 'none'
+                  && rowHeight(restoredTopRow.virtualRow) > 0;
+                topLevelSpacer = {
+                  attempted: true,
+                  confirm: true,
+                  targetHeight,
+                  listBefore,
+                  listAfterHeight,
+                  spacerDelta,
+                  spacerCompensated,
+                  nextShifted,
+                  spacerRestored,
+                  targetRestored,
+                };
+              }
+            }
+            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, topLevelSpacer };
           });
           const local = result.localBlock || {};
           const platform = (result.page && result.page.platform) || {};
@@ -303,6 +415,13 @@ async function pickWeiboDetailTarget(browser, candidates) {
             result.errors.push(local.blocked);
           } else if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
             result.errors.push('验证失败：微博详情评论本地拉黑、隔离隐藏或撤销不完整');
+          }
+          const spacer = local.topLevelSpacer || {};
+          if (spacer.blocked && typeof spacer.blocked === 'string' && spacer.blocked.indexOf('blocked：') === 0) {
+            result.errors.push(spacer.blocked);
+          } else if (!spacer.attempted || !spacer.confirm || !spacer.spacerCompensated
+            || !spacer.spacerRestored || !spacer.targetRestored) {
+            result.errors.push('验证失败：微博顶层虚拟评论隐藏后 spacer 未补位或撤销未恢复');
           }
           if (onDetail) {
             if (platform.identifiedRootCount && platform.rootButtonCount !== platform.identifiedRootCount) {

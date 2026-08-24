@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.34.0
+// @version       0.35.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.34.0-douyin-manager-layout-search-loader';
+  const RUNTIME_BUILD = '0.35.0-weibo-virtual-spacer-douyin-manager';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1108,6 +1108,7 @@
   const blockedWrapperInlineStates = new WeakMap();
   const blockedVirtualRowStates = new WeakMap();
   const virtualRowInlineStates = new WeakMap();
+  const virtualListInlineStates = new WeakMap();
   const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
   const MAX_VIRTUAL_ROW_HEIGHT = 20000;
   const MAX_VIRTUAL_ROW_GAP = 4096;
@@ -1115,6 +1116,7 @@
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
   ];
+  const VIRTUAL_LIST_SIZE_PROPS = ['min-height', 'height'];
 
   function collapseWrapperInlineStyle(wrapper) {
     if (!wrapper || !wrapper.style) return;
@@ -1154,6 +1156,100 @@
   function virtualRowOf(container) {
     if (!container || !container.closest) return null;
     return container.closest(VIRTUAL_ROW_SELECTOR);
+  }
+
+  function virtualRowListOf(row) {
+    if (!row || !row.parentElement || !row.matches || !row.matches(VIRTUAL_ROW_SELECTOR)) return null;
+    return row.parentElement;
+  }
+
+  function parseVirtualListPixels(value) {
+    const match = String(value || '').trim().match(/^(-?(?:\d+(?:\.\d*)?|\.\d+))px$/i);
+    const numeric = match ? Number(match[1]) : NaN;
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+  }
+
+  function rememberVirtualList(row) {
+    const list = virtualRowListOf(row);
+    if (!list || !list.style) return list;
+    if (virtualListInlineStates.has(list)) return list;
+    const computed = window.getComputedStyle ? getComputedStyle(list) : null;
+    let prop = '';
+    let originalValue = '';
+    let originalPriority = '';
+    let basePixels = 0;
+    for (const candidate of VIRTUAL_LIST_SIZE_PROPS) {
+      const inlineValue = list.style.getPropertyValue(candidate);
+      const computedValue = computed ? computed.getPropertyValue(candidate) : '';
+      const inlinePixels = parseVirtualListPixels(inlineValue);
+      const computedPixels = parseVirtualListPixels(computedValue);
+      // `height` 的 computed 值即使来自 auto 布局也会是一个像素值；把它
+      // 固定成 inline 高度会反过来接管微博回收器。没有显式 height 时，
+      // 只使用平台明确给出的 min-height 基线。
+      if (candidate === 'height' && !inlinePixels) continue;
+      if (!(inlinePixels > 0 || computedPixels > 0)) continue;
+      prop = candidate;
+      originalValue = inlineValue;
+      originalPriority = list.style.getPropertyPriority(candidate);
+      basePixels = inlinePixels || computedPixels;
+      break;
+    }
+    if (!prop) return list;
+    virtualListInlineStates.set(list, {
+      prop,
+      originalValue,
+      originalPriority,
+      basePixels,
+      appliedValue: list.style.getPropertyValue(prop),
+      appliedPriority: list.style.getPropertyPriority(prop),
+    });
+    return list;
+  }
+
+  function syncVirtualListSize(list, hiddenPixels) {
+    if (!list || !list.style) return;
+    let state = virtualListInlineStates.get(list);
+    if (!state) {
+      const firstRow = Array.from(list.children || [])
+        .find((child) => child.matches && child.matches(VIRTUAL_ROW_SELECTOR));
+      rememberVirtualList(firstRow);
+      state = virtualListInlineStates.get(list);
+    }
+    if (!state || !state.prop) return;
+    const currentValue = list.style.getPropertyValue(state.prop);
+    const currentPriority = list.style.getPropertyPriority(state.prop);
+    if (currentValue !== state.appliedValue || currentPriority !== state.appliedPriority) {
+      const computed = window.getComputedStyle ? getComputedStyle(list) : null;
+      const observedPixels = parseVirtualListPixels(currentValue)
+        || parseVirtualListPixels(computed && computed.getPropertyValue(state.prop));
+      const expectedCompensated = Math.max(0, state.basePixels - hiddenPixels);
+      // 平台重排通常把原始总高重新写回；若它已经写入脚本的补偿后高度，
+      // 则保留现有基线，避免重复扣减。
+      if (observedPixels > 0 && Math.abs(observedPixels - expectedCompensated) > 1) {
+        state.basePixels = observedPixels;
+      }
+    }
+    const desiredPixels = Math.max(0, state.basePixels - Math.max(0, hiddenPixels));
+    const desiredValue = desiredPixels + 'px';
+    if (currentValue !== desiredValue || currentPriority !== state.originalPriority) {
+      list.style.setProperty(state.prop, desiredValue, state.originalPriority);
+    }
+    state.appliedValue = desiredValue;
+    state.appliedPriority = state.originalPriority;
+  }
+
+  function restoreVirtualListSize(list) {
+    const state = virtualListInlineStates.get(list);
+    if (!state || !list || !list.style) return;
+    const currentValue = list.style.getPropertyValue(state.prop);
+    const currentPriority = list.style.getPropertyPriority(state.prop);
+    // 若微博已经在本地隐藏期间写入了新的合法基线，不覆盖它；只有仍是本次
+    // 补偿值时才恢复原始 inline 声明。
+    if (currentValue === state.appliedValue && currentPriority === state.appliedPriority) {
+      if (state.originalValue) list.style.setProperty(state.prop, state.originalValue, state.originalPriority);
+      else list.style.removeProperty(state.prop);
+    }
+    virtualListInlineStates.delete(list);
   }
 
   function readTranslateY(value) {
@@ -1290,7 +1386,9 @@
 
   function syncVirtualRowOffsets(row) {
     if (!row || !row.parentElement || !row.matches(VIRTUAL_ROW_SELECTOR)) return;
-    const rows = Array.from(row.parentElement.children || [])
+    const list = virtualRowListOf(row);
+    if (!list) return;
+    const rows = Array.from(list.children || [])
       .filter((candidate) => candidate.matches && candidate.matches(VIRTUAL_ROW_SELECTOR));
     if (!rows.length) return;
     const meta = rows.map((candidate) => {
@@ -1338,6 +1436,11 @@
           || safeVirtualRowHeight(readVirtualRowHeight(candidate)),
       };
     });
+    const hiddenPixels = meta.reduce((total, entry) => (
+      entry.blocked ? total + safeVirtualRowHeight(entry.height) : total
+    ), 0);
+    if (hiddenPixels > 0) syncVirtualListSize(list, hiddenPixels);
+    else restoreVirtualListSize(list);
     let shift = 0;
     let previousActive = null;
     for (let i = 0; i < meta.length; i++) {
@@ -1558,6 +1661,7 @@
     if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
     if (Index.isBlocked(info.keys)) {
       const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container) : null;
+      if (virtualRow) rememberVirtualList(virtualRow);
       markBlocked(container, info.label, modeForItem(adapter, item));
       collapseBlockedWrappers(container);
       if (virtualRow) syncVirtualRowOffsets(virtualRow);
@@ -1589,6 +1693,12 @@
           if (record.type !== 'attributes' || record.attributeName !== 'style') continue;
           const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
           if (row) syncVirtualRowOffsets(row);
+          else if (record.target && record.target.matches
+            && record.target.matches('.vue-recycle-scroller__item-wrapper')) {
+            const firstRow = Array.from(record.target.children || [])
+              .find((child) => child.matches && child.matches(VIRTUAL_ROW_SELECTOR));
+            if (firstRow) syncVirtualRowOffsets(firstRow);
+          }
         }
       }
       if (shouldSchedule) schedule();
