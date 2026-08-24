@@ -11,6 +11,8 @@ const UPDATE_URL = 'https://raw.githubusercontent.com/a2787/ub-utils/master/omni
 const DOWNLOAD_URL = UPDATE_URL;
 // 解析脚本头里的本地版本，注入 GM_info（模拟 Tampermonkey 提供的元信息），供 checkUpdate 比对
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
+const SOURCE_BUILD = (USERSCRIPT.match(/const RUNTIME_BUILD\s*=\s*['"]([^'"]+)['"]/) || [, ''])[1];
+const EXPECTED_RUNTIME_MARKER = `omniblock/${LOCAL_VERSION}/${SOURCE_BUILD}`;
 
 // 动态控制"远程版本"（更新测试用）
 let updateVersion = '9.9.9';
@@ -136,11 +138,32 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     bili: document.querySelectorAll('bili-comment-renderer').length,
     clistKids: (document.getElementById('clist') || {}).childElementCount,
     ob: !!window.OB, gear: !!document.getElementById('ob-gear'),
+    runtime: window.OB && window.OB.runtime,
+    gearRuntime: (() => {
+      const gear = document.getElementById('ob-gear');
+      return gear ? {
+        version: gear.getAttribute('data-ob-version'),
+        build: gear.getAttribute('data-ob-build'),
+        marker: gear.getAttribute('data-ob-runtime'),
+      } : null;
+    })(),
   }));
   console.log('DIAG:', JSON.stringify(diag));
   console.log('PAGEERRORS:', JSON.stringify(report.pageErrors));
   console.log('CONSOLE:', JSON.stringify(report.console));
   if (!diag.ob) report.fail.push('用户脚本未初始化（window.OB 不存在）——见上方 PAGEERRORS/CONSOLE');
+  const runtimeMatches = !!(diag.runtime
+    && diag.runtime.version === LOCAL_VERSION
+    && diag.runtime.build === SOURCE_BUILD
+    && diag.runtime.marker === EXPECTED_RUNTIME_MARKER
+    && diag.gearRuntime
+    && diag.gearRuntime.version === LOCAL_VERSION
+    && diag.gearRuntime.build === SOURCE_BUILD
+    && diag.gearRuntime.marker === EXPECTED_RUNTIME_MARKER
+    && SOURCE_BUILD.startsWith(LOCAL_VERSION + '-'));
+  runtimeMatches
+    ? report.pass.push('J 运行时维护标识：页面版本、源码构建与机器标记一致')
+    : report.fail.push('J 运行时维护标识不一致：' + JSON.stringify({ localVersion: LOCAL_VERSION, sourceBuild: SOURCE_BUILD, diag }));
 
   const hostOf = `(uid) => { const arr = Array.from(document.querySelectorAll('bili-comment-renderer')); const h = arr.find(x => x.shadowRoot && x.shadowRoot.querySelector('a[href*="space.bilibili.com/' + uid + '"]')); return h || null; }`;
 
@@ -200,10 +223,15 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const localBackup = panel ? panel.querySelector('#ob-local-backup') : null;
     const backupStatus = panel ? panel.querySelector('#ob-backup-status') : null;
     const restoreBackup = panel ? panel.querySelector('#ob-restore-backup') : null;
-    return { panelShown: !!panel, hasSkipCap: !!skip, hasUpdateBtn: !!upd, hasLocalBackup: !!localBackup, hasBackupStatus: !!backupStatus, hasRestoreBackup: !!restoreBackup };
+    const runtime = panel ? panel.querySelector('#ob-runtime-build') : null;
+    return {
+      panelShown: !!panel, hasSkipCap: !!skip, hasUpdateBtn: !!upd, hasLocalBackup: !!localBackup,
+      hasBackupStatus: !!backupStatus, hasRestoreBackup: !!restoreBackup,
+      hasRuntime: !!runtime && /运行版本：v/.test(runtime.textContent || '')
+    };
   })()`);
-  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup)
-    ? report.pass.push('E 设置面板：含"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
+  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup && e.hasRuntime)
+    ? report.pass.push('E 设置面板：含运行标识、"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
 
   // E2 设置名单按平台分组，并保留可悬停查看的屏蔽依据（人工合成身份）。
   const e2 = await page.evaluate(async () => {

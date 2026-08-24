@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.29.0
+// @version       0.30.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -52,6 +52,12 @@
   // 更新地址（与脚本头 @updateURL/@downloadURL 保持一致；用户脚本运行时无法自读元数据，故显式声明）
   const UPDATE_URL = 'https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js';
   const DOWNLOAD_URL = UPDATE_URL;
+  // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
+  // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
+  const RUNTIME_BUILD = '0.30.0-maintenance-gate';
+  const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
+    ? String(GM_info.script.version) : 'unknown';
+  const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -4926,6 +4932,7 @@
         <button class="ob-close" type="button" aria-label="关闭">×</button>
         <h2>OmniBlock 设置（拉黑不上限）</h2>
         <div class="ob-meta">当前屏蔽身份数：<b id="ob-count">0</b> · 平台：B站/微博/知乎/贴吧/X/抖音</div>
+        <p id="ob-runtime-build" style="color:#777;font-size:11px;margin:5px 0 0;word-break:break-all"></p>
 
         <h3>新增屏蔽</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4977,6 +4984,13 @@
         <p style="color:#999;font-size:12px;margin-top:14px">名单、浏览数据和自动快照只保存在本机，不上传。自动快照用于误删/错误导入后的回退；浏览器配置整体丢失时仍请使用导出 JSON。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处"模拟操作"，已带随机延迟/连续上限等安全阀。</p>
       </div>`;
     document.body.appendChild(panel);
+    const runtimeEl = panel.querySelector('#ob-runtime-build');
+    if (runtimeEl) {
+      runtimeEl.textContent = `运行版本：v${RUNTIME_VERSION} · 构建：${RUNTIME_BUILD}`;
+      runtimeEl.setAttribute('data-ob-version', RUNTIME_VERSION);
+      runtimeEl.setAttribute('data-ob-build', RUNTIME_BUILD);
+      runtimeEl.setAttribute('data-ob-runtime', RUNTIME_MARKER);
+    }
     panel.querySelector('.ob-close').onclick = () => panel.remove();
     panel.onclick = (e) => { if (e.target === panel) panel.remove(); };
 
@@ -5140,6 +5154,9 @@
       gear.textContent = '⚙';
       gear.title = '本地内容过滤增强 · 设置';
       gear.setAttribute('aria-label', '打开 OmniBlock 设置');
+      gear.setAttribute('data-ob-version', RUNTIME_VERSION);
+      gear.setAttribute('data-ob-build', RUNTIME_BUILD);
+      gear.setAttribute('data-ob-runtime', RUNTIME_MARKER);
       gear.onclick = () => openOptions();
       document.body.appendChild(gear);
     })();
@@ -5149,5 +5166,6 @@
   window.OB = {
     Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
+    runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
   };
 })();
