@@ -27,7 +27,7 @@
 
 - userscript `@version` 提高为 `0.35.0`，构建标识为
   `0.35.0-weibo-virtual-spacer-douyin-manager`。
-- 当前为工作区候选版本；尚未提交、推送或创建 tag/Release。
+- 当前为候选版本；提交 `8e00092` 已保存在本地，尚未推送、创建 tag 或 GitHub Release。
 
 ## 0.34.0 - 2026-08-24
 
