@@ -110,6 +110,34 @@ const target = withIdentity.find((el) => {
 if (!target) { out.noTarget = true; return out; }
 const targetInfo = adapter.extract(target);
 const uidKey = targetInfo.keys.find((key) => key.startsWith('douyin:uid:'));
+const dmTool = document.getElementById('ob-douyin-dm-tool');
+out.managerToolPresent = !!dmTool;
+out.managerToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
+out.managerToolText = dmTool && dmTool.textContent;
+if (dmTool) {
+  dmTool.click();
+  await pause(120);
+  const manager = document.getElementById('ob-douyin-dm-manager');
+  out.managerPresent = !!manager;
+  out.managerRows = manager ? manager.querySelectorAll('.ob-dd-row').length : 0;
+  const rowKeys = manager ? Array.from(manager.querySelectorAll('.ob-dd-row')).map((row) => row.getAttribute('data-key')).filter(Boolean) : [];
+  const checkAll = manager && manager.querySelector('.ob-dd-checkall input');
+  if (checkAll) checkAll.click();
+  await pause(80);
+  const batch = manager && manager.querySelector('.ob-dd-batch');
+  out.managerBatchEnabled = !!batch && !batch.disabled && rowKeys.length > 0;
+  if (batch) batch.click();
+  await pause(100);
+  const managerConfirm = document.getElementById('ob-confirm');
+  if (managerConfirm) managerConfirm.querySelector('.ob-ok').click();
+  out.managerBlocked = await waitFor(() => rowKeys.length > 0 && rowKeys.every((key) => OB.Index.isBlocked(key)), 2500);
+  const managerToast = document.getElementById('ob-toast');
+  const managerUndo = managerToast && managerToast.querySelector('button');
+  if (managerUndo) { managerUndo.click(); await pause(120); }
+  out.managerRestored = rowKeys.length > 0 && rowKeys.every((key) => !OB.Index.isBlocked(key));
+  const managerClose = manager && manager.querySelector('.ob-dd-close');
+  if (managerClose) managerClose.click();
+}
 target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
 await pause(120);
 const btn = target.querySelector('.ob-dy-dm-block');
@@ -179,7 +207,9 @@ return out;
     const probe = report.probe || {};
     if (!probe.hasOB || !probe.adapterReady || !probe.danmakuCount || !probe.withIdentity) {
       report.blocked.push('临时标签页未渲染出带发送者身份的抖音弹幕（' + JSON.stringify({ danmakuCount: probe.danmakuCount, withIdentity: probe.withIdentity }) + '）');
-    } else if (!probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
+    } else if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerPresent || !probe.managerRows
+      || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored
+      || !probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
       || !probe.blocked || !probe.hidden || !probe.restored || probe.noTarget) {
       report.blocked.push('抖音弹幕本地拉黑闭环未完成：' + JSON.stringify(probe));
     }

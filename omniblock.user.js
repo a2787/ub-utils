@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.32.0
+// @version       0.33.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.32.0-weibo-continuity';
+  const RUNTIME_BUILD = '0.33.0-douyin-danmaku-manager';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -994,11 +994,61 @@
     #ob-douyin-comment-manager .ob-dc-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
     #ob-douyin-comment-manager .ob-dc-batch:hover:not(:disabled) { background: #a93226; }
     #ob-douyin-comment-manager .ob-dc-batch:disabled { background: #ccc; }
+
+    /* 抖音视频页弹幕发送者管理工具：与 B 站右下角工具保持同样的多选交互，
+       数据只来自当前视频已观察到且带可靠身份的网页弹幕节点。 */
+    #ob-douyin-dm-tool {
+      position: fixed; right: 14px; bottom: 62px; z-index: 2147483643;
+      box-sizing: border-box; min-height: 34px; max-width: min(240px, calc(100vw - 28px));
+      border: 0; border-radius: 6px; padding: 7px 10px; background: #2b2b32; color: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; font-size: 12px; line-height: 20px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #ob-douyin-dm-tool:hover { background: #41414a; }
+    #ob-douyin-dm-manager {
+      position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
+      width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-douyin-dm-manager .ob-dd-box {
+      box-sizing: border-box; width: min(680px, 94vw); max-width: 100%; min-width: 0; max-height: 86vh;
+      display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px;
+      background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-douyin-dm-manager .ob-dd-head, #ob-douyin-dm-manager .ob-dd-toolbar,
+    #ob-douyin-dm-manager .ob-dd-footer { display: flex; align-items: center; gap: 8px; }
+    #ob-douyin-dm-manager .ob-dd-head { justify-content: space-between; margin-bottom: 10px; }
+    #ob-douyin-dm-manager h2 { margin: 0; font-size: 16px; }
+    #ob-douyin-dm-manager .ob-dd-close { width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: #555; cursor: pointer; font-size: 18px; }
+    #ob-douyin-dm-manager .ob-dd-close:hover { background: #f1f1f1; }
+    #ob-douyin-dm-manager .ob-dd-toolbar { flex-wrap: wrap; margin-bottom: 10px; }
+    #ob-douyin-dm-manager .ob-dd-search {
+      flex: 1 1 220px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
+      border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
+    }
+    #ob-douyin-dm-manager .ob-dd-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
+    #ob-douyin-dm-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
+    #ob-douyin-dm-manager .ob-dd-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+    #ob-douyin-dm-manager .ob-dd-empty { min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 20px; color: #777; text-align: center; }
+    #ob-douyin-dm-manager .ob-dd-row { min-height: 52px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 8px; padding: 8px 4px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    #ob-douyin-dm-manager .ob-dd-row:last-child { border-bottom: 0; }
+    #ob-douyin-dm-manager .ob-dd-name { min-width: 0; color: #333; font-weight: 600; overflow-wrap: anywhere; }
+    #ob-douyin-dm-manager .ob-dd-note { min-width: 0; margin-top: 3px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ob-douyin-dm-manager .ob-dd-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
+    #ob-douyin-dm-manager .ob-dd-status { color: #777; }
+    #ob-douyin-dm-manager .ob-dd-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
+    #ob-douyin-dm-manager .ob-dd-batch:hover:not(:disabled) { background: #a93226; }
+    #ob-douyin-dm-manager .ob-dd-batch:disabled { background: #ccc; cursor: default; }
     @media (max-width: 520px) {
       #ob-douyin-comment-manager { align-items: flex-end; }
       #ob-douyin-comment-manager .ob-dc-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
       #ob-douyin-comment-manager .ob-dc-footer { align-items: stretch; }
       #ob-douyin-comment-manager .ob-dc-batch { flex: 1 1 100%; }
+    }
+    @media (max-width: 520px) {
+      #ob-douyin-dm-manager { align-items: flex-end; }
+      #ob-douyin-dm-manager .ob-dd-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-douyin-dm-manager .ob-dd-footer { align-items: stretch; }
+      #ob-douyin-dm-manager .ob-dd-batch { flex: 1 1 100%; }
     }
     @media (max-width: 520px) {
       #ob-dm-manager { align-items: flex-end; }
@@ -1902,6 +1952,42 @@
       return { clicked: count, users: querySelectorAllDeep(document, SEL.comment).length };
     }
 
+    function isVideoPage() {
+      return /^\/video\//i.test(location.pathname)
+        || !!document.querySelector('.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
+    }
+
+    function videoKey() {
+      return location.pathname + location.search;
+    }
+
+    function collectDanmaku(root) {
+      const byIdentity = new Map();
+      for (const item of querySelectorAllDeep(root || document, SEL.danmaku)) {
+        if (!item || !item.matches || !item.matches(SEL.danmaku)) continue;
+        const info = extractDanmaku(item);
+        if (!info || !info.keys || !info.keys.length) continue;
+        const keys = normalizeIdentityKeys(info.keys);
+        if (!keys.length) continue;
+        const key = keys.join('|');
+        const text = textOf(item).replace(/\s+/g, ' ').trim();
+        const existing = byIdentity.get(key);
+        if (existing) {
+          existing.messageCount++;
+          if (!existing.note && text) existing.note = noteFor('抖音弹幕', item);
+          continue;
+        }
+        byIdentity.set(key, {
+          ...info,
+          keys,
+          label: text ? text.slice(0, 80) : '抖音弹幕发送者',
+          note: text ? noteFor('抖音弹幕', item) : '当前视频已观察到的弹幕发送者',
+          messageCount: 1,
+        });
+      }
+      return Array.from(byIdentity.values());
+    }
+
     // 抖音弹幕是持续滚动的节点，通用固定悬浮按钮会停在原地。这里把按钮挂进
     // 弹幕节点内部随 transform 一起移动；弹幕层 pointer-events:none，但节点
     // 自身是 auto，可以接收鼠标事件。
@@ -2059,6 +2145,9 @@
       collectUsers(root) {
         return querySelectorAllDeep(root || document, SEL.comment).map(extractComment);
       },
+      isVideoPage,
+      videoKey,
+      collectDanmaku,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
       commentManager: { expandAll: expandAllCommentReplies },
       rememberMenuContext: rememberCommentMenuContext,
@@ -3209,6 +3298,161 @@
     expandAll();
   }
 
+  let douyinDanmakuTool = null;
+  let douyinDanmakuManager = null;
+  let douyinDanmakuManagerKeyHandler = null;
+
+  function closeDouyinDanmakuManager() {
+    if (douyinDanmakuManagerKeyHandler) document.removeEventListener('keydown', douyinDanmakuManagerKeyHandler);
+    douyinDanmakuManagerKeyHandler = null;
+    if (douyinDanmakuManager) douyinDanmakuManager.remove();
+    douyinDanmakuManager = null;
+  }
+
+  // 抖音弹幕节点会持续滚动和复用；这里累积当前视频本轮已观察到的可靠发送者，
+  // 再用本地多选面板一次提交。它不读取平台私有接口，也不把没有身份属性的节点列入名单。
+  function setupDouyinDanmakuManager() {
+    const adapter = currentAdapter;
+    if (!adapter || adapter.id !== 'douyin' || typeof adapter.collectDanmaku !== 'function') return;
+    const records = new Map();
+    const selected = new Set();
+    let videoKey = '';
+    let searchText = '';
+
+    const keyOf = (info) => (info && info.keys || []).join('|');
+    const collectRecords = () => {
+      const nextVideoKey = typeof adapter.videoKey === 'function'
+        ? adapter.videoKey() : location.pathname + location.search;
+      if (videoKey && nextVideoKey !== videoKey) {
+        videoKey = nextVideoKey;
+        records.clear(); selected.clear();
+        closeDouyinDanmakuManager();
+      } else if (!videoKey) videoKey = nextVideoKey;
+      for (const info of adapter.collectDanmaku(document) || []) {
+        const key = keyOf(info);
+        if (!key) continue;
+        const existing = records.get(key);
+        if (!existing) records.set(key, { ...info, messageCount: Math.max(1, Number(info.messageCount) || 1) });
+        else {
+          existing.messageCount = Math.max(existing.messageCount, Number(info.messageCount) || 1);
+          if (!existing.label && info.label) existing.label = info.label;
+          if (!existing.note && info.note) existing.note = info.note;
+        }
+      }
+      return Array.from(records.values()).filter((info) => !Index.isBlocked(info.keys));
+    };
+
+    function render() {
+      if (!douyinDanmakuManager || !douyinDanmakuManager.isConnected) return;
+      const available = collectRecords();
+      const availableKeys = new Set(available.map(keyOf));
+      for (const key of Array.from(selected)) if (!availableKeys.has(key)) selected.delete(key);
+      const term = String(searchText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const filtered = term
+        ? available.filter((info) => [info.label, info.note, ...(info.keys || [])].join(' ').toLowerCase().includes(term))
+        : available;
+      const list = douyinDanmakuManager.querySelector('.ob-dd-list');
+      list.textContent = '';
+      if (!filtered.length) {
+        const empty = document.createElement('div'); empty.className = 'ob-dd-empty';
+        empty.textContent = term ? '没有匹配的抖音弹幕发送者' : '当前视频还没有观察到带可靠身份的弹幕';
+        list.appendChild(empty);
+      }
+      for (const info of filtered) {
+        const key = keyOf(info);
+        const row = document.createElement('label'); row.className = 'ob-dd-row'; row.setAttribute('data-key', key);
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(key);
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) selected.add(key); else selected.delete(key);
+          render();
+        });
+        const body = document.createElement('div');
+        const name = document.createElement('div'); name.className = 'ob-dd-name';
+        name.textContent = info.label || '抖音弹幕发送者';
+        const note = document.createElement('div'); note.className = 'ob-dd-note';
+        note.textContent = (info.note || '当前视频弹幕') + ' · 观察到 ' + (Number(info.messageCount) || 1) + ' 条';
+        body.append(name, note);
+        row.append(checkbox, body); list.appendChild(row);
+      }
+      const checkAll = douyinDanmakuManager.querySelector('.ob-dd-checkall input');
+      checkAll.checked = !!filtered.length && filtered.every((info) => selected.has(keyOf(info)));
+      checkAll.indeterminate = !checkAll.checked && filtered.some((info) => selected.has(keyOf(info)));
+      checkAll.onchange = () => {
+        for (const info of filtered) {
+          const key = keyOf(info);
+          if (checkAll.checked) selected.add(key); else selected.delete(key);
+        }
+        render();
+      };
+      const selectedRecords = available.filter((info) => selected.has(keyOf(info)));
+      const batch = douyinDanmakuManager.querySelector('.ob-dd-batch');
+      batch.disabled = !selectedRecords.length;
+      batch.textContent = '屏蔽选中(' + selectedRecords.length + ')';
+      batch.onclick = () => {
+        const current = collectRecords().filter((info) => selected.has(keyOf(info)));
+        if (!current.length) return;
+        blockMany(current, batch, '屏蔽选中的 ' + current.length + ' 位抖音弹幕发送者', () => {
+          selected.clear(); render(); refresh();
+        });
+      };
+      const totalMessages = filtered.reduce((sum, info) => sum + (Number(info.messageCount) || 1), 0);
+      douyinDanmakuManager.querySelector('.ob-dd-status').textContent = filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕';
+    }
+
+    function open() {
+      if (douyinDanmakuManager || !document.body) return;
+      douyinDanmakuManager = document.createElement('div');
+      douyinDanmakuManager.id = 'ob-douyin-dm-manager';
+      douyinDanmakuManager.innerHTML = `
+        <div class="ob-dd-box" role="dialog" aria-modal="true" aria-labelledby="ob-dd-title">
+          <div class="ob-dd-head"><h2 id="ob-dd-title">抖音弹幕屏蔽</h2><button class="ob-dd-close" type="button" title="关闭" aria-label="关闭">×</button></div>
+          <div class="ob-dd-toolbar">
+            <input class="ob-dd-search" type="search" placeholder="搜索已观察弹幕" aria-label="搜索已观察弹幕">
+            <label class="ob-dd-checkall"><input type="checkbox">全选当前列表</label>
+          </div>
+          <div class="ob-dd-list"></div>
+          <div class="ob-dd-footer"><span class="ob-dd-status"></span><button class="ob-dd-batch" type="button">屏蔽选中(0)</button></div>
+        </div>`;
+      const panel = douyinDanmakuManager;
+      panel.querySelector('.ob-dd-close').onclick = closeDouyinDanmakuManager;
+      panel.addEventListener('click', (event) => { if (event.target === panel) closeDouyinDanmakuManager(); });
+      const search = panel.querySelector('.ob-dd-search');
+      search.value = searchText;
+      search.oninput = () => { searchText = search.value; render(); };
+      douyinDanmakuManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDouyinDanmakuManager(); };
+      document.addEventListener('keydown', douyinDanmakuManagerKeyHandler);
+      document.body.appendChild(panel);
+      render();
+    }
+
+    function refresh() {
+      const video = typeof adapter.isVideoPage === 'function' ? adapter.isVideoPage() : /^\/video\//i.test(location.pathname);
+      const visible = Store.getSetting('enabled') && Store.getSetting('showBulkBlock') && video;
+      if (!douyinDanmakuTool) {
+        if (!document.body) { setTimeout(refresh, 300); return; }
+        douyinDanmakuTool = document.createElement('button');
+        douyinDanmakuTool.id = 'ob-douyin-dm-tool'; douyinDanmakuTool.type = 'button';
+        douyinDanmakuTool.title = '管理当前视频已观察到的抖音弹幕发送者';
+        douyinDanmakuTool.setAttribute('aria-label', '管理当前视频已观察到的抖音弹幕发送者');
+        douyinDanmakuTool.onclick = open;
+        document.body.appendChild(douyinDanmakuTool);
+      }
+      if (!visible) {
+        douyinDanmakuTool.style.setProperty('display', 'none', 'important');
+        if (douyinDanmakuManager) closeDouyinDanmakuManager();
+        return;
+      }
+      const available = collectRecords();
+      douyinDanmakuTool.textContent = '🚫 抖音弹幕屏蔽(' + available.length + ')';
+      douyinDanmakuTool.style.setProperty('display', 'inline-flex', 'important');
+      if (douyinDanmakuManager) render();
+    }
+
+    Store.onChange(refresh);
+    setInterval(refresh, 900);
+    refresh();
+  }
+
   let refreshBulkBlock = () => {};
 
   // ---- 批量拉黑的范围与时间筛选（目前仅 B站视频评论区提供整区抓取能力）----
@@ -3374,7 +3618,7 @@
     };
     const isOwnBulkPanel = (el) => !!el && (
       el.id === 'ob-bulk-scope'
-      || !!(el.closest && el.closest('#ob-douyin-comment-manager'))
+      || !!(el.closest && el.closest('#ob-douyin-comment-manager,#ob-douyin-dm-manager'))
     );
     function blocksPageBulkFab(el) {
       // 抖音当前视频详情侧栏使用 `#relatedVideoCard.LookModalFrameFast`，虽然类名含
@@ -5213,6 +5457,7 @@
     currentScanner = createScanner(currentAdapter);
     setupQuickBlock();
     setupBulkBlock();
+    if (currentAdapter.id === 'douyin') setupDouyinDanmakuManager();
     // 首屏延迟补扫（应对 SPA 晚加载）
     setTimeout(() => currentScanner && currentScanner.schedule(), 800);
     setTimeout(() => currentScanner && currentScanner.schedule(), 2500);

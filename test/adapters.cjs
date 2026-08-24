@@ -339,6 +339,12 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const dyCommentFixture = `<!doctype html><html><body>
       <!-- 人工合成：真实抖音评论侧栏的 #relatedVideoCard.LookModalFrameFast 结构。 -->
       <div id="relatedVideoCard" class="LookModalFrameFast">
+      <!-- 人工合成：视频页可观察到的带发送者身份弹幕节点；同一作者出现两条，管理器应去重。 -->
+      <div class="dy-danmaku-layer">
+        <div id="dy-dm-one" data-danmu-id="dm-one" data-danmaku-user-id="900001">弹幕甲</div>
+        <div id="dy-dm-one-again" data-danmu-id="dm-one-again" data-danmaku-user-id="900001">弹幕甲的另一条</div>
+        <div id="dy-dm-two" data-danmu-id="dm-two" data-danmaku-user-id="900002">弹幕乙</div>
+      </div>
       <div data-e2e="comment-item" id="dy-comment-root">
         <a data-e2e="comment-username" href="/user/MS4wLjABAACommentRoot">根评论作者</a>
         <span>根评论正文</span>
@@ -364,7 +370,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     </body></html>`;
     await dyCommentPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyCommentFixture }));
     await dyCommentPage.addInitScript({ content: shim('') + '\n' + userscript });
-    await dyCommentPage.goto('https://www.douyin.com/test', { waitUntil: 'domcontentloaded' });
+    await dyCommentPage.goto('https://www.douyin.com/video/fixture', { waitUntil: 'domcontentloaded' });
     await dyCommentPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const dyComments = await dyCommentPage.evaluate(async () => {
@@ -420,13 +426,60 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       await pause(180);
       result.allBlocked = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
         .every((sec) => window.OB.Index.isBlocked('douyin:secuid:' + sec));
+      const managerClose = manager.querySelector('.ob-dc-close');
+      if (managerClose) managerClose.click();
+      await pause(80);
+      const dmTool = document.querySelector('#ob-douyin-dm-tool');
+      result.dmToolPresent = !!dmTool;
+      result.dmToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
+      result.dmToolText = dmTool && dmTool.textContent;
+      if (dmTool) dmTool.click();
+      await pause(100);
+      const dmManager = document.querySelector('#ob-douyin-dm-manager');
+      result.dmManagerPresent = !!dmManager;
+      result.dmRows = dmManager ? dmManager.querySelectorAll('.ob-dd-row').length : 0;
+      const dmCheckAll = dmManager && dmManager.querySelector('.ob-dd-checkall input');
+      if (dmCheckAll) dmCheckAll.click();
+      await pause(80);
+      const dmBatch = dmManager && dmManager.querySelector('.ob-dd-batch');
+      result.dmBatchSelected = !!dmBatch && !dmBatch.disabled && /2/.test(dmBatch.textContent);
+      if (dmBatch) dmBatch.click();
+      await pause(80);
+      const dmConfirm = document.getElementById('ob-confirm');
+      if (dmConfirm) dmConfirm.querySelector('.ob-ok').click();
+      await pause(180);
+      result.dmBlocked = ['900001', '900002'].every((uid) => window.OB.Index.isBlocked('douyin:uid:' + uid));
+      result.dmHidden = ['#dy-dm-one', '#dy-dm-one-again', '#dy-dm-two'].every((selector) => {
+        const node = document.querySelector(selector);
+        return node && (getComputedStyle(node).display === 'none' || node.getBoundingClientRect().height === 0);
+      });
+      if (dmManager) {
+        const closeDm = dmManager.querySelector('.ob-dd-close');
+        if (closeDm) closeDm.click();
+      }
+      const dmLayer = document.querySelector('.dy-danmaku-layer');
+      if (dmLayer) dmLayer.remove();
+      history.pushState({}, '', '/video/fixture-two');
+      await pause(1050);
+      result.dmResetText = dmTool && dmTool.textContent;
+      if (dmTool) dmTool.click();
+      await pause(100);
+      const nextDmManager = document.querySelector('#ob-douyin-dm-manager');
+      result.dmResetRows = nextDmManager ? nextDmManager.querySelectorAll('.ob-dd-row').length : -1;
+      if (nextDmManager) {
+        const closeNextDm = nextDmManager.querySelector('.ob-dd-close');
+        if (closeNextDm) closeNextDm.click();
+      }
       return result;
     });
     if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 1 && dyComments.menuConfirmHasRootAuthor
       && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
       && dyComments.initialRows >= 1 && dyComments.expandedRows === 3 && dyComments.expandedAuthors
-      && dyComments.batchSelected && dyComments.allBlocked) {
-      report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block and the manager expands/blocks loaded child-comment authors together');
+      && dyComments.batchSelected && dyComments.allBlocked && dyComments.dmToolPresent && dyComments.dmToolVisible
+      && /\(2\)/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
+      && dyComments.dmBatchSelected && dyComments.dmBlocked && dyComments.dmHidden
+      && /\(0\)/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 0) {
+      report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block; comment manager expands/batches replies; video danmaku manager dedupes, batches, and resets on video change');
     } else report.fail.push('douyin-comment-tools: ' + JSON.stringify(dyComments));
     await dyCommentPage.close();
 

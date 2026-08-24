@@ -1,6 +1,6 @@
 /*
  * OmniBlock 维护闭环：默认由维护者运行，不依赖用户 Tampermonkey 已安装版本。
- * 它会顺序执行静态门禁、通用/平台回归、微博虚拟列表回放和当前源码注入的微博真站探针。
+ * 它会顺序执行静态门禁、通用/平台回归、微博虚拟列表回放和当前源码注入的抖音/微博真站探针。
  * 真实探针仍遵守只读边界；用户浏览器只作为最终环境复核，不是本命令的代码生效前提。
  * 运行：node test/maintenance-check.cjs
  */
@@ -35,6 +35,7 @@ const checks = [
   { label: 'Bilibili', command: process.execPath, args: ['test/quickblock.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },
+  { label: 'Douyin isolated real-site probe', command: process.execPath, args: ['test/real-platform-probe.cjs', 'douyin', '--verify-local'] },
   { label: 'Weibo replay stress', command: process.execPath, args: ['test/weibo-replay.cjs'] },
   { label: 'Weibo isolated real-site probe', command: process.execPath, args: ['test/real-platform-probe.cjs', 'weibo', '--verify-local'] },
   { label: 'diff whitespace', command: 'git', args: ['diff', '--check'] },
@@ -49,7 +50,9 @@ let failed = false;
 const blocked = [];
 for (const check of checks) {
   console.log('\n=== ' + check.label + ' ===');
-  if (check.label === 'Weibo isolated real-site probe') {
+  const isolatedProbe = check.label.match(/^(.+) isolated real-site probe$/);
+  if (isolatedProbe) {
+    const probeId = isolatedProbe[1].toLowerCase();
     const result = spawnSync(check.command, check.args, { cwd: ROOT, encoding: 'utf8', env: process.env });
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
@@ -58,17 +61,22 @@ for (const check of checks) {
       console.error('CHECK FAILED:', check.label, result.error ? result.error.message : 'exit ' + result.status);
       break;
     }
-    const probeLines = String(result.stdout || '').split(/\r?\n/).filter((line) => line.startsWith('PROBE weibo: '));
+    const probePrefix = 'PROBE ' + probeId + ': ';
+    const probeLines = String(result.stdout || '').split(/\r?\n/).filter((line) => line.startsWith(probePrefix));
     for (const line of probeLines) {
       try {
-        const target = JSON.parse(line.slice('PROBE weibo: '.length));
+        const target = JSON.parse(line.slice(probePrefix.length));
         const errors = Array.isArray(target.errors) ? target.errors : [];
-        const hardErrors = errors.filter((error) => !String(error).startsWith('blocked：'));
+        // 未发现目标或导航根本未完成时，网络拒绝、验证码和登录页都属于证据阻断；
+        // 只有已经加载并发现目标后的脚本/页面错误才让维护自检失败。
+        const reachabilityBlocked = !target.discovered || !target.loaded
+          || errors.some((error) => String(error).startsWith('blocked：'));
+        const hardErrors = reachabilityBlocked ? [] : errors.filter((error) => !String(error).startsWith('blocked：'));
         if (hardErrors.length) {
           failed = true;
           console.error('CHECK FAILED:', check.label, hardErrors.join(' | '));
-        } else if (!target.discovered || !target.loaded || errors.some((error) => String(error).startsWith('blocked：'))) {
-          blocked.push(errors.join(' | ') || '未能从公开入口发现可验证微博详情页');
+        } else if (reachabilityBlocked) {
+          blocked.push(errors.join(' | ') || ('未能从公开入口发现可验证' + probeId + '页面'));
         }
       } catch (error) {
         failed = true;
@@ -77,7 +85,7 @@ for (const check of checks) {
     }
     if (!probeLines.length) {
       failed = true;
-      console.error('CHECK FAILED:', check.label, '没有返回微博探针结果');
+      console.error('CHECK FAILED:', check.label, '没有返回' + probeId + '探针结果');
     }
     continue;
   }
