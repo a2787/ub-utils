@@ -122,8 +122,8 @@
 **版本/发布状态**
 
 - userscript `@version` 为 `0.34.0`，构建标识为 `0.34.0-douyin-manager-layout-search-loader`。
-- 完整本地矩阵已完成，当前仍是候选工作区，待显式暂存、提交并推送。因新增抖音路径当前没有本轮
-  `real-site verified`，不创建 v0.34.0 tag/Release。
+- 完整本地矩阵已完成；功能与测试改动已提交为 `05403b2` 并推送到 `master`。因新增抖音路径当前没有
+  本轮 `real-site verified`，不创建 v0.34.0 tag/Release。
 
 **下一项最有价值的验证**
 
