@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.30.0
+// @version       0.31.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.30.0-maintenance-gate';
+  const RUNTIME_BUILD = '0.31.0-weibo-virtual-row';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1091,7 +1091,7 @@
 
   function readTranslateY(value) {
     const text = String(value || '');
-    const translate = text.match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/i);
+    const translate = text.match(/translateY\(\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)px\s*\)/i);
     if (translate) return Number(translate[1]);
     const matrix = text.match(/^matrix(3d)?\(([^)]+)\)$/i);
     if (!matrix) return NaN;
@@ -1102,7 +1102,7 @@
 
   function shiftTranslateY(value, delta) {
     const text = String(value || '');
-    const translate = text.match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/i);
+    const translate = text.match(/translateY\(\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)px\s*\)/i);
     if (translate) {
       const next = Number(translate[1]) - delta;
       return text.replace(translate[0], 'translateY(' + next + 'px)');
@@ -1113,6 +1113,19 @@
     const index = matrix[1] ? 13 : 5;
     if (parts.length <= index || parts.some((part) => !Number.isFinite(part))) return '';
     parts[index] -= delta;
+    return 'matrix' + (matrix[1] ? '3d' : '') + '(' + parts.join(', ') + ')';
+  }
+
+  function setTranslateY(value, y) {
+    const text = String(value || '');
+    const translate = text.match(/translateY\(\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)px\s*\)/i);
+    if (translate) return text.replace(translate[0], 'translateY(' + y + 'px)');
+    const matrix = text.match(/^matrix(3d)?\(([^)]+)\)$/i);
+    if (!matrix) return '';
+    const parts = matrix[2].split(',').map((part) => Number(part.trim()));
+    const index = matrix[1] ? 13 : 5;
+    if (parts.length <= index || parts.some((part) => !Number.isFinite(part))) return '';
+    parts[index] = y;
     return 'matrix' + (matrix[1] ? '3d' : '') + '(' + parts.join(', ') + ')';
   }
 
@@ -1156,9 +1169,14 @@
   function virtualRowInlineState(row) {
     let state = virtualRowInlineStates.get(row);
     if (state) return state;
+    const value = row.style.getPropertyValue('transform');
+    const priority = row.style.getPropertyPriority('transform');
     state = {
-      value: row.style.getPropertyValue('transform'),
-      priority: row.style.getPropertyPriority('transform'),
+      value,
+      priority,
+      safeValue: value,
+      safePriority: priority,
+      safeY: readTranslateY(value),
       applied: '',
       appliedPriority: '',
     };
@@ -1169,7 +1187,9 @@
   function restoreVirtualRowInlineStyle(row) {
     const state = virtualRowInlineStates.get(row);
     if (!state || !row.style) return;
-    if (state.value) row.style.setProperty('transform', state.value, state.priority);
+    const value = state.safeValue || state.value;
+    const priority = state.safeValue ? state.safePriority : state.priority;
+    if (value) row.style.setProperty('transform', value, priority);
     else row.style.removeProperty('transform');
     virtualRowInlineStates.delete(row);
   }
@@ -1211,10 +1231,18 @@
       const inlineValue = candidate.style.getPropertyValue('transform');
       const inlinePriority = candidate.style.getPropertyPriority('transform');
       if (state && (inlineValue !== state.applied || inlinePriority !== state.appliedPriority)) {
-        // Weibo 会在虚拟列表重排时重新写入行的 style；把这次新值视为平台基线，
-        // 否则下一轮会继续沿用旧 transform，出现短暂上移后又回到空洞位置。
-        state.value = inlineValue;
-        state.priority = inlinePriority;
+        // Weibo 会在虚拟列表重排时重新写入行的 style；正常位置视为新的平台基线。
+        // 但登录态首轮异常会反复写回 -1e6 一类的科学计数法位置，这不是新基线，
+        // 否则下一轮会继续沿用错误 transform，出现短暂上移后又回到空洞位置。
+        const observedY = readTranslateY(inlineValue);
+        const observedSafe = Number.isFinite(observedY) && Math.abs(observedY) <= MAX_VIRTUAL_ROW_HEIGHT;
+        if (observedSafe || !Number.isFinite(state.safeY)) {
+          state.value = inlineValue;
+          state.priority = inlinePriority;
+          state.safeValue = inlineValue;
+          state.safePriority = inlinePriority;
+          state.safeY = observedY;
+        }
         state.applied = '';
         state.appliedPriority = '';
       }
@@ -1239,18 +1267,56 @@
         y: readTranslateY(source),
         inactive,
         blocked: blockedVirtualRowStates.has(candidate) || hiddenWeiboCommentInVirtualRow(candidate),
-        height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height),
+        height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height)
+          || safeVirtualRowHeight(readVirtualRowHeight(candidate)),
       };
     });
     let shift = 0;
+    let previousActive = null;
     for (let i = 0; i < meta.length; i++) {
       const entry = meta[i];
       if (entry.inactive) {
         // 保留平台的回收标记和原始 transform；等它重新变为活动行后再补位。
-      } else if (shift > 0 && Number.isFinite(entry.y)) {
-        const nextTransform = shiftTranslateY(entry.source, shift);
+        continue;
+      }
+
+      const abnormal = !Number.isFinite(entry.y) || Math.abs(entry.y) > MAX_VIRTUAL_ROW_HEIGHT;
+      let baseY = Number.isFinite(entry.y) && !abnormal ? entry.y : NaN;
+      let baseSource = entry.source;
+      if (abnormal && previousActive && Number.isFinite(previousActive.baseY) && previousActive.height > 0) {
+        // 真实微博在此处会把后续活动行写成 -1.0001e+06px；按前一条活动行的
+        // 正常位置和高度重建平台基线，再减去本地隐藏行的累计高度。
+        baseY = previousActive.baseY + previousActive.height;
+        baseSource = setTranslateY(entry.source, baseY) || entry.source;
+        const state = virtualRowInlineStates.get(entry.candidate);
+        if (state) {
+          state.value = baseSource;
+          state.priority = 'important';
+          state.safeValue = baseSource;
+          state.safePriority = 'important';
+          state.safeY = baseY;
+        }
+      }
+      if (!(entry.height > 0) && previousActive && Number.isFinite(baseY)
+        && baseY > previousActive.baseY) {
+        const inferred = baseY - previousActive.baseY;
+        if (inferred > 0 && inferred <= MAX_VIRTUAL_ROW_HEIGHT) entry.height = inferred;
+      }
+
+      const desiredY = Number.isFinite(baseY) ? baseY - shift : NaN;
+      if (Number.isFinite(desiredY) && (shift > 0 || abnormal)) {
+        const nextTransform = abnormal
+          ? setTranslateY(baseSource, desiredY)
+          : shiftTranslateY(baseSource, shift);
         if (nextTransform) {
           const state = virtualRowInlineState(entry.candidate);
+          if (abnormal && Number.isFinite(baseY)) {
+            state.value = baseSource;
+            state.priority = 'important';
+            state.safeValue = baseSource;
+            state.safePriority = 'important';
+            state.safeY = baseY;
+          }
           if (entry.candidate.style.getPropertyValue('transform') !== nextTransform
             || entry.candidate.style.getPropertyPriority('transform') !== 'important') {
             entry.candidate.style.setProperty('transform', nextTransform, 'important');
@@ -1261,14 +1327,9 @@
       } else if (shift === 0 && virtualRowInlineStates.has(entry.candidate)) {
         restoreVirtualRowInlineStyle(entry.candidate);
       }
-      if (!entry.blocked) continue;
-      let height = entry.height;
-      if (!(height > 0) && Number.isFinite(entry.y)) {
-        const next = meta.slice(i + 1).find((candidate) => Number.isFinite(candidate.y));
-        const delta = next && next.y > entry.y ? next.y - entry.y : 0;
-        if (delta > 0 && delta <= MAX_VIRTUAL_ROW_HEIGHT && !entry.inactive && !next.inactive) height = delta;
-      }
-      shift += Math.max(0, height);
+
+      if (entry.blocked) shift += Math.max(0, entry.height);
+      if (Number.isFinite(baseY)) previousActive = { baseY, height: entry.height };
     }
   }
 
@@ -2019,6 +2080,10 @@
         '.card-review[comment_id]',
         '.wbpro-list > .item1',
         '.wbpro-list .list2 > .item2',
+        // 2026-08-24 用户 Chrome 真站捕获：详情页首轮虚拟化后，顶层评论变为
+        // `.vue-recycle-scroller__item-view > .wbpro-scroller-item > .item1`，不再位于
+        // `.wbpro-list > .item1`；必须继续把它作为独立评论行处理，才能记录行高并补位。
+        '.vue-recycle-scroller__item-view > .wbpro-scroller-item > .item1',
         // 2026-08-22 真站捕获：「共 N 条回复」会打开
         // `.woo-modal-main > .wbpro-layer` 弹窗。弹窗里根评论仍是 `.wbpro-list > .item1`，
         // 但回复行被 vue-recycle-scroller 包了一层 `.wbpro-scroller-item`，因此

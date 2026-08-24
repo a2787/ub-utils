@@ -259,31 +259,42 @@ async function pickWeiboDetailTarget(browser, candidates) {
             if (!confirm) return { found: true, confirm: false };
             confirm.querySelector('.ob-ok').click(); await pause(220);
             const blocked = window.OB.Index.isBlocked(key);
-            const hidden = row.classList.contains('ob-hidden') && (getComputedStyle(row).display === 'none' || row.getBoundingClientRect().height === 0);
+            const liveRows = () => Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2, .wbpro-list > .item1'));
+            const liveRow = liveRows().find((item) => keyOf(item) === key) || row;
+            const liveRoot = rootKey
+              ? Array.from(document.querySelectorAll('.wbpro-list > .item1')).find((item) => keyOf(item) === rootKey) || null
+              : null;
+            const hidden = liveRow.classList.contains('ob-hidden')
+              && (getComputedStyle(liveRow).display === 'none' || liveRow.getBoundingClientRect().height === 0);
             const postVisible = !!post && getComputedStyle(post).display !== 'none' && post.getBoundingClientRect().height > 0;
             // 屏蔽楼中楼时根评论必须保持可见，且高度只应减少（不留空位）。
-            const rootAfter = rootThread && rootThread !== row ? rootThread.getBoundingClientRect().height : 0;
+            const rootNode = liveRoot || (rootThread && rootThread.isConnected ? rootThread : null);
+            const rootAfter = rootNode && rootNode !== liveRow ? rootNode.getBoundingClientRect().height : 0;
             const rootDiagnostics = rootThread && rootThread !== row ? {
+              originalConnected: rootThread.isConnected,
+              freshFound: !!liveRoot,
               connected: rootThread.isConnected,
               display: getComputedStyle(rootThread).display,
               cls: String(rootThread.className).slice(0, 90),
               blockedAttr: rootThread.getAttribute('data-ob-blocked'),
-              wrapper: rootThread.classList.contains('ob-blocked-wrapper'),
-              childCount: rootThread.children.length,
-              childInfo: Array.from(rootThread.children).map((el) => ({
+              wrapper: !!rootNode && rootNode.classList.contains('ob-blocked-wrapper'),
+              childCount: rootNode ? rootNode.children.length : 0,
+              childInfo: rootNode ? Array.from(rootNode.children).map((el) => ({
                 cls: String(el.className).slice(0, 50),
                 h: Math.round(el.getBoundingClientRect().height),
                 wrapper: el.classList.contains('ob-blocked-wrapper'),
                 hidden: el.classList.contains('ob-hidden'),
-              })),
+              })) : [],
             } : null;
             const sameAuthorAsRoot = !!rootKey && rootKey === key;
-            const rootKept = !!rootThread && rootThread !== row && !sameAuthorAsRoot
+            const rootKept = !!rootNode && rootNode !== liveRow && !sameAuthorAsRoot
               && rootAfter > 0 && rootAfter < rootBefore;
             const toast = document.getElementById('ob-toast');
             const undo = toast && toast.querySelector('button');
             if (undo) { undo.click(); await pause(220); }
-            const restored = !!undo && !window.OB.Index.isBlocked(key) && getComputedStyle(row).display !== 'none' && row.getBoundingClientRect().height > 0;
+            const restoredRow = liveRows().find((item) => keyOf(item) === key) || row;
+            const restored = !!undo && !window.OB.Index.isBlocked(key)
+              && getComputedStyle(restoredRow).display !== 'none' && restoredRow.getBoundingClientRect().height > 0;
             return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored };
           });
           const local = result.localBlock || {};
