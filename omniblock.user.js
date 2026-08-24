@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.27.0
+// @version       0.28.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -1154,6 +1154,19 @@
     });
   }
 
+  function inactiveWeiboVirtualRow(row) {
+    if (!row || !row.style) return false;
+    const inlineOpacity = row.style.getPropertyValue('opacity').trim();
+    if (inlineOpacity) {
+      const numeric = Number.parseFloat(inlineOpacity);
+      if (Number.isFinite(numeric)) return numeric === 0;
+    }
+    const computed = window.getComputedStyle ? getComputedStyle(row) : null;
+    return !!computed && (computed.opacity === '0'
+      || computed.display === 'none'
+      || computed.visibility === 'hidden');
+  }
+
   function syncVirtualRowOffsets(row) {
     if (!row || !row.parentElement || !row.matches(VIRTUAL_ROW_SELECTOR)) return;
     const rows = Array.from(row.parentElement.children || [])
@@ -1173,11 +1186,24 @@
       }
       const inline = state ? state.value : inlineValue;
       const computed = window.getComputedStyle ? getComputedStyle(candidate).transform : '';
-      const source = inline || computed;
+      let source = inline || computed;
+      const inactive = inactiveWeiboVirtualRow(candidate);
+      // 非活动行是微博回收器的占位节点（常见为 translateY(-9999px) + opacity:0）。
+      // 它们稍后会被平台复用到新的可见位置，不能把本地补位写成 !important，
+      // 否则平台再也无法接管这些行，滚动到该处时会整段空白。
+      if (inactive && state) {
+        if (state.applied) {
+          source = state.value;
+          restoreVirtualRowInlineStyle(candidate);
+        } else {
+          virtualRowInlineStates.delete(candidate);
+        }
+      }
       return {
         candidate,
         source,
         y: readTranslateY(source),
+        inactive,
         blocked: blockedVirtualRowStates.has(candidate) || hiddenWeiboCommentInVirtualRow(candidate),
         height: blockedVirtualRowStates.get(candidate)?.height || 0,
       };
@@ -1185,7 +1211,9 @@
     let shift = 0;
     for (let i = 0; i < meta.length; i++) {
       const entry = meta[i];
-      if (shift > 0 && Number.isFinite(entry.y)) {
+      if (entry.inactive) {
+        // 保留平台的回收标记和原始 transform；等它重新变为活动行后再补位。
+      } else if (shift > 0 && Number.isFinite(entry.y)) {
         const nextTransform = shiftTranslateY(entry.source, shift);
         if (nextTransform) {
           const state = virtualRowInlineState(entry.candidate);

@@ -182,6 +182,27 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                             </div>
                           </div>
                         </div>
+                        <!-- 人工合成非活动回收行：平台暂时把它们放到 -9999px，滚动后会复用。 -->
+                        <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0">
+                          <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
+                            <div class="item2">
+                              <div class="con2">
+                                <div class="text"><a class="_default_129qs_2" href="/u/123460004" usercard="123460004">非活动回收作者</a><span>:</span><span>回收行正文</span></div>
+                                <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0">
+                          <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
+                            <div class="item2">
+                              <div class="con2">
+                                <div class="text"><a class="_default_129qs_2" href="/u/123460005" usercard="123460005">第二个回收作者</a><span>:</span><span>第二个回收行正文</span></div>
+                                <div class="woo-box-flex woo-box-alignCenter woo-box-justifyBetween info"><div>刚刚</div><div class="woo-box-flex opt opt"></div></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -612,6 +633,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const replyRow = layer && layer.querySelector('.wbpro-scroller-item > .item2');
       const replyRows = layer ? Array.from(layer.querySelectorAll('.wbpro-scroller-item > .item2')) : [];
       const nextReplyRow = replyRows[1] || null;
+      const recycledReplyRow = replyRows[2] || null;
       if (!layer || !rootRow || !replyRow || !nextReplyRow) return { fixtureOk: false };
       const rootInfo = adapter.extract(rootRow);
       const replyInfo = adapter.extract(replyRow);
@@ -620,10 +642,14 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const rootButton = rootRow.querySelector('.ob-weibo-comment-block');
       const replyWrapper = replyRow.closest('.wbpro-scroller-item');
       const nextVirtualRow = nextReplyRow.closest('.vue-recycle-scroller__item-view');
+      const recycledVirtualRow = recycledReplyRow && recycledReplyRow.closest('.vue-recycle-scroller__item-view');
       const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
       const nextOriginalTransform = nextVirtualRow && nextVirtualRow.style.getPropertyValue('transform');
+      const recycledOriginalTransform = recycledVirtualRow && recycledVirtualRow.style.getPropertyValue('transform');
+      const recycledOriginalPriority = recycledVirtualRow && recycledVirtualRow.style.getPropertyPriority('transform');
       let blocked = false; let confirmText = ''; let replyHidden = false; let replyWrapperHidden = false; let rootVisible = false; let restored = false; let wrapperRestored = false;
       let nextMovedUp = false; let nextRestored = false; let virtualRowReconciled = false;
+      let recycledRowUntouched = false;
       let virtualRowStyleMutationCount = 0;
       let nextFinalTop = null;
       if (replyButton) {
@@ -638,6 +664,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         replyWrapperHidden = !!replyWrapper && replyWrapper.getBoundingClientRect().height === 0;
         rootVisible = rootRow.getBoundingClientRect().height > 0;
         nextMovedUp = nextReplyRow.getBoundingClientRect().top < nextBeforeTop - 1;
+        recycledRowUntouched = !!recycledVirtualRow
+          && recycledVirtualRow.style.getPropertyValue('transform') === recycledOriginalTransform
+          && recycledVirtualRow.style.getPropertyPriority('transform') === recycledOriginalPriority;
         // 人工模拟微博虚拟列表稍后把后续行的 transform 写回原值；style 观察必须
         // 在下一次平台重排后再次补位，而不是只依赖定时全量扫描。
         const movedTop = nextReplyRow.getBoundingClientRect().top;
@@ -675,6 +704,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         rootVisible,
         nextMovedUp,
         virtualRowReconciled,
+        recycledRowUntouched,
         virtualRowStyleMutationCount,
         nextRestored,
         nextBeforeTop,
@@ -692,6 +722,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.blocked && weiboModal.replyHidden && weiboModal.replyWrapperHidden
       && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored
       && weiboModal.virtualRowReconciled && weiboModal.virtualRowStyleMutationCount <= 4
+      && weiboModal.recycledRowUntouched
       && weiboModal.nextRestored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
