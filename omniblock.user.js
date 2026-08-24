@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.28.0
+// @version       0.29.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -1037,6 +1037,7 @@
   const blockedVirtualRowStates = new WeakMap();
   const virtualRowInlineStates = new WeakMap();
   const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
+  const MAX_VIRTUAL_ROW_HEIGHT = 20000;
   const BLOCKED_WRAPPER_INLINE_PROPS = [
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
@@ -1111,12 +1112,39 @@
 
   function rememberVirtualRow(container) {
     const row = virtualRowOf(container);
-    if (!row || blockedVirtualRowStates.has(row)) return row;
-    const computed = window.getComputedStyle ? getComputedStyle(row) : null;
-    const rect = row.getBoundingClientRect ? row.getBoundingClientRect() : { height: 0 };
-    const height = rect.height || (computed ? parseFloat(computed.height) : 0) || 0;
+    if (!row) return row;
+    const existing = blockedVirtualRowStates.get(row);
+    if (existing) {
+      if (!(existing.height > 0)) {
+        const measured = readVirtualRowHeight(row);
+        if (measured > 0) existing.height = measured;
+      }
+      return row;
+    }
+    const height = readVirtualRowHeight(row);
     blockedVirtualRowStates.set(row, { height });
     return row;
+  }
+
+  function readVirtualRowHeight(row) {
+    if (!row) return 0;
+    // 微博登录态在首轮测量时可能先把 item-view 撑到很大的临时高度；
+    // item-view 的直接内容层才是评论实际占用的高度，优先读取它。
+    const candidates = [row.firstElementChild, row];
+    for (const candidate of candidates) {
+      if (!candidate || !candidate.getBoundingClientRect) continue;
+      const rect = candidate.getBoundingClientRect();
+      const rectHeight = Number(rect.height) || 0;
+      if (rectHeight > 0 && rectHeight <= MAX_VIRTUAL_ROW_HEIGHT) return rectHeight;
+      const scrollHeight = Number(candidate.scrollHeight) || 0;
+      if (scrollHeight > 0 && scrollHeight <= MAX_VIRTUAL_ROW_HEIGHT) return scrollHeight;
+    }
+    return 0;
+  }
+
+  function safeVirtualRowHeight(value) {
+    const height = Number(value);
+    return Number.isFinite(height) && height > 0 && height <= MAX_VIRTUAL_ROW_HEIGHT ? height : 0;
   }
 
   function virtualRowInlineState(row) {
@@ -1205,7 +1233,7 @@
         y: readTranslateY(source),
         inactive,
         blocked: blockedVirtualRowStates.has(candidate) || hiddenWeiboCommentInVirtualRow(candidate),
-        height: blockedVirtualRowStates.get(candidate)?.height || 0,
+        height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height),
       };
     });
     let shift = 0;
@@ -1231,7 +1259,8 @@
       let height = entry.height;
       if (!(height > 0) && Number.isFinite(entry.y)) {
         const next = meta.slice(i + 1).find((candidate) => Number.isFinite(candidate.y));
-        if (next && next.y > entry.y) height = next.y - entry.y;
+        const delta = next && next.y > entry.y ? next.y - entry.y : 0;
+        if (delta > 0 && delta <= MAX_VIRTUAL_ROW_HEIGHT && !entry.inactive && !next.inactive) height = delta;
       }
       shift += Math.max(0, height);
     }

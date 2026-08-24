@@ -160,7 +160,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                       <div class="vue-recycle-scroller__item-wrapper">
                         <!-- 人工合成虚拟列表：真实页面用绝对定位 + translateY 保存行偏移。
                              隐藏第一行后，第二行必须同步减少这段偏移，否则会留下空白。 -->
-                        <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(0px) translateX(0px)">
+                        <div class="vue-recycle-scroller__item-view" style="position:absolute;height:1000100px;transform:translateY(0px) translateX(0px)">
                           <!-- 人工合成固定虚拟行：用内联 !important 模拟前端回收器重新写回的高度，
                                旧版只靠文档 CSS 无法把这层压成零高度。 -->
                           <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
