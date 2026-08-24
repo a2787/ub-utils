@@ -3,6 +3,25 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 0.25.0 - 2026-08-24
+
+### 抖音重复入口与微博虚拟列表空洞修复
+
+- **抖音评论菜单去重**：同一 `role="tooltip"` portal 内只对真实的
+  `[data-e2e="video-comment-more-report"]` 叶子项注入「🚫 本地拉黑」，不再把 tooltip 容器、内容层和举报项重复当成三个菜单项。
+- **微博后续评论补位**：对真实 `vue-recycle-scroller__item-view` 绝对定位虚拟行记录被隐藏行的原始高度，按该高度减少后续行的 `translateY` 偏移；撤销或名单删除时恢复原内联变换。
+- **安全边界**：只有虚拟行自身可确认只包含被隐藏评论时才补偿后续行，根评论仍可见而仅子评论隐藏时不挪动整行。
+
+### 验证边界
+
+- `real-site verified`：2026-08-24 当前用户 Chrome 只读复现了微博页面的真实空洞结构：隐藏虚拟行高度为 0，后续行仍保留 `translateY(191px)`；同日抖音页面实际捕获 23 条评论和 portal 举报项。另在 v0.25.0 隔离公开微博详情页观察到楼中楼屏蔽后根评论从 139px 上移到 87px，撤销恢复。
+- `structure regression`：`node test/adapters.cjs` 21/21、`node test/run.cjs` 12/12、`node test/state.cjs` 7/7、`node test/quickblock.cjs` 32/32、`node test/douyin.cjs` 2/2；`node --check omniblock.user.js` 与 `git diff --check` 通过。新增抖音 tooltip 单入口断言和微博绝对定位虚拟行偏移/恢复断言。
+- `blocked`：v0.25.0 尚未在当前用户 Chrome 页面更新后复核；默认隔离抖音探针仍停在验证码中间页。用户报告的微博页面最终补位结果需要更新脚本并刷新后确认。
+
+### 限制
+
+微博补位只处理可识别的绝对定位虚拟行，并只对“行自身仅包含被隐藏评论”的情况做偏移补偿；canvas、不可变更位置的其他虚拟列表实现仍需单独适配。
+
 ## 0.24.0 - 2026-08-24
 
 ### 抖音评论入口与微博补位修复

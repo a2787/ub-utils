@@ -158,7 +158,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                 <div class="list2">
                   <div class="vue-recycle-scroller ready page-mode">
                       <div class="vue-recycle-scroller__item-wrapper">
-                        <div class="vue-recycle-scroller__item-view">
+                        <!-- 人工合成虚拟列表：真实页面用绝对定位 + translateY 保存行偏移。
+                             隐藏第一行后，第二行必须同步减少这段偏移，否则会留下空白。 -->
+                        <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(0px) translateX(0px)">
                           <!-- 人工合成固定虚拟行：用内联 !important 模拟前端回收器重新写回的高度，
                                旧版只靠文档 CSS 无法把这层压成零高度。 -->
                           <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
@@ -170,7 +172,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
                             </div>
                           </div>
                         </div>
-                        <div class="vue-recycle-scroller__item-view">
+                        <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(72px) translateX(0px)">
                           <div class="wbpro-scroller-item" style="height:72px !important;padding-bottom:12px !important">
                             <div class="item2">
                               <div class="con2">
@@ -355,6 +357,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       await pause(1050);
       const quick = document.querySelector('#dy-comment-menu .ob-quick');
       result.menuQuickPresent = !!quick;
+      result.menuQuickCount = document.querySelectorAll('#dy-comment-menu .ob-quick').length;
       if (quick) {
         quick.click();
         await pause(80);
@@ -394,7 +397,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         .every((sec) => window.OB.Index.isBlocked('douyin:secuid:' + sec));
       return result;
     });
-    if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuConfirmHasRootAuthor
+    if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 1 && dyComments.menuConfirmHasRootAuthor
       && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
       && dyComments.initialRows >= 1 && dyComments.expandedRows === 3 && dyComments.expandedAuthors
       && dyComments.batchSelected && dyComments.allBlocked) {
@@ -614,7 +617,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const replyWrapper = replyRow.closest('.wbpro-scroller-item');
       const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
       let blocked = false; let confirmText = ''; let replyHidden = false; let replyWrapperHidden = false; let rootVisible = false; let restored = false; let wrapperRestored = false;
-      let nextMovedUp = false;
+      let nextMovedUp = false; let nextRestored = false;
       if (replyButton) {
         replyButton.click();
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -633,6 +636,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         restored = !window.OB.Index.isBlocked('weibo:uid:123460002')
           && replyRow.getBoundingClientRect().height > 0;
         wrapperRestored = !!replyWrapper && replyWrapper.getBoundingClientRect().height > 0;
+        nextRestored = Math.abs(nextReplyRow.getBoundingClientRect().top - nextBeforeTop) < 1;
       }
       return {
         fixtureOk: true,
@@ -648,6 +652,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         replyWrapperHidden,
         rootVisible,
         nextMovedUp,
+        nextRestored,
         restored,
         wrapperRestored,
       };
@@ -659,7 +664,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.rootButtonPresent && weiboModal.replyButtonPresent
       && weiboModal.confirmText.includes('弹窗回复作者')
       && weiboModal.blocked && weiboModal.replyHidden && weiboModal.replyWrapperHidden
-      && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored) {
+      && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored
+      && weiboModal.nextRestored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();

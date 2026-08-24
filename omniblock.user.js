@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.24.0
+// @version       0.25.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -1034,6 +1034,9 @@
   const blockedContainers = new Set();
   const inlineDisplayStates = new WeakMap();
   const blockedWrapperInlineStates = new WeakMap();
+  const blockedVirtualRowStates = new WeakMap();
+  const virtualRowInlineStates = new WeakMap();
+  const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
   const BLOCKED_WRAPPER_INLINE_PROPS = [
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
@@ -1072,6 +1075,121 @@
       else wrapper.style.removeProperty(prop);
     }
     blockedWrapperInlineStates.delete(wrapper);
+  }
+
+  function virtualRowOf(container) {
+    if (!container || !container.closest) return null;
+    return container.closest(VIRTUAL_ROW_SELECTOR);
+  }
+
+  function readTranslateY(value) {
+    const text = String(value || '');
+    const translate = text.match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/i);
+    if (translate) return Number(translate[1]);
+    const matrix = text.match(/^matrix(3d)?\(([^)]+)\)$/i);
+    if (!matrix) return NaN;
+    const parts = matrix[2].split(',').map((part) => Number(part.trim()));
+    if (matrix[1]) return parts.length >= 14 ? parts[13] : NaN;
+    return parts.length >= 6 ? parts[5] : NaN;
+  }
+
+  function shiftTranslateY(value, delta) {
+    const text = String(value || '');
+    const translate = text.match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/i);
+    if (translate) {
+      const next = Number(translate[1]) - delta;
+      return text.replace(translate[0], 'translateY(' + next + 'px)');
+    }
+    const matrix = text.match(/^matrix(3d)?\(([^)]+)\)$/i);
+    if (!matrix) return '';
+    const parts = matrix[2].split(',').map((part) => Number(part.trim()));
+    const index = matrix[1] ? 13 : 5;
+    if (parts.length <= index || parts.some((part) => !Number.isFinite(part))) return '';
+    parts[index] -= delta;
+    return 'matrix' + (matrix[1] ? '3d' : '') + '(' + parts.join(', ') + ')';
+  }
+
+  function rememberVirtualRow(container) {
+    const row = virtualRowOf(container);
+    if (!row || blockedVirtualRowStates.has(row)) return row;
+    const computed = window.getComputedStyle ? getComputedStyle(row) : null;
+    const rect = row.getBoundingClientRect ? row.getBoundingClientRect() : { height: 0 };
+    const height = rect.height || (computed ? parseFloat(computed.height) : 0) || 0;
+    blockedVirtualRowStates.set(row, { height });
+    return row;
+  }
+
+  function virtualRowInlineState(row) {
+    let state = virtualRowInlineStates.get(row);
+    if (state) return state;
+    state = {
+      value: row.style.getPropertyValue('transform'),
+      priority: row.style.getPropertyPriority('transform'),
+    };
+    virtualRowInlineStates.set(row, state);
+    return state;
+  }
+
+  function restoreVirtualRowInlineStyle(row) {
+    const state = virtualRowInlineStates.get(row);
+    if (!state || !row.style) return;
+    if (state.value) row.style.setProperty('transform', state.value, state.priority);
+    else row.style.removeProperty('transform');
+    virtualRowInlineStates.delete(row);
+  }
+
+  function hiddenWeiboCommentInVirtualRow(row) {
+    const commentSelector = '.item1,.item2,.card-review[comment_id]';
+    const comments = Array.from(row.querySelectorAll(commentSelector));
+    return comments.some((comment) => {
+      let parent = comment.parentElement;
+      while (parent && parent !== row) {
+        if (parent.matches && parent.matches(commentSelector)) return false;
+        parent = parent.parentElement;
+      }
+      return comment.classList.contains('ob-hidden')
+        || (comment.hasAttribute('data-ob-blocked') && getComputedStyle(comment).display === 'none');
+    });
+  }
+
+  function syncVirtualRowOffsets(row) {
+    if (!row || !row.parentElement || !row.matches(VIRTUAL_ROW_SELECTOR)) return;
+    const rows = Array.from(row.parentElement.children || [])
+      .filter((candidate) => candidate.matches && candidate.matches(VIRTUAL_ROW_SELECTOR));
+    if (!rows.length) return;
+    const meta = rows.map((candidate) => {
+      const state = virtualRowInlineStates.get(candidate);
+      const inline = state ? state.value : candidate.style.getPropertyValue('transform');
+      const computed = window.getComputedStyle ? getComputedStyle(candidate).transform : '';
+      const source = inline || computed;
+      return {
+        candidate,
+        source,
+        y: readTranslateY(source),
+        blocked: blockedVirtualRowStates.has(candidate) || hiddenWeiboCommentInVirtualRow(candidate),
+        height: blockedVirtualRowStates.get(candidate)?.height || 0,
+      };
+    });
+    let shift = 0;
+    for (let i = 0; i < meta.length; i++) {
+      const entry = meta[i];
+      if (shift > 0 && Number.isFinite(entry.y)) {
+        const nextTransform = shiftTranslateY(entry.source, shift);
+        if (nextTransform) {
+          virtualRowInlineState(entry.candidate);
+          entry.candidate.style.setProperty('transform', nextTransform, 'important');
+        }
+      } else if (shift === 0 && virtualRowInlineStates.has(entry.candidate)) {
+        restoreVirtualRowInlineStyle(entry.candidate);
+      }
+      if (!entry.blocked) continue;
+      let height = entry.height;
+      if (!(height > 0) && Number.isFinite(entry.y)) {
+        const next = meta.slice(i + 1).find((candidate) => Number.isFinite(candidate.y));
+        if (next && next.y > entry.y) height = next.y - entry.y;
+      }
+      shift += Math.max(0, height);
+    }
   }
 
   function needsInlineHide(container) {
@@ -1148,6 +1266,7 @@
 
   function unmark(container) {
     if (!container) return;
+    const virtualRow = virtualRowOf(container);
     setInlineHidden(container, false);
     if (container.__obBar && container.__obBar.parentNode) container.__obBar.parentNode.removeChild(container.__obBar);
     container.__obBar = null;
@@ -1161,6 +1280,10 @@
       wrapper.classList.remove('ob-blocked-wrapper');
       if (!wrapper.getAttribute('class')) wrapper.removeAttribute('class');
       wrapper = parent;
+    }
+    if (virtualRow && currentAdapter && currentAdapter.id === 'weibo') {
+      if (!hiddenWeiboCommentInVirtualRow(virtualRow)) blockedVirtualRowStates.delete(virtualRow);
+      syncVirtualRowOffsets(virtualRow);
     }
   }
 
@@ -1218,8 +1341,10 @@
     const container = (info && adapter.containerOf && adapter.containerOf(item)) || (info && info.container) || item;
     if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
     if (Index.isBlocked(info.keys)) {
+      const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container) : null;
       markBlocked(container, info.label, modeForItem(adapter, item));
       collapseBlockedWrappers(container);
+      if (virtualRow) syncVirtualRowOffsets(virtualRow);
     } else unmark(container);
   }
 
@@ -2701,6 +2826,13 @@
       // 检查叶子项，身份仍必须来自当前唯一浮动弹幕 hash，因而不会给普通举报窗乱挂入口。
       for (const root of querySelectorAllDeep(document, QB_MENU_ROOT)) {
         const tooltipRoot = root.matches && root.matches('[role="tooltip"],.semi-tooltip-wrapper');
+        // 抖音当前的举报菜单是 portal：容器和内容层都带有同一段文字，只有
+        // `[data-e2e="video-comment-more-report"]` 才是实际可点击的叶子项。
+        // 若把 tooltip 内所有文字叶子都当菜单项，会在同一个菜单里插入 2~3 个入口。
+        if (a.id === 'douyin' && tooltipRoot) {
+          for (const el of querySelectorAllDeep(root, '[data-e2e="video-comment-more-report"]')) tryInject(el);
+          continue;
+        }
         const leaves = querySelectorAllDeep(root, '*').filter((el) => {
           if (!el || el === root || !el.parentElement) return false;
           const text = textOf(el);
@@ -2708,9 +2840,8 @@
           if ((el.children || []).length > 2) return false;
           const interactive = el.querySelector && el.querySelector('a,button,[role="menuitem"],[role="button"],li');
           if (interactive) return false;
-          // 抖音当前 tooltip 的 `.semi-tooltip-content` 只有一个举报叶子；不能用
-          // “至少两个兄弟”规则把这个真实入口过滤掉。
-          return tooltipRoot || (el.parentElement.children || []).length >= 2;
+          return (el.children || []).length === 0
+            && (tooltipRoot || (el.parentElement.children || []).length >= 2);
         });
         for (const el of leaves) tryInject(el);
       }
