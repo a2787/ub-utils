@@ -355,6 +355,10 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       if (!result.fixtureOk) return result;
       more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
       await pause(1050);
+      // 人工复现真站的 pointerover：事件路径会同时经过举报项、tooltip 内容层和
+      // portal 外壳；抖音只允许真实举报叶子项注入，不能给这些父层重复注入。
+      report.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, composed: true }));
+      await pause(120);
       const quick = document.querySelector('#dy-comment-menu .ob-quick');
       result.menuQuickPresent = !!quick;
       result.menuQuickCount = document.querySelectorAll('#dy-comment-menu .ob-quick').length;
@@ -615,9 +619,12 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const replyButton = replyRow.querySelector('.ob-weibo-comment-block');
       const rootButton = rootRow.querySelector('.ob-weibo-comment-block');
       const replyWrapper = replyRow.closest('.wbpro-scroller-item');
+      const nextVirtualRow = nextReplyRow.closest('.vue-recycle-scroller__item-view');
       const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
+      const nextOriginalTransform = nextVirtualRow && nextVirtualRow.style.getPropertyValue('transform');
       let blocked = false; let confirmText = ''; let replyHidden = false; let replyWrapperHidden = false; let rootVisible = false; let restored = false; let wrapperRestored = false;
-      let nextMovedUp = false; let nextRestored = false;
+      let nextMovedUp = false; let nextRestored = false; let virtualRowReconciled = false;
+      let nextFinalTop = null;
       if (replyButton) {
         replyButton.click();
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -630,6 +637,14 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         replyWrapperHidden = !!replyWrapper && replyWrapper.getBoundingClientRect().height === 0;
         rootVisible = rootRow.getBoundingClientRect().height > 0;
         nextMovedUp = nextReplyRow.getBoundingClientRect().top < nextBeforeTop - 1;
+        // 人工模拟微博虚拟列表稍后把后续行的 transform 写回原值；style 观察必须
+        // 在下一次平台重排后再次补位，而不是只依赖定时全量扫描。
+        const movedTop = nextReplyRow.getBoundingClientRect().top;
+        if (nextVirtualRow && nextOriginalTransform) {
+          nextVirtualRow.style.setProperty('transform', nextOriginalTransform, '');
+          await new Promise((resolve) => setTimeout(resolve, 180));
+          virtualRowReconciled = nextReplyRow.getBoundingClientRect().top < movedTop + 1;
+        }
         const toast = document.getElementById('ob-toast');
         if (toast) toast.querySelector('button').click();
         await new Promise((resolve) => setTimeout(resolve, 140));
@@ -637,6 +652,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
           && replyRow.getBoundingClientRect().height > 0;
         wrapperRestored = !!replyWrapper && replyWrapper.getBoundingClientRect().height > 0;
         nextRestored = Math.abs(nextReplyRow.getBoundingClientRect().top - nextBeforeTop) < 1;
+        nextFinalTop = nextReplyRow.getBoundingClientRect().top;
       }
       return {
         fixtureOk: true,
@@ -652,7 +668,10 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         replyWrapperHidden,
         rootVisible,
         nextMovedUp,
+        virtualRowReconciled,
         nextRestored,
+        nextBeforeTop,
+        nextFinalTop,
         restored,
         wrapperRestored,
       };
@@ -665,7 +684,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.confirmText.includes('弹窗回复作者')
       && weiboModal.blocked && weiboModal.replyHidden && weiboModal.replyWrapperHidden
       && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored
-      && weiboModal.nextRestored) {
+      && weiboModal.virtualRowReconciled && weiboModal.nextRestored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();

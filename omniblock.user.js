@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.25.0
+// @version       0.26.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -1125,6 +1125,8 @@
     state = {
       value: row.style.getPropertyValue('transform'),
       priority: row.style.getPropertyPriority('transform'),
+      applied: '',
+      appliedPriority: '',
     };
     virtualRowInlineStates.set(row, state);
     return state;
@@ -1159,7 +1161,17 @@
     if (!rows.length) return;
     const meta = rows.map((candidate) => {
       const state = virtualRowInlineStates.get(candidate);
-      const inline = state ? state.value : candidate.style.getPropertyValue('transform');
+      const inlineValue = candidate.style.getPropertyValue('transform');
+      const inlinePriority = candidate.style.getPropertyPriority('transform');
+      if (state && (inlineValue !== state.applied || inlinePriority !== state.appliedPriority)) {
+        // Weibo 会在虚拟列表重排时重新写入行的 style；把这次新值视为平台基线，
+        // 否则下一轮会继续沿用旧 transform，出现短暂上移后又回到空洞位置。
+        state.value = inlineValue;
+        state.priority = inlinePriority;
+        state.applied = '';
+        state.appliedPriority = '';
+      }
+      const inline = state ? state.value : inlineValue;
       const computed = window.getComputedStyle ? getComputedStyle(candidate).transform : '';
       const source = inline || computed;
       return {
@@ -1176,8 +1188,10 @@
       if (shift > 0 && Number.isFinite(entry.y)) {
         const nextTransform = shiftTranslateY(entry.source, shift);
         if (nextTransform) {
-          virtualRowInlineState(entry.candidate);
+          const state = virtualRowInlineState(entry.candidate);
           entry.candidate.style.setProperty('transform', nextTransform, 'important');
+          state.applied = nextTransform;
+          state.appliedPriority = 'important';
         }
       } else if (shift === 0 && virtualRowInlineStates.has(entry.candidate)) {
         restoreVirtualRowInlineStyle(entry.candidate);
@@ -1360,9 +1374,17 @@
       'data-field', 'data-sec-uid', 'data-secuid', 'data-danmaku-user-id', 'data-danmu-user-id',
       'data-mid-hash', 'data-mid_hash', 'data-dm-hash', 'data-danmaku-hash',
       'comment_id', 'comment-id', 'data-comment-id', 'action-type',
+      'style',
     ];
     const mo = new MutationObserver((records) => {
       for (const record of records) for (const node of record.addedNodes || []) discoverShadowRoots(node);
+      if (adapter.id === 'weibo') {
+        for (const record of records) {
+          if (record.type !== 'attributes' || record.attributeName !== 'style') continue;
+          const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
+          if (row) syncVirtualRowOffsets(row);
+        }
+      }
       schedule();
     });
 
@@ -2785,6 +2807,9 @@
     }
     function tryInject(el) {
       if (!el || el.nodeType !== 1 || (el.classList && Array.from(el.classList).some((name) => name.startsWith('ob-')))) return;
+      const inDouyinPortal = a.id === 'douyin' && el.closest
+        && el.closest('[role="tooltip"],.semi-tooltip-wrapper');
+      if (inDouyinPortal && !(el.matches && el.matches('[data-e2e="video-comment-more-report"]'))) return;
       // Lit/Vue 菜单重绘可能删掉我们的兄弟节点但保留原生 li；此时允许下一轮补回。
       if (el.hasAttribute('data-ob-qb')) {
         if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
@@ -2830,7 +2855,17 @@
         // `[data-e2e="video-comment-more-report"]` 才是实际可点击的叶子项。
         // 若把 tooltip 内所有文字叶子都当菜单项，会在同一个菜单里插入 2~3 个入口。
         if (a.id === 'douyin' && tooltipRoot) {
-          for (const el of querySelectorAllDeep(root, '[data-e2e="video-comment-more-report"]')) tryInject(el);
+          const portalRoot = (root.closest && root.closest('.semi-portal')) || root;
+          const reports = querySelectorAllDeep(portalRoot, '[data-e2e="video-comment-more-report"]');
+          const directButton = reports
+            .map((report) => report.parentElement && report.parentElement.querySelector(':scope > .ob-quick'))
+            .find(Boolean);
+          const quicks = querySelectorAllDeep(portalRoot, '.ob-quick');
+          for (const button of quicks) if (button !== directButton) button.remove();
+          for (const marked of querySelectorAllDeep(portalRoot, '[data-ob-qb]')) {
+            if (!reports.includes(marked)) marked.removeAttribute('data-ob-qb');
+          }
+          for (const el of reports) tryInject(el);
           continue;
         }
         const leaves = querySelectorAllDeep(root, '*').filter((el) => {

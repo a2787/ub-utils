@@ -3,6 +3,24 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 0.26.0 - 2026-08-24
+
+### 抖音菜单重复注入与微博虚拟行回弹修复
+
+- **抖音评论菜单去重**：`pointerover/focusin` 事件路径只允许真实的
+  `[data-e2e="video-comment-more-report"]` 叶子项注入；同一 tooltip 已存在的多余入口也会被清理。
+- **微博补位抗回写**：监听虚拟行 `style` 重排，把微博后续行被页面恢复的原始 `transform` 重新作为基线补偿，避免评论短暂上移后再次留下空白。
+
+### 验证边界
+
+- `real-site verified`：2026-08-24 当前用户 Chrome 只读复现了 v0.25.0 的抖音 tooltip 事件路径，实际看到同一菜单出现 3 个脚本入口；微博当前页实际看到隐藏行高度为 0、后续行带脚本补位的 `!important` transform。另在隔离未登录公开微博详情页观察到 9 条评论、9 条可识别身份、0 个重复入口，楼中楼屏蔽后根评论仍可见且位置从 110 上移到 63，撤销恢复。未点击平台举报、官方拉黑或其他写入控件。
+- `structure regression`：`node test/adapters.cjs` 21/21、`node test/run.cjs` 12/12、`node test/state.cjs` 7/7、`node test/quickblock.cjs` 32/32、`node test/douyin.cjs` 2/2；`node --check omniblock.user.js` 与 `git diff --check` 通过。新增抖音父层 pointerover 去重和微博虚拟行 style 回写断言。
+- `blocked`：v0.26.0 尚未在当前用户 Chrome 页面更新后复核；默认隔离抖音探针仍可能停在验证码中间页，用户报告的具体微博页面仍需安装后确认。
+
+### 限制
+
+微博补位仍只处理可识别的绝对定位 `vue-recycle-scroller__item-view`，并只对虚拟行自身可确认只包含被隐藏评论的情况做偏移补偿。
+
 ## 0.25.0 - 2026-08-24
 
 ### 抖音重复入口与微博虚拟列表空洞修复
