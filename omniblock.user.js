@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.26.0
+// @version       0.27.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -1189,7 +1189,10 @@
         const nextTransform = shiftTranslateY(entry.source, shift);
         if (nextTransform) {
           const state = virtualRowInlineState(entry.candidate);
-          entry.candidate.style.setProperty('transform', nextTransform, 'important');
+          if (entry.candidate.style.getPropertyValue('transform') !== nextTransform
+            || entry.candidate.style.getPropertyPriority('transform') !== 'important') {
+            entry.candidate.style.setProperty('transform', nextTransform, 'important');
+          }
           state.applied = nextTransform;
           state.appliedPriority = 'important';
         }
@@ -1377,7 +1380,11 @@
       'style',
     ];
     const mo = new MutationObserver((records) => {
-      for (const record of records) for (const node of record.addedNodes || []) discoverShadowRoots(node);
+      let shouldSchedule = false;
+      for (const record of records) {
+        for (const node of record.addedNodes || []) discoverShadowRoots(node);
+        if (record.type !== 'attributes' || record.attributeName !== 'style') shouldSchedule = true;
+      }
       if (adapter.id === 'weibo') {
         for (const record of records) {
           if (record.type !== 'attributes' || record.attributeName !== 'style') continue;
@@ -1385,7 +1392,7 @@
           if (row) syncVirtualRowOffsets(row);
         }
       }
-      schedule();
+      if (shouldSchedule) schedule();
     });
 
     function observeRoot(root) {

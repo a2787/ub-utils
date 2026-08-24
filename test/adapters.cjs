@@ -624,6 +624,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const nextOriginalTransform = nextVirtualRow && nextVirtualRow.style.getPropertyValue('transform');
       let blocked = false; let confirmText = ''; let replyHidden = false; let replyWrapperHidden = false; let rootVisible = false; let restored = false; let wrapperRestored = false;
       let nextMovedUp = false; let nextRestored = false; let virtualRowReconciled = false;
+      let virtualRowStyleMutationCount = 0;
       let nextFinalTop = null;
       if (replyButton) {
         replyButton.click();
@@ -641,8 +642,13 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         // 在下一次平台重排后再次补位，而不是只依赖定时全量扫描。
         const movedTop = nextReplyRow.getBoundingClientRect().top;
         if (nextVirtualRow && nextOriginalTransform) {
+          const styleWatcher = new MutationObserver((records) => {
+            virtualRowStyleMutationCount += records.filter((record) => record.attributeName === 'style').length;
+          });
+          styleWatcher.observe(nextVirtualRow.parentElement, { attributes: true, attributeFilter: ['style'], subtree: true });
           nextVirtualRow.style.setProperty('transform', nextOriginalTransform, '');
           await new Promise((resolve) => setTimeout(resolve, 180));
+          styleWatcher.disconnect();
           virtualRowReconciled = nextReplyRow.getBoundingClientRect().top < movedTop + 1;
         }
         const toast = document.getElementById('ob-toast');
@@ -669,6 +675,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         rootVisible,
         nextMovedUp,
         virtualRowReconciled,
+        virtualRowStyleMutationCount,
         nextRestored,
         nextBeforeTop,
         nextFinalTop,
@@ -684,7 +691,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.confirmText.includes('弹窗回复作者')
       && weiboModal.blocked && weiboModal.replyHidden && weiboModal.replyWrapperHidden
       && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored
-      && weiboModal.virtualRowReconciled && weiboModal.nextRestored) {
+      && weiboModal.virtualRowReconciled && weiboModal.virtualRowStyleMutationCount <= 4
+      && weiboModal.nextRestored) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();
