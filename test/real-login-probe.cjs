@@ -297,15 +297,21 @@ async function runScenario(client, url, name, inject, block) {
       return report;
     }
     if (inject && block) {
-      await sleep(500);
-      report.localBlock = await evaluate(client, report.sessionId, `
-        const state = window.__OB_PROBE_BLOCK_TARGET__;
-        const target = state && state.node && state.node.isConnected ? state.node : null;
-        const hidden = !!target && (target.classList.contains('ob-hidden')
-          || getComputedStyle(target).display === 'none'
-          || target.getBoundingClientRect().height === 0);
-        return { selected: !!state, connected: !!target, hidden };
-      `, 2500).catch(() => ({ selected: false, connected: false, hidden: false }));
+      // 微博首轮虚拟列表可能要等下一次扫描周期才接管刚加载的评论；固定 500ms
+      // 会把正常时序误报成失败，因此只在短超时内轮询到隐藏状态。
+      report.localBlock = { selected: false, connected: false, hidden: false };
+      for (let attempt = 0; attempt < 30; attempt++) {
+        report.localBlock = await evaluate(client, report.sessionId, `
+          const state = window.__OB_PROBE_BLOCK_TARGET__;
+          const target = state && state.node && state.node.isConnected ? state.node : null;
+          const hidden = !!target && (target.classList.contains('ob-hidden')
+            || getComputedStyle(target).display === 'none'
+            || target.getBoundingClientRect().height === 0);
+          return { selected: !!state, connected: !!target, hidden };
+        `, 2500).catch(() => ({ selected: false, connected: false, hidden: false }));
+        if (report.localBlock.hidden) break;
+        await sleep(100);
+      }
       if (!report.localBlock.hidden) report.blocked.push('内存本地屏蔽未在当前微博评论页确认');
     }
     const initialScrollY = inject
