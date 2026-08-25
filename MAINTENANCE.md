@@ -93,7 +93,9 @@
 
 **发布状态**
 
-`v0.36.0` 用于替代已安装的 `0.35.0`，保留既有 `v0.35.0` tag，不覆盖历史 Release。
+`v0.36.0` 已替代已安装的 `0.35.0`。提交 `fcb29a8` 已推送到 `origin/master`，`v0.36.0` tag 已创建并推送，
+GitHub Release 已发布：<https://github.com/a2787/ub-utils/releases/tag/v0.36.0>。既有 `v0.35.0` tag 和 Release
+均保留，未覆盖历史版本。
 
 **下一步最有价值的验证**
 
