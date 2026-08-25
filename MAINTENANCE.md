@@ -17,6 +17,8 @@
 | `test/real-douyin-probe.cjs` | 抖音登录态只读探针：连接用户调试浏览器，临时标签页注入内存存储。 |
 | `test/real-platform-probe.cjs` | 其余平台的隔离、只读真实页面探针。 |
 | `test/weibo-replay.cjs` | 基于真实微博虚拟列表契约的本地回放和平台反复回写压力回归；支持 `--git-ref=` 做旧版可失败性复核。 |
+| `test/dev-browser.cjs` | 以非默认 profile 和固定 9222 端口幂等启动/复用专用调试 Chrome。 |
+| `test/real-login-probe.cjs` | 专用 Chrome 登录态只读探针；导航前注入当前工作区源码、内存 GM 存储和性能诊断，支持运行时 `--url=` 或专用窗口 `--current`。 |
 | `test/maintenance-check.cjs` | 顺序执行静态门禁、完整结构矩阵、微博回放和当前源码注入的微博真站探针。 |
 | `test/discover.cjs` | 真实探针的目标发现器：从平台公开入口页选出只读目标并提供脱敏形式。 |
 | `test/runtime.cjs` | 浏览器测试的公共启动器；自动确定仓库根目录与可用运行时。 |
@@ -72,23 +74,87 @@
 
 ## 当前交接
 
+### 2026-08-25 - v0.35.0 候选 - 专用浏览器闭环与微博自激重排修复
+
+**范围**
+
+本轮把登录态调试从主浏览器临时远程调试切换到固定的专用持久 Chrome，并修复微博虚拟列表在存在屏蔽行时由全局
+`style` 观察、整列表布局读取和脚本自身样式回写形成的持续重排路径。当前候选通过直接 CDP 注入工作区源码验证，
+不需要 Tampermonkey 安装或提高版本号。
+
+**改动文件**
+
+- `test/dev-browser.cjs`：使用 `C:\Users\et4vr\.browser-harness-chrome-profile` 和 `127.0.0.1:9222`，
+  端口已有浏览器时直接复用，未运行时幂等启动；不连接用户主浏览器。
+- `test/real-login-probe.cjs`：只读打开运行时提供的脱敏微博目标，注入当前源码和内存 GM stub，记录源码 hash、
+  构建标识、CDP 心跳、页面性能计数、长任务和渲染进程 CPU；登录/验证码时保留标签页并返回 `blocked`。
+- `omniblock.user.js`：微博改用按列表的专用观察器，只观察列表 spacer 和虚拟行自身 style；缓存行高，忽略脚本自身
+  写回；平台改写 spacer 时用缓存高度立即纠正，完整行协调仍按列表 100ms 节流，并在无屏蔽工作后清理观察器。
+- `test/weibo-replay.cjs`：增加 96 行、1 个屏蔽行的持续回写和评论内部 style 隔离回归，并保留旧 v0.34.0
+  可失败性复核。
+- `test/real-platform-probe.cjs`：增加 spacer 700ms 稳定采样、节点尺寸诊断和当前工作区注入标识检查。
+- `test/maintenance-check.cjs`：将网络/登录/验证码导致的探针非零退出按 `blocked` 汇总，保留已加载页面错误的失败门禁。
+- `README.md`、`CHANGELOG.md`：同步候选验证边界和不再以每次试验消耗版本号的维护流程。
+
+**证据**
+
+- **`structure regression`**：`node test/weibo-replay.cjs` 5/5、`node test/adapters.cjs` 21/21、`node test/run.cjs`
+  13/13、`node test/state.cjs` 7/7；`node test/weibo-replay.cjs --git-ref=4b5fdca` 旧 v0.34.0 在新回归中
+  4/5 项失败，持续屏蔽列表产生 36,765 次布局读取、静止窗口仍产生 9,120 次延迟读取，且未补偿 spacer；
+  当前候选允许一次停止后的最终同步，之后 500ms 计数静止。
+- **`real-site verified`**：2026-08-25 隔离未登录公开微博详情页注入当前工作区源码，顶层虚拟评论隐藏 63px 后
+  `item-wrapper` 的 `min-height` 从 1329px 稳定缩至 1266px，700ms 采样无回弹，撤销恢复；探针未点击微博
+  举报、官方拉黑、关注或发帖控件。
+- **`real-site verified`**：2026-08-25 用户确认已登录的专用持久 Chrome 中，运行
+  `node test/real-login-probe.cjs weibo --current --duration=90 --scenario=all`；基线、空名单、内存名单屏蔽
+  三组均完整运行 90 秒，候选源码 hash/版本/构建标识一致，无登录/验证码拦截、CDP 心跳错误或页面无响应；
+  空名单解析出评论目标，内存名单屏蔽目标保持隐藏。该探针未读取 Cookie，也未点击微博举报、官方拉黑、关注或发帖控件。
+- **`blocked`**：同日初次探针输出的“登录页/候选未注入”由探针自身缺陷造成：基线模板正则丢失反斜杠、探针
+  返回值受模板首换行的 ASI 影响、GM shim 对象少一个闭合括号；修正后已由上述长时探针复验，不再把该历史
+  输出当作页面登录拦截证据。
+
+**检查**
+
+- 已通过：`node --check omniblock.user.js`、`node --check test/dev-browser.cjs`、`node --check test/real-login-probe.cjs`、
+  `node --check test/weibo-replay.cjs`、`node --check test/real-platform-probe.cjs`、`git diff --check`（最终差异仍需重跑）。
+- 专用工具基础检查已通过：`node test/dev-browser.cjs status`/`ensure` 返回固定 9222 和专用 profile，`ensure`
+  复用已有浏览器（`launched: false`）；长时探针记录当前工作区源码 hash，并完成三组 90 秒验证。
+
+**限制**
+
+- 登录态由用户本人确认，探针不读取 Cookie，因此不能独立证明账号身份；本轮只证明专用 profile 中页面未出现登录/验证码
+  拦截、候选源码确实注入并持续运行。微博其他虚拟列表变体仍需新的 DOM 捕获。
+- 专用 profile 不复制主浏览器 Cookie；若登录态失效，由用户本人在专用窗口重新登录。
+
+**版本/发布状态**
+
+- v0.35.0 仍是本地候选；没有推送、tag 或 GitHub Release。所有本地回归和登录态真站验收通过后才执行一次发布。
+
+**下一步最有价值的验证**
+
+完成最终本地矩阵、隐私门禁和暂存差异审阅；通过后才对 v0.35.0 执行一次提交、推送、tag 和 Release。
+
 ### 2026-08-25 - v0.35.0 候选 - 微博虚拟列表 spacer 补位
 
 **范围**
 
-本轮只修复微博评论本地屏蔽后的虚拟列表尾部空白。历史版本已经能把被屏蔽行的
+本轮修复微博评论本地屏蔽后的虚拟列表尾部空白，并处理由同一适配器引入的页面卡顿路径。历史版本已经能把被屏蔽行的
 `translateY` 调回连续位置，但没有同步缩短同一个 `vue-recycle-scroller__item-wrapper` 的
 `min-height`；微博仍按旧总高度布局，因此评论区尾部留下与被隐藏行等高的空白。当前补丁在
 屏蔽期间记录列表原始尺寸，按同列表中实际隐藏虚拟行的累计高度扣减 `min-height` 或显式
 `height`，并在微博反复回写 spacer 时重新应用补偿；撤销时只恢复仍属于脚本补偿的尺寸，避免
-覆盖平台新的合法基线。
+覆盖平台新的合法基线。另一个根因是扫描器对每个未命中的普通虚拟评论也立即扫描整个列表，
+再叠加微博持续回写 `style`，会把普通评论页拖入高频布局读取；现在只对有本地屏蔽行的列表排队，
+并按列表/动画帧合并同步。
 
 **改动文件**
 
 - `omniblock.user.js`：新增虚拟列表尺寸状态、累计隐藏行高度补偿、平台 spacer 回写观察和撤销恢复；
-  版本为 v0.35.0，构建标识为 `0.35.0-weibo-virtual-spacer-douyin-manager`。
+  增加有屏蔽行才排队的虚拟列表同步；版本为 v0.35.0，构建标识为
+  `0.35.0-weibo-virtual-spacer-douyin-manager`。
 - `test/weibo-replay.cjs`：人工合成的真实 DOM 契约加入 `item-wrapper` 的 `min-height`，压力回写
-  同时覆盖 transform/spacer，并断言隐藏后尺寸减少、撤销后恢复。
+  同时覆盖 transform/spacer，并断言隐藏后尺寸减少、撤销后恢复；加入无屏蔽行的高频样式回写性能
+  断言。
 - `test/real-platform-probe.cjs`：真实微博只读探针增加顶层虚拟评论 spacer 的单条隐藏/撤销断言；
   不点击微博平台举报、官方拉黑、关注或发帖控件。
 - `README.md`、`CHANGELOG.md`：同步用户可见行为、根因和证据边界。
@@ -99,21 +165,23 @@
   `weibo.com/...`），使用 v0.35.0 当前源码实际观察到：顶层虚拟评论隐藏 63px 行后，所属
   `item-wrapper` 高度从 1568px 减至 1505px，撤销后尺寸和目标评论恢复；楼中楼独立隐藏时根评论
   从 191px 减至 139px，撤销恢复。探针无页面错误，也没有触碰平台写入控件。
-- **`structure regression`**：`node test/weibo-replay.cjs` 3/3、`node test/adapters.cjs` 21/21；
-  `node test/weibo-replay.cjs --git-ref=4b5fdca` 的旧 v0.34.0 源码在新增两个 spacer 断言上失败，
-  说明旧实现只处理行位移、没有处理容器总高。
-- **`blocked`**：本轮未取得用户当前登录浏览器的“可登录验证”授权，因此没有连接用户调试会话，
-  也没有把当前用户名单或精确登录页面写入验证日志。隔离页证据不能替代登录态验收。
+- **`structure regression`**：`node test/weibo-replay.cjs` 4/4、`node test/adapters.cjs` 21/21；
+  `node test/weibo-replay.cjs --git-ref=4b5fdca` 的旧 v0.34.0 源码在 spacer 和性能断言上失败，
+  无屏蔽列表路径产生 1872 次布局读取，说明旧实现既没有处理容器总高，也没有隔离普通列表扫描。
+- **`blocked`**：2026-08-25 用户已打开实际 Chrome 的远程调试并提供微博标签页；已定位脱敏的
+  `weibo.com/...` 页面，但页面级 `Page.getFrameTree`、`DOM.getDocument`、`Runtime.evaluate`
+  在刷新前后均超时，无法读取齿轮构建标识或确认当前安装版本。没有读取 Cookie、用户名单或原始
+  页面文本，也没有点击微博举报、官方拉黑、关注或发帖控件。
 
 **检查**
 
 - 已通过：`node --check omniblock.user.js`、`node --check test/real-platform-probe.cjs`、
-  `node --check test/weibo-replay.cjs`、`git diff --check`、`node test/weibo-replay.cjs`、
+  `node --check test/weibo-replay.cjs`、`git diff --check`、`node test/weibo-replay.cjs`（4/4）、
   `node test/adapters.cjs`。
 - 已通过：`node test/real-platform-probe.cjs weibo --verify-local --url=...`；输出 `errors:[]`，
   顶层 spacer 和楼中楼本地隐藏/撤销断言均通过。
 - 已完成：通用 UI 13/13、状态 7/7、B 站快捷/弹幕 32/32、抖音推荐流 2/2、跨平台适配器 21/21、
-  微博回放 3/3；`node test/maintenance-check.cjs` 的本地阶段全部通过，最终整体仅因其默认隔离
+  微博回放 4/4；`node test/maintenance-check.cjs` 的本地阶段全部通过，最终整体仅因其默认隔离
   抖音/微博入口遭遇 `ERR_NETWORK_ACCESS_DENIED` 而按规则记为 `blocked`。最终隐私门禁已运行且无
   具体页面标识命中；用户若授权，可再用 browser-harness 在本人当前登录页确认 v0.35.0 构建标识与实际补位。
 
@@ -132,9 +200,10 @@
 
 **下一项最有价值的验证**
 
-用户回复“可登录验证”后，保持本人专用调试浏览器的当前微博页面和 9222 端口不变；维护者只读
-连接并确认齿轮上的 `0.35.0-weibo-virtual-spacer-douyin-manager`，再屏蔽一条未在名单中的根评论
-和一条楼中楼，观察下方评论是否立即补位。整个过程不点击微博举报/官方拉黑等平台写入控件。
+候选安装到用户 Chrome 后，先刷新同一微博标签页并确认齿轮上的
+`0.35.0-weibo-virtual-spacer-douyin-manager`；如果页面再次卡住，先保留标签页并通知维护者，
+不要把旧版本的卡顿归因到候选。构建标识确认后，再在用户明确回复“可登录验证”时只读观察一条
+根评论和一条楼中楼的补位；整个过程不点击微博举报/官方拉黑等平台写入控件。
 
 ### 2026-08-24 - v0.34.0 候选 - 抖音管理器布局、搜索与尽量加载
 

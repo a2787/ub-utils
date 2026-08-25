@@ -29,6 +29,7 @@ const persons = {
   blocked: { label: '回放被屏蔽作者', note: '人工合成回放', createdAt: 0, hits: 0, identities: ['weibo:uid:100001'] },
 };
 const shim = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled: true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
@@ -84,6 +85,36 @@ const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><bod
   <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0"><div class="wbpro-scroller-item" data-index="17" data-active="false" style="height:63px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100014" usercard="100014">非活动回收作者</a></div></div></div></div></div></div>
 </div></div></div></body></html>`;
 
+// 普通微博评论列表的性能契约：没有本地屏蔽行时，平台回写某一行 style
+// 不应触发整列表布局读取。UID、文案和页面结构均为人工合成。
+const idleRows = Array.from({ length: 48 }, (_, index) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 72}px) translateX(0px)">
+    <div class="wbpro-scroller-item" style="height:72px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${200000 + index}" usercard="${200000 + index}">普通回放作者${index}</a><span>普通回放正文</span></div><div class="info"><div class="opt"></div></div></div></div></div></div>
+  </div>`).join('');
+const idleFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="wbpro-list"><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" style="min-height:3456px">${idleRows}
+</div></div></div></body></html>`;
+
+// 有本地屏蔽行时的平台持续回写契约：UID、文案和页面结构均为人工合成。
+// 当前候选曾只在无屏蔽行路径上做性能保护；这里模拟微博每帧改写普通活动行
+// 和列表 spacer，并在平台停止后观察脚本是否仍被自己的 style 写回唤醒。
+const churnRows = Array.from({ length: 96 }, (_, index) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 72}px) translateX(0px)">
+    <div class="wbpro-scroller-item" style="box-sizing:border-box;height:72px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${300000 + index}" usercard="${300000 + index}">持续回写作者${index}</a><span>持续回写正文</span></div><div class="info"><div class="opt"></div></div></div></div></div></div>
+  </div>`).join('');
+const churnFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="wbpro-list"><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" style="min-height:6912px">${churnRows}
+</div></div></div></body></html>`;
+const churnShim = shim.replace(/weibo:uid:100001/g, 'weibo:uid:300020');
+const layoutProbe = `
+window.__obLayoutReads = 0;
+(() => {
+  const original = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () {
+    window.__obLayoutReads += 1;
+    return original.call(this);
+  };
+})();
+`;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
@@ -110,6 +141,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         contentHeightAfterHide: rows[0] && rows[0].firstElementChild ? rows[0].firstElementChild.getBoundingClientRect().height : 0,
         nextY: rows[1] ? parseY(rows[1]) : NaN,
         inactiveY: rows[2] ? parseY(rows[2]) : NaN,
+        diagnostics: window.OB.diagnostics,
       };
     });
     if (initial.ready && initial.blocked && initial.rowCount === 4
@@ -134,6 +166,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
       clearInterval(timer);
+      await new Promise((resolve) => setTimeout(resolve, 180));
       const afterBlock = rows().map((row) => ({
         y: parseY(row),
         opacity: getComputedStyle(row).opacity,
@@ -144,7 +177,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const hugeActive = active.slice(1).some((row) => Number.isFinite(row.y) && Math.abs(row.y) > 20000);
       const nextCompensated = afterBlock[1] && afterBlock[1].y === 0;
       const recycledUntouched = afterBlock[2] && afterBlock[2].y === -9999 && afterBlock[2].priority === '';
-      const beforeRestore = { blockedHeight: rows()[0].getBoundingClientRect().height, nextY: afterBlock[1] && afterBlock[1].y };
+      const beforeRestore = { blockedHeight: rows()[0].getBoundingClientRect().height, nextY: afterBlock[1] && afterBlock[1].y,
+        diagnostics: window.OB.diagnostics && { ...window.OB.diagnostics } };
       const wrapperAfterBlock = wrapper ? wrapper.getBoundingClientRect().height : 0;
       window.OB.Store.removeIdentity('weibo:uid:100001');
       await new Promise((resolve) => setTimeout(resolve, 240));
@@ -158,13 +192,115 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         }),
       };
       const wrapperRestored = wrapper ? wrapper.getBoundingClientRect().height === 288 : false;
-      return { platformWrites, afterBlock, hugeActive, nextCompensated, recycledUntouched, beforeRestore, wrapperAfterBlock, wrapperRestored, restored };
+      return { platformWrites, afterBlock, hugeActive, nextCompensated, recycledUntouched, beforeRestore, wrapperAfterBlock, wrapperRestored, restored, diagnostics: window.OB.diagnostics };
     });
     if (stress.platformWrites >= 10 && !stress.hugeActive && stress.nextCompensated && stress.recycledUntouched
       && stress.wrapperAfterBlock === 216 && stress.wrapperRestored
       && !stress.restored.blocked && stress.restored.nextY === 72 && !stress.restored.downstreamHuge) {
       report.pass.push('回放压力：平台反复回写 transform/spacer 后仍稳定补位，回收行不被锁死，撤销恢复原位');
     } else report.fail.push('回放压力失败：' + JSON.stringify(stress));
+
+    const idlePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await idlePage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: idleFixture }));
+    await idlePage.addInitScript({ content: layoutProbe + shim + '\n' + userscript });
+    await idlePage.goto('https://weibo.com/idle-replay', { waitUntil: 'domcontentloaded' });
+    await idlePage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(900);
+    const idle = await idlePage.evaluate(async () => {
+      const rows = Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      window.__obLayoutReads = 0;
+      for (let i = 0; i < 40; i++) {
+        rows[0].style.setProperty('transform', `translateY(${i}px) translateX(0px)`, '');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 140));
+      return { rowCount: rows.length, layoutReads: window.__obLayoutReads };
+    });
+    if (idle.rowCount === 48 && idle.layoutReads <= 4) {
+      report.pass.push('空闲列表性能：无本地屏蔽行时，平台 style 回写不触发整列表布局扫描');
+    } else report.fail.push('空闲列表性能失败：' + JSON.stringify(idle));
+    await idlePage.close();
+
+    const churnPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await churnPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: churnFixture }));
+    await churnPage.addInitScript({ content: layoutProbe + churnShim + '\n' + userscript });
+    await churnPage.goto('https://weibo.com/blocked-churn-replay', { waitUntil: 'domcontentloaded' });
+    await churnPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(900);
+    const churn = await churnPage.evaluate(async () => {
+      const rows = () => Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const parseY = (row) => {
+        const match = (row.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)px/i);
+        return match ? Number(match[1]) : NaN;
+      };
+      const list = rows()[0] && rows()[0].parentElement;
+      const target = rows()[20];
+      const next = rows()[21];
+      const beforeNextY = next ? parseY(next) : NaN;
+      window.__obLayoutReads = 0;
+      let platformWrites = 0;
+      const timer = setInterval(() => {
+        const current = rows();
+        if (current[0]) current[0].style.setProperty('transform', `translateY(${platformWrites % 3}px) translateX(0px)`, '');
+        if (list) list.style.setProperty('min-height', '6912px', '');
+        platformWrites++;
+      }, 16);
+      // 16ms 回写持续 1.8s，确保至少覆盖 100 次平台更新；脚本停止后再单独
+      // 留出 500ms，验证观察器不会被自己的 spacer/transform 写回重新唤醒。
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      clearInterval(timer);
+      const readsDuringChurn = window.__obLayoutReads;
+      const diagnosticsAtStop = window.OB.diagnostics && { ...window.OB.diagnostics };
+      // 允许最后一次节流同步排空；方案要求“静止后补一次最终同步”，不能把它
+      // 误判成自激。真正的 quiet 窗口从该收尾同步之后开始计算。
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      const diagnosticsAfterDrain = window.OB.diagnostics && { ...window.OB.diagnostics };
+      const readsAfterDrain = window.__obLayoutReads;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const quietReads = window.__obLayoutReads - readsAfterDrain;
+      const diagnosticsAfterQuiet = window.OB.diagnostics && { ...window.OB.diagnostics };
+      const drainSyncs = diagnosticsAtStop && diagnosticsAfterDrain
+        ? diagnosticsAfterDrain.virtualSyncs - diagnosticsAtStop.virtualSyncs : NaN;
+      const quietSyncs = diagnosticsAfterDrain && diagnosticsAfterQuiet
+        ? diagnosticsAfterQuiet.virtualSyncs - diagnosticsAfterDrain.virtualSyncs : NaN;
+      const quietQueued = diagnosticsAfterDrain && diagnosticsAfterQuiet
+        ? diagnosticsAfterQuiet.virtualSyncQueued - diagnosticsAfterDrain.virtualSyncQueued : NaN;
+      const quietStyleWrites = diagnosticsAfterDrain && diagnosticsAfterQuiet
+        ? diagnosticsAfterQuiet.virtualSyncStyleWrites - diagnosticsAfterDrain.virtualSyncStyleWrites : NaN;
+      const inner = target && target.firstElementChild;
+      let descendantWrites = 0;
+      window.__obLayoutReads = 0;
+      for (let i = 0; i < 120; i++) {
+        if (!inner) break;
+        inner.style.setProperty('color', i % 2 ? 'rgb(1, 1, 1)' : 'rgb(2, 2, 2)', '');
+        descendantWrites++;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const descendantReads = window.__obLayoutReads;
+      return {
+        platformWrites,
+        rowCount: rows().length,
+        targetBlocked: !!target && target.querySelector('[data-ob-blocked="1"]') !== null,
+        beforeNextY,
+        afterNextY: next ? parseY(next) : NaN,
+        listHeight: list ? list.getBoundingClientRect().height : 0,
+        readsDuringChurn,
+        drainSyncs,
+        quietReads,
+        quietSyncs,
+        quietQueued,
+        quietStyleWrites,
+        descendantWrites,
+        descendantReads,
+      };
+    });
+    if (churn.platformWrites >= 100 && churn.rowCount === 96 && churn.targetBlocked
+      && Number.isFinite(churn.beforeNextY) && Number.isFinite(churn.afterNextY)
+      && churn.afterNextY <= 1440 && churn.quietReads <= 8 && churn.readsDuringChurn <= 600
+      && churn.quietSyncs === 0 && churn.quietQueued === 0 && churn.quietStyleWrites === 0
+      && churn.descendantWrites >= 100 && churn.descendantReads <= 8) {
+      report.pass.push('屏蔽列表长期回写：平台停止后无自激布局扫描，补位持续稳定');
+    } else report.fail.push('屏蔽列表长期回写性能失败：' + JSON.stringify(churn));
+    await churnPage.close();
 
     const topPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await topPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: topFixture }));
@@ -195,12 +331,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
       clearInterval(timer);
+      await new Promise((resolve) => setTimeout(resolve, 180));
       const afterBlock = rows().map((row) => ({ y: parseY(row), opacity: getComputedStyle(row).opacity, h: row.getBoundingClientRect().height, priority: row.style.getPropertyPriority('transform') }));
       const active = afterBlock.filter((row) => row.opacity !== '0');
       const hugeActive = active.slice(1).some((row) => Number.isFinite(row.y) && Math.abs(row.y) > 20000);
       const expected = afterBlock[3] && afterBlock[3].y === 164 && afterBlock[4] && afterBlock[4].y === 227;
       const wrapper = rows()[0] && rows()[0].parentElement;
       const wrapperAfterBlock = wrapper ? wrapper.getBoundingClientRect().height : 0;
+      const diagnosticsBeforeRestore = window.OB.diagnostics && { ...window.OB.diagnostics };
       window.OB.Store.removeIdentity('weibo:uid:100001');
       await new Promise((resolve) => setTimeout(resolve, 240));
       const restoredRows = rows();
@@ -210,7 +348,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         downstreamHuge: restoredRows.slice(3).some((row) => Number.isFinite(parseY(row)) && Math.abs(parseY(row)) > 20000),
       };
       const wrapperRestored = wrapper ? wrapper.getBoundingClientRect().height === 400 : false;
-      return { afterBlock, hugeActive, expected, wrapperAfterBlock, wrapperRestored, restored };
+      return { afterBlock, hugeActive, expected, wrapperAfterBlock, wrapperRestored, restored, diagnosticsBeforeRestore, diagnostics: window.OB.diagnostics };
     });
     if (!top.hugeActive && top.expected && !top.restored.downstreamHuge
       && top.wrapperAfterBlock === 337 && top.wrapperRestored

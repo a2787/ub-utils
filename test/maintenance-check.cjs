@@ -56,13 +56,14 @@ for (const check of checks) {
     const result = spawnSync(check.command, check.args, { cwd: ROOT, encoding: 'utf8', env: process.env });
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
-    if (result.error || result.status !== 0) {
+    if (result.error) {
       failed = true;
-      console.error('CHECK FAILED:', check.label, result.error ? result.error.message : 'exit ' + result.status);
+      console.error('CHECK FAILED:', check.label, result.error.message);
       break;
     }
     const probePrefix = 'PROBE ' + probeId + ': ';
     const probeLines = String(result.stdout || '').split(/\r?\n/).filter((line) => line.startsWith(probePrefix));
+    let sawBlocked = false;
     for (const line of probeLines) {
       try {
         const target = JSON.parse(line.slice(probePrefix.length));
@@ -76,6 +77,7 @@ for (const check of checks) {
           failed = true;
           console.error('CHECK FAILED:', check.label, hardErrors.join(' | '));
         } else if (reachabilityBlocked) {
+          sawBlocked = true;
           blocked.push(errors.join(' | ') || ('未能从公开入口发现可验证' + probeId + '页面'));
         }
       } catch (error) {
@@ -86,6 +88,9 @@ for (const check of checks) {
     if (!probeLines.length) {
       failed = true;
       console.error('CHECK FAILED:', check.label, '没有返回' + probeId + '探针结果');
+    } else if (result.status !== 0 && !sawBlocked && !failed) {
+      failed = true;
+      console.error('CHECK FAILED:', check.label, '探针非零退出但没有可归类的 blocked 证据（exit ' + result.status + '）');
     }
     continue;
   }

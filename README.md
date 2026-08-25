@@ -66,7 +66,9 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
 - 把新文件再拖一次进 Tampermonkey，版本号更高会弹「更新吗」，点更新即可；或编辑粘贴保存。
 - 黑名单名单、设置都还在，不会丢。
 
-> 关键点：我每次改完都会把脚本头 `@version` 数字加一位，Tampermonkey 才会认出「有新版」。这个我会自动做，你不用管。
+> 维护者开发阶段不会因为每次尝试都提高版本号：候选源码会先在专用调试 Chrome 中直接注入验证，
+> 只有全部本地回归和真实站点只读验收通过后，才提高 `@version` 并发布。正式发布后 Tampermonkey
+> 才会按版本号识别「有新版」。
 > 仓库为公开 `https://github.com/a2787/ub-utils`，脚本头 `@updateURL`/`@downloadURL` 指向 GitHub raw 直连（jsDelivr 暂不可用，后续可切回以获国内加速）。仓库名/脚本名刻意低调（不含"拉黑/黑名单"显眼词），Pynseq 出处署名仍保留。
 
 ### 修复验收时如何确认当前页面确实用了新代码
@@ -121,6 +123,8 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   包装层和后续行原来的内联样式；只有确认虚拟行自身只包含被隐藏评论时才会补位。
   微博暂时回收、带 `opacity:0` 的非活动行会保留平台自己的回收位置，等它重新变为活动行后再补位，
   不会被脚本锁在页面外；登录态首轮渲染的临时超大行高也不会被当成真实评论高度缓存。
+  没有本地屏蔽行时不会对普通虚拟评论反复做整列表布局扫描；平台回写 spacer 时按缓存高度即时纠正，
+  行位置协调只对有屏蔽内容的列表按 100ms 合并，避免评论较多时页面被脚本拖慢。
   左下角批量入口同时统计当前微博作者和已加载评论作者，点赞/转发等用户列表弹窗里
   也有「拉黑全部」。
 - 抖音视频弹幕：把鼠标移到正在飘的一条弹幕上，弹幕文字左侧略有重叠的位置会浮出「🚫 拉黑」
@@ -262,7 +266,7 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 | 平台 | 当前可验证结果 | 当前限制与未验证范围 |
 |---|---|---|
 | B站 | `real-site verified`：2026-08-24 隔离未登录、自动发现的公开 `bilibili.com/video/...` 页注入 v0.33.0 后无页面错误；实际看到左下评论批量入口、右下弹幕多选管理器（27 个文案组、26 位发送者），完成单组/批量屏蔽与撤销，并完成 10 条悬浮弹幕的本地入口交互。 | 全量分页与时间筛选的完整翻页、右侧弹幕列表的每行入口和用户已安装的 PAKKU/字幕扩展组合仍需按各自探针或用户会话复核；本次只读探针没有触碰平台写入控件。 |
-| 微博 | `real-site verified`：2026-08-25 隔离未登录浏览器在公开微博详情页注入 v0.35.0 后，顶层虚拟评论隐藏使同一 `item-wrapper` 高度按隐藏行减少 63px，撤销后恢复；楼中楼独立隐藏时根评论高度也从 191px 减至 139px。`structure regression`：微博回放覆盖 spacer、transform 反复回写、回收行和撤销。 | `blocked`：本轮尚未获得“可登录验证”授权，未在用户当前登录浏览器确认齿轮构建标识和真实名单页面；其他虚拟列表变体、点赞/转发用户弹窗仍按各自证据记录。 |
+| 微博 | `real-site verified`：2026-08-25 隔离未登录公开详情页注入当前 v0.35.0 工作区源码，顶层虚拟评论隐藏 63px 后 spacer 从 1329px 稳定缩至 1266px，700ms 采样无回弹，撤销恢复；同日用户确认已登录的专用持久 Chrome 中，当前源码直接注入微博详情页完成基线、空名单、内存名单屏蔽三组各 90 秒只读探针，三组无 CDP 心跳错误，屏蔽目标保持隐藏；未触碰微博平台写入控件。`structure regression`：回放 5/5、跨平台适配器 21/21，覆盖 96 行屏蔽列表长期运行、评论内部 style 隔离和撤销恢复。 | 登录态由用户确认，探针只确认页面未出现登录/验证码拦截，不读取 Cookie；不同微博虚拟列表变体仍需单独捕获。 |
 | 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：2026-08-22 隔离浏览器仍被重定向到 `zhihu.com/signin`。 |
 | 贴吧 | `structure regression`：`data-field` 中的 `user_id` 身份契约通过；集合容器不扫描。 | `blocked`：2026-08-22 隔离浏览器落在「百度安全验证」滑块页，无法复核真实列表或帖子页（2026-08-20 曾在公开列表页观察到 8 个候选中 6 个解析出 UID）。 |
 | X | `structure regression`：人工合成 `article[data-testid="tweet"]` 与 `/handle` 契约通过。 | `blocked`：未登录状态只有登录页。 |
@@ -283,7 +287,15 @@ node test/real-douyin-probe.cjs   # 登录态只读探针：需用户调试浏�
 node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
 node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
+node test/dev-browser.cjs ensure                        # 启动/复用专用持久 Chrome，不连接主浏览器
+node test/real-login-probe.cjs weibo --url=https://weibo.com/... --duration=90 --scenario=all
+node test/real-login-probe.cjs weibo --current --duration=90 --scenario=all
+                                                          # 专用 Chrome 中直接注入工作区源码，登录/验证码时保留标签页并记录 blocked
 ```
+
+登录态验证前由用户本人在专用 profile 完成登录；探针只控制自己创建的临时标签页，名单写入使用内存 stub，
+不会读取 Cookie 或点击微博举报、官方拉黑、关注、发帖等平台写入控件。开发迭代直接注入工作区源码，
+不需要每次试验提高版本号或先安装 Tampermonkey 候选。
 
 两个真实探针默认从平台公开入口页自动发现只读目标（`test/discover.cjs`），所以仓库里
 不保存任何具体验证页标识；需要指定页面时仍可加 `--url=`。

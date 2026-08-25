@@ -9,6 +9,7 @@ const path = require('path');
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const shim = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled: true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
@@ -326,6 +327,41 @@ async function pickWeiboDetailTarget(browser, candidates) {
             const inlineSizeOf = (list) => list && (
               list.style.getPropertyValue('min-height') || list.style.getPropertyValue('height') || ''
             );
+            const safeClass = (node) => String(node && node.className || '').slice(0, 140);
+            const nodeSizeInfo = (node) => {
+              if (!node) return null;
+              const computed = getComputedStyle(node);
+              return {
+                tag: node.tagName,
+                className: safeClass(node),
+                childCount: node.children ? node.children.length : 0,
+                inlineMinHeight: node.style && node.style.getPropertyValue('min-height') || '',
+                inlineHeight: node.style && node.style.getPropertyValue('height') || '',
+                computedMinHeight: computed.minHeight,
+                computedHeight: computed.height,
+                rectHeight: Math.round(Number(node.getBoundingClientRect().height) || 0),
+              };
+            };
+            const listInfo = (candidate) => ({
+              list: nodeSizeInfo(candidate),
+              parent: nodeSizeInfo(candidate && candidate.parentElement),
+              grandparent: nodeSizeInfo(candidate && candidate.parentElement && candidate.parentElement.parentElement),
+            });
+            const sampleListSizes = async (candidate, duration = 700) => {
+              const samples = [];
+              const started = performance.now();
+              let last = '';
+              while (performance.now() - started < duration) {
+                const current = candidate && candidate.isConnected ? listInfo(candidate) : null;
+                const signature = JSON.stringify(current);
+                if (signature !== last) {
+                  samples.push({ t: Math.round(performance.now() - started), ...current });
+                  last = signature;
+                }
+                await pause(20);
+              }
+              return samples.slice(-20);
+            };
             const virtualCandidate = virtualRows().map((virtualRow) => ({
               virtualRow,
               comment: topCommentOf(virtualRow),
@@ -370,15 +406,25 @@ async function pickWeiboDetailTarget(browser, candidates) {
                 const liveNext = nextVirtualRow && nextVirtualRow.isConnected
                   ? nextVirtualRow : (siblings().find((candidate) => candidate !== liveTargetRow && topCommentOf(candidate)) || null);
                 const listAfter = list.isConnected ? list : (liveTargetRow && liveTargetRow.parentElement);
+                const listInfoAtSampleStart = listInfo(listAfter);
+                const inlineAfter = inlineSizeOf(listAfter);
+                const listSamples = await sampleListSizes(listAfter, 700);
                 const listAfterHeight = sizeOf(listAfter);
                 const targetHidden = !!liveTargetComment && (getComputedStyle(liveTargetComment).display === 'none'
                   || rowHeight(liveTargetRow) === 0);
                 const spacerDelta = listBefore - listAfterHeight;
+                const expectedListHeight = listBefore - targetHeight;
+                const sampleHeights = listSamples
+                  .map((sample) => Number.parseFloat(sample.list && (sample.list.inlineMinHeight || sample.list.inlineHeight)))
+                  .filter((height) => Number.isFinite(height) && height > 0);
+                const stableFor500ms = sampleHeights.length > 0
+                  && sampleHeights.every((height) => Math.abs(height - expectedListHeight) <= 3);
                 const spacerCompensated = targetHidden && targetHeight > 0
-                  && Math.abs(spacerDelta - targetHeight) <= 3;
+                  && Math.abs(spacerDelta - targetHeight) <= 3 && stableFor500ms;
                 const nextAfterTop = liveNext ? liveNext.getBoundingClientRect().top : NaN;
                 const nextShifted = Number.isFinite(nextBeforeTop) && Number.isFinite(nextAfterTop)
                   ? nextAfterTop <= nextBeforeTop - targetHeight + 3 : true;
+                const diagnosticsBeforeUndo = window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null;
                 const topToast = document.getElementById('ob-toast');
                 const topUndo = topToast && topToast.querySelector('button');
                 if (topUndo) { topUndo.click(); await pause(260); }
@@ -400,14 +446,22 @@ async function pickWeiboDetailTarget(browser, candidates) {
                   listBefore,
                   listAfterHeight,
                   spacerDelta,
+                  inlineBefore,
+                  inlineAfter,
+                  listInfoAtSampleStart,
+                  listInfoAfter: listInfo(listAfter),
+                  listSamples,
+                  stableFor500ms,
                   spacerCompensated,
                   nextShifted,
                   spacerRestored,
                   targetRestored,
+                  diagnosticsBeforeUndo,
                 };
               }
             }
-            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, topLevelSpacer };
+            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, topLevelSpacer,
+              diagnostics: window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null };
           });
           const local = result.localBlock || {};
           const platform = (result.page && result.page.platform) || {};

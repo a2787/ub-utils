@@ -1109,9 +1109,30 @@
   const blockedVirtualRowStates = new WeakMap();
   const virtualRowInlineStates = new WeakMap();
   const virtualListInlineStates = new WeakMap();
+  const virtualListSyncStates = new WeakMap();
+  const virtualRowHeightStates = new WeakMap();
+  const virtualOwnRowWrites = new WeakMap();
+  const virtualOwnListWrites = new WeakMap();
+  const runtimeDiagnostics = window.__OB_PROBE_DIAGNOSTICS__
+    && window.__OB_PROBE_DIAGNOSTICS__.enabled
+    ? {
+      virtualSyncQueued: 0,
+      virtualSyncs: 0,
+      virtualSyncRowsVisited: 0,
+      virtualSyncLayoutReads: 0,
+      virtualSyncStyleWrites: 0,
+      virtualObserverRecords: 0,
+      virtualObserverIgnored: 0,
+      virtualSyncThrottled: 0,
+      virtualListObserverCallbacks: 0,
+      virtualListPlatformMutations: 0,
+      virtualListImmediateResyncs: 0,
+      virtualLastList: null,
+    } : null;
   const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
   const MAX_VIRTUAL_ROW_HEIGHT = 20000;
   const MAX_VIRTUAL_ROW_GAP = 4096;
+  const VIRTUAL_SYNC_THROTTLE_MS = 100;
   const BLOCKED_WRAPPER_INLINE_PROPS = [
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
@@ -1163,6 +1184,211 @@
     return row.parentElement;
   }
 
+  function virtualDiagnostic(key, amount = 1) {
+    if (runtimeDiagnostics) runtimeDiagnostics[key] = (runtimeDiagnostics[key] || 0) + amount;
+  }
+
+  // 微博回收器会给活动行和列表 spacer 回写 style。只在存在本地屏蔽行时
+  // 建立专用观察器；普通评论内部的 style 变化不再进入全局扫描器。
+  const pendingVirtualLists = new Set();
+  let virtualSyncScheduled = false;
+
+  function virtualListSyncState(list) {
+    let state = virtualListSyncStates.get(list);
+    if (state) return state;
+    state = {
+      blockedRows: new Set(),
+      observer: null,
+      observedRows: new Set(),
+      pending: false,
+      force: false,
+      lastSyncAt: 0,
+      timer: 0,
+      hiddenPixels: 0,
+    };
+    virtualListSyncStates.set(list, state);
+    return state;
+  }
+
+  function virtualListHasBlockedWork(list) {
+    if (!list) return false;
+    const state = virtualListSyncStates.get(list);
+    return !!(state && state.blockedRows.size) || virtualListInlineStates.has(list);
+  }
+
+  function registerVirtualBlockedRow(row) {
+    const list = virtualRowListOf(row);
+    if (!list) return;
+    const state = virtualListSyncState(list);
+    state.blockedRows.add(row);
+    ensureVirtualListObserver(list);
+  }
+
+  function unregisterVirtualBlockedRow(row) {
+    const list = virtualRowListOf(row);
+    const state = list && virtualListSyncStates.get(list);
+    if (state) state.blockedRows.delete(row);
+  }
+
+  function ownVirtualRowStyle(row) {
+    if (!row || !row.style) return false;
+    const state = virtualRowInlineStates.get(row);
+    if (state && row.style.getPropertyValue('transform') === state.applied
+      && row.style.getPropertyPriority('transform') === state.appliedPriority) return true;
+    const write = virtualOwnRowWrites.get(row);
+    if (!write) return false;
+    const matches = row.style.getPropertyValue('transform') === write.value
+      && row.style.getPropertyPriority('transform') === write.priority;
+    if (matches) virtualOwnRowWrites.delete(row);
+    return matches;
+  }
+
+  function ownVirtualListStyle(list) {
+    if (!list || !list.style) return false;
+    const state = virtualListInlineStates.get(list);
+    if (state && list.style.getPropertyValue(state.prop) === state.appliedValue
+      && list.style.getPropertyPriority(state.prop) === state.appliedPriority) return true;
+    const write = virtualOwnListWrites.get(list);
+    if (!write) return false;
+    const matches = list.style.getPropertyValue(write.prop) === write.value
+      && list.style.getPropertyPriority(write.prop) === write.priority;
+    if (matches) virtualOwnListWrites.delete(list);
+    return matches;
+  }
+
+  function refreshVirtualListObserver(list) {
+    const state = virtualListSyncStates.get(list);
+    if (!state || !state.observer || !list || !list.isConnected) return;
+    state.observer.disconnect();
+    state.observedRows.clear();
+    state.observer.observe(list, { childList: true, attributes: true, attributeFilter: ['style'] });
+    for (const row of list.children || []) {
+      if (!row.matches || !row.matches(VIRTUAL_ROW_SELECTOR)) continue;
+      state.observedRows.add(row);
+      state.observer.observe(row, { attributes: true, attributeFilter: ['style'] });
+    }
+  }
+
+  function ensureVirtualListObserver(list) {
+    if (!list || !list.isConnected) return;
+    const state = virtualListSyncState(list);
+    if (!state.observer && typeof MutationObserver === 'function') {
+      state.observer = new MutationObserver((records) => {
+        virtualDiagnostic('virtualListObserverCallbacks');
+        let dirty = false;
+        for (const record of records) {
+          virtualDiagnostic('virtualObserverRecords');
+          if (record.type === 'childList' && record.target === list) {
+            refreshVirtualListObserver(list);
+            for (const row of list.children || []) {
+              if (row.matches && row.matches(VIRTUAL_ROW_SELECTOR)) virtualRowHeightStates.delete(row);
+            }
+            for (const row of state.blockedRows) {
+              if (!row.isConnected || virtualRowListOf(row) !== list || !blockedVirtualRowStates.has(row)) {
+                state.blockedRows.delete(row);
+              }
+            }
+            dirty = true;
+            continue;
+          }
+          if (record.type !== 'attributes') continue;
+          if (record.target === list) {
+            if (ownVirtualListStyle(list)) virtualDiagnostic('virtualObserverIgnored');
+            else {
+              virtualDiagnostic('virtualListPlatformMutations');
+              const hiddenPixels = Number(state.hiddenPixels) || 0;
+              if (hiddenPixels > 0) {
+                virtualDiagnostic('virtualListImmediateResyncs');
+                // spacer 只依赖已缓存的屏蔽行高度；在当前 mutation 回调中纠正，
+                // 不等下一帧，避免平台基线在下一次绘制中留下空白。
+                syncVirtualListSize(list, hiddenPixels);
+              }
+              dirty = true;
+            }
+          } else if (record.target.matches && record.target.matches(VIRTUAL_ROW_SELECTOR)) {
+            if (ownVirtualRowStyle(record.target)) virtualDiagnostic('virtualObserverIgnored');
+            else dirty = true;
+          }
+        }
+        if (!state.blockedRows.size && !virtualListInlineStates.has(list)) {
+          detachVirtualListObserver(list);
+          return;
+        }
+        if (dirty) queueVirtualListSync(list, false, 'platform');
+      });
+      refreshVirtualListObserver(list);
+    } else if (state.observer) refreshVirtualListObserver(list);
+  }
+
+  function detachVirtualListObserver(list) {
+    const state = virtualListSyncStates.get(list);
+    if (!state) return;
+    if (state.timer) clearTimeout(state.timer);
+    if (state.observer) state.observer.disconnect();
+    pendingVirtualLists.delete(list);
+    virtualListSyncStates.delete(list);
+  }
+
+  function requestVirtualSyncFlush() {
+    if (virtualSyncScheduled) return;
+    virtualSyncScheduled = true;
+    const flush = () => {
+      virtualSyncScheduled = false;
+      const lists = Array.from(pendingVirtualLists);
+      for (const list of lists) {
+        const state = virtualListSyncStates.get(list);
+        if (!state || !state.pending) { pendingVirtualLists.delete(list); continue; }
+        if (!list.isConnected) { detachVirtualListObserver(list); continue; }
+        const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+        const elapsed = now - state.lastSyncAt;
+        if (!state.force && state.lastSyncAt > 0 && elapsed < VIRTUAL_SYNC_THROTTLE_MS) {
+          virtualDiagnostic('virtualSyncThrottled');
+          if (!state.timer) {
+            state.timer = setTimeout(() => {
+              state.timer = 0;
+              requestVirtualSyncFlush();
+            }, VIRTUAL_SYNC_THROTTLE_MS - elapsed);
+          }
+          continue;
+        }
+        state.pending = false;
+        state.force = false;
+        state.lastSyncAt = now;
+        pendingVirtualLists.delete(list);
+        const firstRow = Array.from(list.children || [])
+          .find((child) => child.matches && child.matches(VIRTUAL_ROW_SELECTOR));
+        if (firstRow) syncVirtualRowOffsets(firstRow);
+        if (!virtualListHasBlockedWork(list)) detachVirtualListObserver(list);
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+    else setTimeout(flush, 0);
+  }
+
+  function queueVirtualListSync(list, force = false, reason = 'platform') {
+    if (!list || (!force && !virtualListHasBlockedWork(list))) return;
+    const state = virtualListSyncState(list);
+    state.pending = true;
+    state.force = state.force || force;
+    pendingVirtualLists.add(list);
+    virtualDiagnostic('virtualSyncQueued');
+    const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    const elapsed = now - state.lastSyncAt;
+    if (force || state.lastSyncAt <= 0 || elapsed >= VIRTUAL_SYNC_THROTTLE_MS) {
+      requestVirtualSyncFlush();
+    } else if (!state.timer) {
+      virtualDiagnostic('virtualSyncThrottled');
+      state.timer = setTimeout(() => {
+        state.timer = 0;
+        requestVirtualSyncFlush();
+      }, VIRTUAL_SYNC_THROTTLE_MS - elapsed);
+    }
+  }
+
+  function queueVirtualRowSync(row, force = false, reason = 'platform') {
+    queueVirtualListSync(virtualRowListOf(row), force, reason);
+  }
+
   function parseVirtualListPixels(value) {
     const match = String(value || '').trim().match(/^(-?(?:\d+(?:\.\d*)?|\.\d+))px$/i);
     const numeric = match ? Number(match[1]) : NaN;
@@ -1172,6 +1398,9 @@
   function rememberVirtualList(row) {
     const list = virtualRowListOf(row);
     if (!list || !list.style) return list;
+    const syncState = virtualListSyncState(list);
+    if (row && blockedVirtualRowStates.has(row)) syncState.blockedRows.add(row);
+    ensureVirtualListObserver(list);
     if (virtualListInlineStates.has(list)) return list;
     const computed = window.getComputedStyle ? getComputedStyle(list) : null;
     let prop = '';
@@ -1229,23 +1458,56 @@
         state.basePixels = observedPixels;
       }
     }
-    const desiredPixels = Math.max(0, state.basePixels - Math.max(0, hiddenPixels));
+    const normalizedHiddenPixels = Math.max(0, hiddenPixels);
+    const expectedCompensated = Math.max(0, state.basePixels - normalizedHiddenPixels);
+    const desiredPixels = expectedCompensated;
     const desiredValue = desiredPixels + 'px';
+    if (runtimeDiagnostics) {
+      runtimeDiagnostics.virtualLastList = {
+        prop: state.prop,
+        currentValue,
+        currentPriority,
+        basePixels: state.basePixels,
+        hiddenPixels,
+        expectedCompensated,
+        desiredValue,
+        desiredPriority: state.originalPriority,
+      };
+    }
     if (currentValue !== desiredValue || currentPriority !== state.originalPriority) {
+      virtualOwnListWrites.set(list, {
+        prop: state.prop,
+        value: desiredValue,
+        priority: state.originalPriority,
+      });
+      virtualDiagnostic('virtualSyncStyleWrites');
       list.style.setProperty(state.prop, desiredValue, state.originalPriority);
     }
     state.appliedValue = desiredValue;
     state.appliedPriority = state.originalPriority;
+    if (runtimeDiagnostics) {
+      runtimeDiagnostics.virtualLastList.afterValue = list.style.getPropertyValue(state.prop);
+      runtimeDiagnostics.virtualLastList.afterPriority = list.style.getPropertyPriority(state.prop);
+    }
   }
 
   function restoreVirtualListSize(list) {
     const state = virtualListInlineStates.get(list);
     if (!state || !list || !list.style) return;
+    const syncState = virtualListSyncStates.get(list);
+    if (syncState) syncState.hiddenPixels = 0;
     const currentValue = list.style.getPropertyValue(state.prop);
     const currentPriority = list.style.getPropertyPriority(state.prop);
     // 若微博已经在本地隐藏期间写入了新的合法基线，不覆盖它；只有仍是本次
     // 补偿值时才恢复原始 inline 声明。
     if (currentValue === state.appliedValue && currentPriority === state.appliedPriority) {
+      const restoreValue = state.originalValue || '';
+      virtualOwnListWrites.set(list, {
+        prop: state.prop,
+        value: restoreValue,
+        priority: state.originalValue ? state.originalPriority : '',
+      });
+      virtualDiagnostic('virtualSyncStyleWrites');
       if (state.originalValue) list.style.setProperty(state.prop, state.originalValue, state.originalPriority);
       else list.style.removeProperty(state.prop);
     }
@@ -1310,16 +1572,25 @@
 
   function readVirtualRowHeight(row) {
     if (!row) return 0;
+    const cached = safeVirtualRowHeight(virtualRowHeightStates.get(row));
+    if (cached > 0) return cached;
     // 微博登录态在首轮测量时可能先把 item-view 撑到很大的临时高度；
     // item-view 的直接内容层才是评论实际占用的高度，优先读取它。
     const candidates = [row.firstElementChild, row];
     for (const candidate of candidates) {
       if (!candidate || !candidate.getBoundingClientRect) continue;
+      virtualDiagnostic('virtualSyncLayoutReads');
       const rect = candidate.getBoundingClientRect();
       const rectHeight = Number(rect.height) || 0;
-      if (rectHeight > 0 && rectHeight <= MAX_VIRTUAL_ROW_HEIGHT) return rectHeight;
+      if (rectHeight > 0 && rectHeight <= MAX_VIRTUAL_ROW_HEIGHT) {
+        virtualRowHeightStates.set(row, rectHeight);
+        return rectHeight;
+      }
       const scrollHeight = Number(candidate.scrollHeight) || 0;
-      if (scrollHeight > 0 && scrollHeight <= MAX_VIRTUAL_ROW_HEIGHT) return scrollHeight;
+      if (scrollHeight > 0 && scrollHeight <= MAX_VIRTUAL_ROW_HEIGHT) {
+        virtualRowHeightStates.set(row, scrollHeight);
+        return scrollHeight;
+      }
     }
     return 0;
   }
@@ -1352,8 +1623,15 @@
     if (!state || !row.style) return;
     const value = state.safeValue || state.value;
     const priority = state.safeValue ? state.safePriority : state.priority;
-    if (value) row.style.setProperty('transform', value, priority);
-    else row.style.removeProperty('transform');
+    const restoreValue = value || '';
+    const restorePriority = value ? priority : '';
+    if (row.style.getPropertyValue('transform') !== restoreValue
+      || row.style.getPropertyPriority('transform') !== restorePriority) {
+      virtualOwnRowWrites.set(row, { value: restoreValue, priority: restorePriority });
+      virtualDiagnostic('virtualSyncStyleWrites');
+      if (value) row.style.setProperty('transform', value, priority);
+      else row.style.removeProperty('transform');
+    }
     virtualRowInlineStates.delete(row);
   }
 
@@ -1378,10 +1656,13 @@
       const numeric = Number.parseFloat(inlineOpacity);
       if (Number.isFinite(numeric)) return numeric === 0;
     }
-    const computed = window.getComputedStyle ? getComputedStyle(row) : null;
-    return !!computed && (computed.opacity === '0'
-      || computed.display === 'none'
-      || computed.visibility === 'hidden');
+    const inlineDisplay = row.style.getPropertyValue('display').trim();
+    if (inlineDisplay) return inlineDisplay === 'none';
+    const inlineVisibility = row.style.getPropertyValue('visibility').trim();
+    if (inlineVisibility) return inlineVisibility === 'hidden' || inlineVisibility === 'collapse';
+    // 真站回收行捕获结构用 inline opacity:0 标记非活动占位节点；没有该标记的
+    // 行按活动行处理，避免每次补位都触发全列表 computed-style 读取。
+    return false;
   }
 
   function syncVirtualRowOffsets(row) {
@@ -1391,6 +1672,12 @@
     const rows = Array.from(list.children || [])
       .filter((candidate) => candidate.matches && candidate.matches(VIRTUAL_ROW_SELECTOR));
     if (!rows.length) return;
+    virtualDiagnostic('virtualSyncs');
+    virtualDiagnostic('virtualSyncRowsVisited', rows.length);
+    if (runtimeDiagnostics) {
+      const listState = virtualListSyncStates.get(list);
+      runtimeDiagnostics.virtualLastBlockedRows = listState ? listState.blockedRows.size : 0;
+    }
     const meta = rows.map((candidate) => {
       const state = virtualRowInlineStates.get(candidate);
       const inlineValue = candidate.style.getPropertyValue('transform');
@@ -1412,8 +1699,8 @@
         state.appliedPriority = '';
       }
       const inline = state ? state.value : inlineValue;
-      const computed = window.getComputedStyle ? getComputedStyle(candidate).transform : '';
-      let source = inline || computed;
+      const computed = inline ? '' : (window.getComputedStyle ? getComputedStyle(candidate).transform : '');
+      const source = inline || computed;
       const inactive = inactiveWeiboVirtualRow(candidate);
       // 非活动行是微博回收器的占位节点（常见为 translateY(-9999px) + opacity:0）。
       // 它们稍后会被平台复用到新的可见位置，不能把本地补位写成 !important，
@@ -1431,7 +1718,7 @@
         source,
         y: readTranslateY(source),
         inactive,
-        blocked: blockedVirtualRowStates.has(candidate) || hiddenWeiboCommentInVirtualRow(candidate),
+        blocked: blockedVirtualRowStates.has(candidate),
         height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height)
           || safeVirtualRowHeight(readVirtualRowHeight(candidate)),
       };
@@ -1439,6 +1726,9 @@
     const hiddenPixels = meta.reduce((total, entry) => (
       entry.blocked ? total + safeVirtualRowHeight(entry.height) : total
     ), 0);
+    const listState = virtualListSyncState(list);
+    listState.hiddenPixels = hiddenPixels;
+    if (runtimeDiagnostics) runtimeDiagnostics.virtualLastHiddenPixels = hiddenPixels;
     if (hiddenPixels > 0) syncVirtualListSize(list, hiddenPixels);
     else restoreVirtualListSize(list);
     let shift = 0;
@@ -1497,6 +1787,7 @@
           }
           if (entry.candidate.style.getPropertyValue('transform') !== nextTransform
             || entry.candidate.style.getPropertyPriority('transform') !== 'important') {
+            virtualDiagnostic('virtualSyncStyleWrites');
             entry.candidate.style.setProperty('transform', nextTransform, 'important');
           }
           state.applied = nextTransform;
@@ -1509,6 +1800,7 @@
       if (entry.blocked) shift += Math.max(0, entry.height);
       if (Number.isFinite(baseY)) previousActive = { baseY, height: entry.height };
     }
+    if (!virtualListHasBlockedWork(list)) detachVirtualListObserver(list);
   }
 
   function needsInlineHide(container) {
@@ -1586,6 +1878,10 @@
   function unmark(container) {
     if (!container) return;
     const virtualRow = virtualRowOf(container);
+    const virtualList = virtualRow && virtualRowListOf(virtualRow);
+    const hadVirtualWork = !!virtualRow && (
+      virtualRowInlineStates.has(virtualRow) || blockedVirtualRowStates.has(virtualRow)
+    );
     setInlineHidden(container, false);
     if (container.__obBar && container.__obBar.parentNode) container.__obBar.parentNode.removeChild(container.__obBar);
     container.__obBar = null;
@@ -1600,9 +1896,12 @@
       if (!wrapper.getAttribute('class')) wrapper.removeAttribute('class');
       wrapper = parent;
     }
-    if (virtualRow && currentAdapter && currentAdapter.id === 'weibo') {
-      if (!hiddenWeiboCommentInVirtualRow(virtualRow)) blockedVirtualRowStates.delete(virtualRow);
-      syncVirtualRowOffsets(virtualRow);
+    if (virtualRow && hadVirtualWork && currentAdapter && currentAdapter.id === 'weibo') {
+      if (!hiddenWeiboCommentInVirtualRow(virtualRow)) {
+        blockedVirtualRowStates.delete(virtualRow);
+        unregisterVirtualBlockedRow(virtualRow);
+      } else registerVirtualBlockedRow(virtualRow);
+      queueVirtualRowSync(virtualRow, hadVirtualWork);
     }
   }
 
@@ -1664,7 +1963,7 @@
       if (virtualRow) rememberVirtualList(virtualRow);
       markBlocked(container, info.label, modeForItem(adapter, item));
       collapseBlockedWrappers(container);
-      if (virtualRow) syncVirtualRowOffsets(virtualRow);
+      if (virtualRow) queueVirtualRowSync(virtualRow);
     } else unmark(container);
   }
 
@@ -1680,27 +1979,20 @@
       'data-field', 'data-sec-uid', 'data-secuid', 'data-danmaku-user-id', 'data-danmu-user-id',
       'data-mid-hash', 'data-mid_hash', 'data-dm-hash', 'data-danmaku-hash',
       'comment_id', 'comment-id', 'data-comment-id', 'action-type',
-      'style',
     ];
     const mo = new MutationObserver((records) => {
       let shouldSchedule = false;
       for (const record of records) {
         for (const node of record.addedNodes || []) discoverShadowRoots(node);
         if (record.type !== 'attributes' || record.attributeName !== 'style') shouldSchedule = true;
-      }
-      if (adapter.id === 'weibo') {
-        for (const record of records) {
-          if (record.type !== 'attributes' || record.attributeName !== 'style') continue;
+        if (adapter.id === 'weibo' && record.type === 'childList') {
           const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
-          if (row) syncVirtualRowOffsets(row);
-          else if (record.target && record.target.matches
-            && record.target.matches('.vue-recycle-scroller__item-wrapper')) {
-            const firstRow = Array.from(record.target.children || [])
-              .find((child) => child.matches && child.matches(VIRTUAL_ROW_SELECTOR));
-            if (firstRow) syncVirtualRowOffsets(firstRow);
+          if (row) {
+            virtualRowHeightStates.delete(row);
+            queueVirtualRowSync(row);
           }
         }
-      }
+        }
       if (shouldSchedule) schedule();
     });
 
@@ -5810,5 +6102,6 @@
     Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
     runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
+    diagnostics: runtimeDiagnostics,
   };
 })();
