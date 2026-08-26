@@ -117,6 +117,50 @@ const feedFixture = `<!doctype html><html><head><meta charset="utf-8"></head><bo
 </div></div></body></html>`;
 const feedShim = shim.replace(/weibo:uid:100001/g, 'weibo:uid:400005');
 
+// 2026-08-26 无限流推荐页回归夹具：微博帖子卡片本身使用
+// `article.woo-panel-main`，卡片内的预览评论又包含 `.wbpro-list > .item1`。
+// 这是人工合成结构，专门验证“帖子卡片里的嵌套评论不能被误判为详情页顶层
+// 虚拟评论”；同时保留作者入口所在的 header，验证入口不能改变回收行布局。
+const hotFeedRow = (index, blocked = false) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 120}px) translateX(0px);opacity:1">
+    <div class="wbpro-scroller-item" style="box-sizing:border-box;height:120px !important">
+      <article class="woo-panel-main" style="box-sizing:border-box;height:120px !important">
+        <header class="woo-box-flex" style="display:flex;align-items:center;min-height:28px"><a href="/u/${510000 + index}" usercard="${510000 + index}">推荐帖子作者${index}</a></header>
+        <div class="feed-preview"><div class="wbpro-list"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${blocked ? 500001 : 520000 + index}" usercard="${blocked ? 500001 : 520000 + index}">预览评论作者${index}</a><span>推荐流预览评论${index}</span></div><div class="info"><div class="opt"></div></div></div></div></div></div></div>
+      </article>
+    </div>
+  </div>`;
+const hotFeedFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" style="min-height:480px">
+  ${hotFeedRow(0)}
+  ${hotFeedRow(1, true)}
+  ${hotFeedRow(2)}
+  ${hotFeedRow(3)}
+</div></div></body></html>`;
+const hotFeedShim = shim
+  .replace(/weibo:uid:100001/g, 'weibo:uid:500001')
+  .replace("hideMode:'collapse'", "hideMode:'disappear'");
+// 整条帖子作者命中时，帖子卡片本身会被隐藏；其外层 item-view 的平台
+// transform 仍保留原位置，必须由直接内容层补上后续帖子并缩短列表 spacer。
+const hotPostShim = shim
+  .replace(/weibo:uid:100001/g, 'weibo:uid:510001')
+  .replace("hideMode:'collapse'", "hideMode:'disappear'");
+
+// 无限流回收压力：80 个人工合成帖子卡片，反复改写同一批物理行中的作者节点。
+// 该夹具不模拟真实内容，只验证作者入口的挂载方式和回收器 transform/spacer
+// 在连续成员更新下不被脚本触碰。
+const hotStressRow = (index) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 120}px) translateX(0px);opacity:1">
+    <div class="wbpro-scroller-item" style="box-sizing:border-box;height:120px !important">
+      <article class="woo-panel-main" style="box-sizing:border-box;height:120px !important">
+        <header class="woo-box-flex" style="display:flex;align-items:center;min-height:28px"><a href="/u/${530000 + index}" usercard="${530000 + index}">压力作者${index}</a></header>
+      </article>
+    </div>
+  </div>`;
+const hotStressFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="vue-recycle-scroller"><div class="vue-recycle-scroller__item-wrapper" style="min-height:9600px">
+  ${Array.from({ length: 80 }, (_, index) => hotStressRow(index)).join('')}
+</div></div></body></html>`;
+const hotStressShim = shim.replace(/weibo:uid:100001/g, 'weibo:uid:599999');
+
 // 普通微博评论列表的性能契约：没有本地屏蔽行时，平台回写某一行 style
 // 不应触发整列表布局读取。UID、文案和页面结构均为人工合成。
 const idleRows = Array.from({ length: 48 }, (_, index) => `
@@ -586,6 +630,184 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('个人页评论回放：嵌套评论不移动帖子虚拟行，物理行复用后不会继承旧屏蔽空洞');
     } else report.fail.push('个人页评论/回收复用失败：' + JSON.stringify({ feedInitial, feedRecycle }));
     await feedPage.close();
+
+    const hotFeedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await hotFeedPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotFeedFixture }));
+    await hotFeedPage.addInitScript({ content: hotFeedShim + '\n' + userscript });
+    await hotFeedPage.goto('https://weibo.com/hot-feed-replay', { waitUntil: 'domcontentloaded' });
+    await hotFeedPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(700);
+    const hotFeed = await hotFeedPage.evaluate(async () => {
+      const rows = Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const target = rows[1];
+      const next = rows[2];
+      const wrapper = rows[0] && rows[0].parentElement;
+      const nextContent = next && next.firstElementChild;
+      const portalButton = document.querySelector('.ob-weibo-author-portal > .ob-weibo-author-block');
+      let portalConfirm = false;
+      if (portalButton) {
+        portalButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        portalConfirm = !!document.querySelector('#ob-confirm');
+        const cancel = document.querySelector('#ob-confirm .ob-no');
+        if (cancel) cancel.click();
+      }
+      return {
+        rowCount: rows.length,
+        nestedBlocked: !!document.querySelector('article.woo-panel-main .wbpro-list > .item1[data-ob-blocked="1"]'),
+        targetCardHidden: !!target && (target.classList.contains('ob-hidden') || getComputedStyle(target).display === 'none'),
+        targetCardHeight: target ? target.getBoundingClientRect().height : -1,
+        nextOuterTop: next ? next.getBoundingClientRect().top : NaN,
+        nextContentTop: nextContent ? nextContent.getBoundingClientRect().top : NaN,
+        nextContentTransform: nextContent ? nextContent.style.getPropertyValue('transform') : '',
+        wrapperHeight: wrapper ? wrapper.getBoundingClientRect().height : 0,
+        inlineAuthorButtons: document.querySelectorAll('article.woo-panel-main > header > .ob-weibo-author-block').length,
+        authorPortals: document.querySelectorAll('.ob-weibo-author-portal').length,
+        portalConfirm,
+        nestedIgnored: window.OB.diagnostics ? window.OB.diagnostics.weiboNestedVirtualRowsIgnored : 0,
+        virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+      };
+    });
+    const hotFeedPass = hotFeed.rowCount === 4 && hotFeed.nestedBlocked
+      && !hotFeed.targetCardHidden && hotFeed.targetCardHeight > 0
+      && Number.isFinite(hotFeed.nextOuterTop) && Number.isFinite(hotFeed.nextContentTop)
+      && Math.abs(hotFeed.nextContentTop - hotFeed.nextOuterTop) <= 1
+      && !/translateY\(-?120px\)/.test(hotFeed.nextContentTransform)
+      && Math.abs(hotFeed.wrapperHeight - 480) <= 1
+      && hotFeed.inlineAuthorButtons === 0 && hotFeed.authorPortals === 4
+      && hotFeed.portalConfirm
+      && hotFeed.nestedIgnored > 0 && hotFeed.virtualSyncs === 0;
+    if (hotFeedPass) {
+      report.pass.push('无限流帖子卡片回放：嵌套预览评论不触发详情页虚拟补位，作者入口不改变回收行布局');
+    } else report.fail.push('无限流帖子卡片/作者入口回放失败：' + JSON.stringify(hotFeed));
+    await hotFeedPage.close();
+
+    const hotPostPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await hotPostPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotFeedFixture }));
+    await hotPostPage.addInitScript({ content: hotPostShim + '\n' + userscript });
+    await hotPostPage.goto('https://weibo.com/hot-feed-post-block-replay', { waitUntil: 'domcontentloaded' });
+    await hotPostPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(700);
+    const hotPost = await hotPostPage.evaluate(async () => {
+      const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = () => Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const measure = () => {
+        const currentRows = rows();
+        const target = currentRows[1];
+        const next = currentRows[2];
+        const wrapper = document.querySelector('.vue-recycle-scroller__item-wrapper');
+        const targetCard = target && target.querySelector('article.woo-panel-main');
+        const targetContent = target && target.firstElementChild;
+        const nextContent = next && next.firstElementChild;
+        return {
+          rowCount: currentRows.length,
+          targetCardHidden: !!targetCard && targetCard.classList.contains('ob-hidden'),
+          targetCardHeight: targetCard ? targetCard.getBoundingClientRect().height : -1,
+          targetContentHeight: targetContent ? targetContent.getBoundingClientRect().height : -1,
+          targetOuterTop: target ? target.getBoundingClientRect().top : NaN,
+          nextOuterTop: next ? next.getBoundingClientRect().top : NaN,
+          nextContentTop: nextContent ? nextContent.getBoundingClientRect().top : NaN,
+          nextContentTransform: nextContent ? nextContent.style.getPropertyValue('transform') : '',
+          wrapperHeight: wrapper ? wrapper.getBoundingClientRect().height : 0,
+          authorPortals: document.querySelectorAll('.ob-weibo-author-portal').length,
+          virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+        };
+      };
+      const afterBlock = measure();
+      const nextRow = rows()[2];
+      const wrapper = document.querySelector('.vue-recycle-scroller__item-wrapper');
+      let platformWrites = 0;
+      const timer = setInterval(() => {
+        // 模拟无限流回收器在屏蔽期间反复写回 spacer 和下一行的物理基线。
+        // 小数值特意保留，用来覆盖 CSSOM 将高精度像素值规范化后的路径。
+        const y = platformWrites % 2 ? '240.3333333333333px' : '240px';
+        if (nextRow) nextRow.style.setProperty('transform', `translateY(${y}) translateX(0px)`, '');
+        if (wrapper) wrapper.style.setProperty('min-height', platformWrites % 2
+          ? '480.3333333333333px' : '480px', '');
+        platformWrites++;
+      }, 45);
+      await sleepInPage(700);
+      clearInterval(timer);
+      await sleepInPage(350);
+      const afterChurn = measure();
+      window.OB.Store.removeIdentity('weibo:uid:510001');
+      await sleepInPage(320);
+      return { afterBlock, afterChurn, platformWrites, afterRestore: measure() };
+    });
+    const afterBlock = hotPost.afterBlock;
+    const afterChurn = hotPost.afterChurn;
+    const afterRestore = hotPost.afterRestore;
+    const hotPostPass = afterBlock.rowCount === 4
+      && afterBlock.targetCardHidden && afterBlock.targetCardHeight === 0
+      && afterBlock.targetContentHeight === 0
+      && Number.isFinite(afterBlock.targetOuterTop) && Number.isFinite(afterBlock.nextContentTop)
+      && Math.abs(afterBlock.nextContentTop - afterBlock.targetOuterTop) <= 1
+      && /translateY\(-?120px\)/.test(afterBlock.nextContentTransform)
+      && Math.abs(afterBlock.wrapperHeight - 360) <= 1
+      && afterBlock.authorPortals === 3 && afterBlock.virtualSyncs > 0
+      && hotPost.platformWrites >= 10
+      && afterChurn && afterChurn.targetCardHidden && afterChurn.targetCardHeight === 0
+      && Math.abs(afterChurn.nextContentTop - afterChurn.targetOuterTop) <= 1
+      && /translateY\(-?120px\)/.test(afterChurn.nextContentTransform)
+      && afterChurn.wrapperHeight >= 360 && afterChurn.wrapperHeight <= 481
+      && afterRestore && !afterRestore.targetCardHidden && afterRestore.targetCardHeight > 0
+      && afterRestore.targetContentHeight > 0
+      && Math.abs(afterRestore.nextContentTop - afterRestore.nextOuterTop) <= 1
+      && !/translateY\(-?120px\)/.test(afterRestore.nextContentTransform)
+      && Math.abs(afterRestore.wrapperHeight - 480) <= 1
+      && afterRestore.authorPortals === 4;
+    if (hotPostPass) {
+      report.pass.push('无限流整帖屏蔽回放：帖子原高度从 spacer 扣除，后续帖子内容层补位，撤销后完全恢复');
+    } else report.fail.push('无限流整帖屏蔽补位失败：' + JSON.stringify(hotPost));
+    await hotPostPage.close();
+
+    const hotStressPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await hotStressPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotStressFixture }));
+    await hotStressPage.addInitScript({ content: hotStressShim + '\n' + userscript });
+    await hotStressPage.goto('https://weibo.com/hot-feed-stress-replay', { waitUntil: 'domcontentloaded' });
+    await hotStressPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(700);
+    const hotStress = await hotStressPage.evaluate(async () => {
+      const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = () => Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const wrapper = document.querySelector('.vue-recycle-scroller__item-wrapper');
+      const initialTransforms = rows().map((row) => row.style.getPropertyValue('transform'));
+      const initialWrapperHeight = wrapper ? wrapper.getBoundingClientRect().height : 0;
+      const before = window.OB.diagnostics ? { ...window.OB.diagnostics } : {};
+      for (let index = 0; index < 100; index++) {
+        const row = rows()[index % rows().length];
+        const link = row && row.querySelector('article.woo-panel-main header a');
+        if (!link) continue;
+        const uid = String(540000 + index);
+        link.setAttribute('href', '/u/' + uid);
+        link.setAttribute('usercard', uid);
+        link.textContent = '复用作者' + index;
+        await sleepInPage(16);
+      }
+      await sleepInPage(350);
+      const after = window.OB.diagnostics ? { ...window.OB.diagnostics } : {};
+      return {
+        rowCount: rows().length,
+        wrapperHeight: wrapper ? wrapper.getBoundingClientRect().height : 0,
+        initialWrapperHeight,
+        unchangedTransforms: rows().every((row, index) => row.style.getPropertyValue('transform') === initialTransforms[index]),
+        inlineAuthorButtons: document.querySelectorAll('article.woo-panel-main > header > .ob-weibo-author-block').length,
+        authorPortals: document.querySelectorAll('.ob-weibo-author-portal').length,
+        virtualSyncs: (after.virtualSyncs || 0) - (before.virtualSyncs || 0),
+        virtualStyleWrites: (after.virtualSyncStyleWrites || 0) - (before.virtualSyncStyleWrites || 0),
+        ownUiIgnored: (after.scannerOwnUiIgnored || 0) - (before.scannerOwnUiIgnored || 0),
+      };
+    });
+    const hotStressPass = hotStress.rowCount === 80
+      && Math.abs(hotStress.wrapperHeight - hotStress.initialWrapperHeight) <= 1
+      && hotStress.unchangedTransforms
+      && hotStress.inlineAuthorButtons === 0 && hotStress.authorPortals === 80
+      && hotStress.virtualSyncs === 0 && hotStress.virtualStyleWrites === 0
+      && hotStress.ownUiIgnored > 0;
+    if (hotStressPass) {
+      report.pass.push('无限流 80 行回收压力：100 次作者节点复用不触发虚拟补位或 spacer 写回');
+    } else report.fail.push('无限流 80 行回收压力失败：' + JSON.stringify(hotStress));
+    await hotStressPage.close();
   } catch (error) {
     report.errors.push(String(error && error.message || error));
   }

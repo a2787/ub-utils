@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.40.0
+// @version       0.41.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.40.0-weibo-detail-recycler-immediate-sync';
+  const RUNTIME_BUILD = '0.41.0-weibo-feed-recycler-portal';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -832,6 +832,15 @@
       margin-left: 8px !important; vertical-align: middle !important;
     }
     .ob-weibo-author-block:hover, .ob-bili-author-block:hover { background: #fdeceb !important; }
+    /* 微博无限流帖子也由回收器管理；作者入口不能插入 article/header 的 Vue 布局树，
+       否则回收行会被重新测量。门户只挂在 body 上，再按作者链接的视口坐标定位。 */
+    .ob-weibo-author-portal {
+      position: fixed !important; z-index: 2147483645 !important; pointer-events: none !important;
+      display: block !important; width: max-content !important; height: max-content !important;
+    }
+    .ob-weibo-author-portal > .ob-weibo-author-block {
+      pointer-events: auto !important; margin-left: 0 !important; display: block !important;
+    }
     /* B站页面主体由 Vue 管理，作者按钮不能作为其子节点插入；门户只挂在 body 上，
        再用 fixed 定位贴到作者链接旁，避免破坏 Vue 的虚拟 DOM。 */
     .ob-bili-author-portal {
@@ -1133,6 +1142,7 @@
       virtualListObserverCallbacks: 0,
       virtualListPlatformMutations: 0,
       virtualListImmediateResyncs: 0,
+      scannerOwnUiIgnored: 0,
       weiboItemsHandled: 0,
       weiboItemsMissingIdentity: 0,
       weiboBlockTransitions: 0,
@@ -1552,6 +1562,7 @@
       basePixels,
       appliedValue: list.style.getPropertyValue(prop),
       appliedPriority: list.style.getPropertyPriority(prop),
+      appliedDesiredValue: list.style.getPropertyValue(prop),
       appliedHiddenPixels: 0,
     });
     return list;
@@ -1582,6 +1593,7 @@
         && Math.abs(observedPixels - state.basePixels) <= 1) {
         state.appliedValue = currentValue;
         state.appliedPriority = currentPriority;
+        state.appliedDesiredValue = currentValue;
         return;
       }
       if (observedPixels > 0 && Math.abs(observedPixels - state.basePixels) > 1) {
@@ -1603,7 +1615,10 @@
         desiredPriority: state.originalPriority,
       };
     }
-    if (currentValue !== desiredValue || currentPriority !== state.originalPriority) {
+    const desiredAlreadyApplied = currentValue === state.appliedValue
+      && currentPriority === state.appliedPriority
+      && state.appliedDesiredValue === desiredValue;
+    if (!desiredAlreadyApplied && (currentValue !== desiredValue || currentPriority !== state.originalPriority)) {
       virtualOwnListWrites.set(list, {
         prop: state.prop,
         value: desiredValue,
@@ -1612,8 +1627,14 @@
       virtualDiagnostic('virtualSyncStyleWrites');
       list.style.setProperty(state.prop, desiredValue, state.originalPriority);
     }
-    state.appliedValue = desiredValue;
-    state.appliedPriority = state.originalPriority;
+    state.appliedValue = list.style.getPropertyValue(state.prop);
+    state.appliedPriority = list.style.getPropertyPriority(state.prop);
+    state.appliedDesiredValue = desiredValue;
+    virtualOwnListWrites.set(list, {
+      prop: state.prop,
+      value: state.appliedValue,
+      priority: state.appliedPriority,
+    });
     state.appliedHiddenPixels = normalizedHiddenPixels;
     if (runtimeDiagnostics) {
       runtimeDiagnostics.virtualLastList.afterValue = list.style.getPropertyValue(state.prop);
@@ -1640,6 +1661,11 @@
       virtualDiagnostic('virtualSyncStyleWrites');
       if (state.originalValue) list.style.setProperty(state.prop, state.originalValue, state.originalPriority);
       else list.style.removeProperty(state.prop);
+      virtualOwnListWrites.set(list, {
+        prop: state.prop,
+        value: list.style.getPropertyValue(state.prop),
+        priority: list.style.getPropertyPriority(state.prop),
+      });
     }
     virtualListInlineStates.delete(list);
   }
@@ -1684,11 +1710,21 @@
     return 'matrix' + (matrix[1] ? '3d' : '') + '(' + parts.join(', ') + ')';
   }
 
-  function rememberVirtualRow(container) {
-    const row = virtualCommentRowOf(container);
+  function virtualBlockKindOf(adapter, container) {
+    const kind = adapter && typeof adapter.virtualBlockKindOf === 'function'
+      ? adapter.virtualBlockKindOf(container) : '';
+    return kind === 'post' ? 'post' : 'comment';
+  }
+
+  function rememberVirtualRow(container, adapter) {
+    const row = adapter && typeof adapter.virtualRowOf === 'function'
+      ? adapter.virtualRowOf(container) : virtualCommentRowOf(container);
     if (!row) return row;
+    const kind = virtualBlockKindOf(adapter, container);
     const existing = blockedVirtualRowStates.get(row);
     if (existing) {
+      if (!(existing.kinds instanceof Set)) existing.kinds = new Set([existing.kind || 'comment']);
+      existing.kinds.add(kind);
       if (!(existing.height > 0)) {
         const measured = readVirtualRowHeight(row);
         if (measured > 0) existing.height = measured;
@@ -1696,7 +1732,7 @@
       return row;
     }
     const height = readVirtualRowHeight(row);
-    blockedVirtualRowStates.set(row, { height });
+    blockedVirtualRowStates.set(row, { height, kinds: new Set([kind]) });
     return row;
   }
 
@@ -1719,7 +1755,10 @@
       && comment.parentElement && comment.parentElement.classList
       && comment.parentElement.classList.contains('wbpro-list')
       && comment.parentElement.parentElement === content
-      && row.closest && row.closest('.woo-panel-main');
+      // 详情页的虚拟列表 wrapper 位于 `.woo-panel-main` 里面；无限流/个人页
+      // 则是反过来由回收行包住 `article.woo-panel-main`。必须判断 wrapper
+      // 的祖先，不能只看 row，否则会把帖子卡片内的预览评论误当成顶层评论。
+      && isWeiboDetailVirtualList(virtualRowListOf(row));
     if (detailListComment) return row;
     if (runtimeDiagnostics) virtualDiagnostic('weiboNestedVirtualRowsIgnored');
     return null;
@@ -1804,6 +1843,8 @@
       state.baselinePriority = currentPriority;
       state.appliedValue = '';
       state.appliedPriority = '';
+      state.desiredValue = '';
+      state.desiredPriority = '';
     }
     if (!state && amount > 0) {
       state = {
@@ -1811,6 +1852,8 @@
         baselinePriority: currentPriority,
         appliedValue: '',
         appliedPriority: '',
+        desiredValue: '',
+        desiredPriority: '',
       };
       virtualContentOffsetStates.set(content, state);
     }
@@ -1819,14 +1862,21 @@
       ? shiftVirtualContentTransform(state.baselineValue, amount)
       : state.baselineValue;
     const desiredPriority = state.baselinePriority || '';
-    if (currentValue !== desiredValue || currentPriority !== desiredPriority) {
+    const desiredAlreadyApplied = currentValue === state.appliedValue
+      && currentPriority === state.appliedPriority
+      && state.desiredValue === desiredValue
+      && state.desiredPriority === desiredPriority;
+    if (!desiredAlreadyApplied && (currentValue !== desiredValue || currentPriority !== desiredPriority)) {
       virtualOwnContentWrites.set(content, { value: desiredValue, priority: desiredPriority });
       virtualDiagnostic('virtualSyncStyleWrites');
       if (desiredValue) content.style.setProperty('transform', desiredValue, desiredPriority);
       else content.style.removeProperty('transform');
     }
-    state.appliedValue = desiredValue;
-    state.appliedPriority = desiredPriority;
+    state.appliedValue = content.style.getPropertyValue('transform');
+    state.appliedPriority = content.style.getPropertyPriority('transform');
+    state.desiredValue = desiredValue;
+    state.desiredPriority = desiredPriority;
+    virtualOwnContentWrites.set(content, { value: state.appliedValue, priority: state.appliedPriority });
     if (amount === 0) virtualContentOffsetStates.delete(content);
   }
 
@@ -1843,6 +1893,10 @@
       virtualDiagnostic('virtualSyncStyleWrites');
       if (value) row.style.setProperty('transform', value, priority);
       else row.style.removeProperty('transform');
+      virtualOwnRowWrites.set(row, {
+        value: row.style.getPropertyValue('transform'),
+        priority: row.style.getPropertyPriority('transform'),
+      });
     }
     virtualRowInlineStates.delete(row);
   }
@@ -1857,8 +1911,18 @@
         parent = parent.parentElement;
       }
       return comment.classList.contains('ob-hidden')
-        || (comment.hasAttribute('data-ob-blocked') && getComputedStyle(comment).display === 'none');
+      || (comment.hasAttribute('data-ob-blocked') && getComputedStyle(comment).display === 'none');
     });
+  }
+
+  function virtualRowStateStillBlocked(row, state) {
+    if (!row || !state) return false;
+    const kinds = state.kinds instanceof Set
+      ? state.kinds : new Set([state.kind || 'comment']);
+    if (kinds.has('post') && currentAdapter && currentAdapter.id === 'weibo'
+      && typeof currentAdapter.hasBlockedVirtualPost === 'function'
+      && currentAdapter.hasBlockedVirtualPost(row)) return true;
+    return kinds.has('comment') && hiddenWeiboCommentInVirtualRow(row);
   }
 
   function inactiveWeiboVirtualRow(row) {
@@ -1925,8 +1989,9 @@
           virtualRowInlineStates.delete(candidate);
         }
       }
-      let blockedByState = blockedVirtualRowStates.has(candidate);
-      if (blockedByState && !hiddenWeiboCommentInVirtualRow(candidate)) {
+      const blockedState = blockedVirtualRowStates.get(candidate);
+      let blockedByState = !!blockedState;
+      if (blockedByState && !virtualRowStateStillBlocked(candidate, blockedState)) {
         if (runtimeDiagnostics) virtualDiagnostic('virtualStaleBlockedRows');
         // 回收器已经把这条物理行换成了新的评论，但身份扫描尚未完成时，
         // 旧的屏蔽状态不能继续参与累计高度和后续行偏移；否则新评论会被
@@ -1943,7 +2008,7 @@
         y: readTranslateY(source),
         inactive,
         blocked: blockedByState,
-        height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height)
+        height: safeVirtualRowHeight(blockedState?.height)
           || safeVirtualRowHeight(readVirtualRowHeight(candidate)),
       };
     });
@@ -2011,8 +2076,14 @@
           virtualDiagnostic('virtualSyncStyleWrites');
           entry.candidate.style.setProperty('transform', nextTransform, 'important');
         }
-        state.applied = nextTransform;
-        state.appliedPriority = 'important';
+        state.value = entry.candidate.style.getPropertyValue('transform');
+        state.safeValue = state.value;
+        state.applied = state.value;
+        state.appliedPriority = entry.candidate.style.getPropertyPriority('transform');
+        virtualOwnRowWrites.set(entry.candidate, {
+          value: state.applied,
+          priority: state.appliedPriority,
+        });
       } else if (virtualRowInlineStates.has(entry.candidate)) {
         restoreVirtualRowInlineStyle(entry.candidate);
       }
@@ -2102,7 +2173,8 @@
   function unmark(container) {
     if (!container) return;
     const isWeibo = currentAdapter && currentAdapter.id === 'weibo';
-    const virtualRow = isWeibo ? virtualCommentRowOf(container) : virtualRowOf(container);
+    const virtualRow = isWeibo && currentAdapter && typeof currentAdapter.virtualRowOf === 'function'
+      ? currentAdapter.virtualRowOf(container) : (isWeibo ? virtualCommentRowOf(container) : virtualRowOf(container));
     const virtualList = virtualRow && virtualRowListOf(virtualRow);
     const hadVirtualWork = !!virtualRow && (
       virtualRowInlineStates.has(virtualRow) || blockedVirtualRowStates.has(virtualRow)
@@ -2122,7 +2194,13 @@
       wrapper = parent;
     }
     if (virtualRow && hadVirtualWork && currentAdapter && currentAdapter.id === 'weibo') {
-      if (!hiddenWeiboCommentInVirtualRow(virtualRow)) {
+      const kind = virtualBlockKindOf(currentAdapter, container);
+      const state = blockedVirtualRowStates.get(virtualRow);
+      if (state && state.kinds instanceof Set) {
+        if (kind === 'post') state.kinds.delete('post');
+        else if (!hiddenWeiboCommentInVirtualRow(virtualRow)) state.kinds.delete('comment');
+      }
+      if (!virtualRowStateStillBlocked(virtualRow, state)) {
         blockedVirtualRowStates.delete(virtualRow);
         unregisterVirtualBlockedRow(virtualRow);
       } else registerVirtualBlockedRow(virtualRow);
@@ -2193,7 +2271,7 @@
     }
     if (Index.isBlocked(info.keys)) {
       if (adapter.id === 'weibo' && !wasBlocked) virtualDiagnostic('weiboBlockTransitions');
-      const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container) : null;
+      const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container, adapter) : null;
       if (virtualRow) rememberVirtualList(virtualRow);
       markBlocked(container, info.label, modeForItem(adapter, item));
       collapseBlockedWrappers(container);
@@ -2217,16 +2295,37 @@
       'data-mid-hash', 'data-mid_hash', 'data-dm-hash', 'data-danmaku-hash',
       'comment_id', 'comment-id', 'data-comment-id', 'action-type',
     ];
+    function isOwnUiNode(node) {
+      if (!node || node.nodeType !== 1) return false;
+      if (node.id && /^ob-/.test(node.id)) return true;
+      return !!(node.classList && Array.from(node.classList).some((name) => (
+        name === 'ob-bar' || /^ob-/.test(name)
+      )));
+    }
+    function isOwnUiOnlyChildList(record) {
+      if (!record || record.type !== 'childList') return false;
+      const changed = Array.from(record.addedNodes || []).concat(Array.from(record.removedNodes || []))
+        .filter((node) => node && node.nodeType === 1);
+      return changed.length > 0 && changed.every(isOwnUiNode);
+    }
     const mo = new MutationObserver((records) => {
       let shouldSchedule = false;
       for (const record of records) {
         for (const node of record.addedNodes || []) discoverShadowRoots(node);
+        if (isOwnUiOnlyChildList(record)) {
+          virtualDiagnostic('scannerOwnUiIgnored');
+          continue;
+        }
         if (record.type !== 'attributes' || record.attributeName !== 'style') shouldSchedule = true;
         if (adapter.id === 'weibo' && record.type === 'childList') {
           const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
-          if (row) {
+          const list = row && virtualRowListOf(row);
+          // 只有已经存在本地虚拟补位工作的列表才需要因行结构变化强制同步。
+          // 普通无限流帖子里的作者入口、评论预览和平台自身换行不能启动整表
+          // 布局读取；新出现的屏蔽评论会在 handleItem 中显式注册并排队。
+          if (row && virtualListHasBlockedWork(list)) {
             virtualRowHeightStates.delete(row);
-            refreshVirtualListObserver(virtualRowListOf(row));
+            refreshVirtualListObserver(list);
             // 内容节点被回收器替换时，平台通常会先清掉内容层 transform，
             // 也必须在下一帧恢复当前隐藏高度的补位，不能走平台静默延迟。
             queueVirtualRowSync(row, true, 'structure');
@@ -3068,7 +3167,124 @@
     function clearCommentButtons() {
       for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) button.remove();
     }
+    const weiboAuthorPortalStates = new Map();
+    let weiboAuthorPositionListeners = false;
+    let weiboAuthorPositionFrame = 0;
+
+    function virtualPostRowOf(item) {
+      if (!item || !item.matches || !item.matches(SEL.card)) return null;
+      // 只认回收行中的最外层帖子卡片；帖子卡片里的 card-feed、预览评论
+      // 等嵌套节点不能代表一条独立的虚拟帖子行。
+      const outerCard = item.parentElement && item.parentElement.closest
+        ? item.parentElement.closest(SEL.card) : null;
+      if (outerCard) return null;
+      const row = item.closest(VIRTUAL_ROW_SELECTOR);
+      return row && row.firstElementChild && row.firstElementChild.contains(item) ? row : null;
+    }
+
+    function virtualRowOfItem(item) {
+      return virtualCommentRowOf(item) || virtualPostRowOf(item);
+    }
+
+    function hasBlockedVirtualPost(row) {
+      if (!row) return false;
+      return collectWeiboItems(row, SEL.card).some((card) => (
+        virtualPostRowOf(card) === row && card.classList && card.classList.contains('ob-hidden')
+      ));
+    }
+
+    function isVirtualWeiboAuthorCard(card) {
+      // 只把回收器里的帖子卡片转成门户；详情页普通帖子和旧版非虚拟卡片
+      // 继续使用原来的行内入口，避免改变已验证的布局。
+      return !!virtualPostRowOf(card);
+    }
+
+    function positionWeiboAuthorPortals() {
+      weiboAuthorPositionFrame = 0;
+      for (const [card, state] of weiboAuthorPortalStates) {
+        if (!card.isConnected || !state.anchor || !state.anchor.isConnected || !state.portal.isConnected) {
+          if (state.portal && state.portal.style) state.portal.style.setProperty('display', 'none', 'important');
+          continue;
+        }
+        const rect = state.anchor.getBoundingClientRect();
+        const visible = rect.width > 0 && rect.height > 0
+          && rect.bottom > 0 && rect.top < window.innerHeight
+          && rect.right > 0 && rect.left < window.innerWidth;
+        if (!visible) {
+          state.portal.style.setProperty('display', 'none', 'important');
+          continue;
+        }
+        state.portal.style.setProperty('display', 'block', 'important');
+        const width = state.portal.offsetWidth || 120;
+        const height = state.portal.offsetHeight || 22;
+        const left = clamp(rect.right + 8, 4, Math.max(4, window.innerWidth - width - 4));
+        const top = clamp(rect.top + (rect.height - height) / 2, 4, Math.max(4, window.innerHeight - height - 4));
+        state.portal.style.left = left + 'px';
+        state.portal.style.top = top + 'px';
+      }
+    }
+
+    function scheduleWeiboAuthorPortalPosition() {
+      if (weiboAuthorPositionFrame) return;
+      const run = () => positionWeiboAuthorPortals();
+      if (typeof requestAnimationFrame === 'function') weiboAuthorPositionFrame = requestAnimationFrame(run);
+      else weiboAuthorPositionFrame = setTimeout(run, 0);
+    }
+
+    function ensureWeiboAuthorPositionListeners() {
+      if (weiboAuthorPositionListeners || !document.addEventListener) return;
+      const reposition = () => scheduleWeiboAuthorPortalPosition();
+      document.addEventListener('scroll', reposition, true);
+      window.addEventListener('resize', reposition);
+      weiboAuthorPositionListeners = true;
+    }
+
+    function removeWeiboAuthorPortal(card) {
+      const state = weiboAuthorPortalStates.get(card);
+      if (!state) return;
+      if (state.portal && state.portal.parentNode) state.portal.parentNode.removeChild(state.portal);
+      weiboAuthorPortalStates.delete(card);
+    }
+
+    function removeWeiboAuthorPortals() {
+      for (const card of Array.from(weiboAuthorPortalStates.keys())) removeWeiboAuthorPortal(card);
+    }
+
+    function makeWeiboAuthorButton(card) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'ob-weibo-author-block'; button.textContent = '本地拉黑作者';
+      button.title = '本地拉黑此微博作者'; button.setAttribute('aria-label', '本地拉黑此微博作者');
+      button.addEventListener('click', (event) => {
+        event.stopPropagation(); event.preventDefault();
+        const current = extract(card);
+        if (!current.keys.length) return;
+        showConfirm(current.label, current.keys, button);
+      });
+      return button;
+    }
+
+    function ensureWeiboAuthorPortal(card, info, link) {
+      if (!card || !info || !info.keys || !info.keys.length || !link || !document.body) return;
+      const key = info.keys.join('|');
+      let state = weiboAuthorPortalStates.get(card);
+      if (!state || state.key !== key || !state.portal || !state.portal.isConnected) {
+        if (state) removeWeiboAuthorPortal(card);
+        const portal = document.createElement('div');
+        portal.className = 'ob-weibo-author-portal';
+        portal.setAttribute('aria-label', '微博作者本地拉黑入口');
+        portal.appendChild(makeWeiboAuthorButton(card));
+        document.body.appendChild(portal);
+        state = { key, anchor: link, portal };
+        weiboAuthorPortalStates.set(card, state);
+      } else {
+        state.anchor = link;
+      }
+      ensureWeiboAuthorPositionListeners();
+      scheduleWeiboAuthorPortalPosition();
+    }
+
     function clearAuthorButtons() {
+      removeWeiboAuthorPortals();
       for (const button of querySelectorAllDeep(document, '.ob-weibo-author-block')) button.remove();
     }
     // 帖子作者常驻入口：挂在作者链接所在行（真站捕获为
@@ -3076,19 +3292,39 @@
     // 只处理最外层卡片，避免 `.card-feed` 嵌套在 `.card-wrap[mid]` 里时重复注入。
     function syncAuthorButtons() {
       for (const button of querySelectorAllDeep(document, '.ob-weibo-author-block')) {
+        if (button.closest && button.closest('.ob-weibo-author-portal')) continue;
         if (!button.closest || !button.closest(SEL.card)) button.remove();
       }
       const enabled = Store.getSetting('enabled') && Store.getSetting('showQuickBlock');
       const cards = collectWeiboItems(document, SEL.card)
         .filter((item) => !item.closest(SEL.card) || item.closest(SEL.card) === item);
+      const activeCards = new Set(cards);
+      for (const card of Array.from(weiboAuthorPortalStates.keys())) {
+        if (!activeCards.has(card) || !isVirtualWeiboAuthorCard(card)) removeWeiboAuthorPortal(card);
+      }
       for (const card of cards) {
         const link = findUserLink(card);
         const mount = link && link.isConnected
           ? ((card.querySelector('header') && card.querySelector('header').contains(link)) ? card.querySelector('header') : link.parentElement)
           : null;
+        const info = extract(card);
+        const virtualCard = isVirtualWeiboAuthorCard(card);
+        if (virtualCard) {
+          // 旧版本可能已经把按钮插进回收行；先撤掉它，再建立 body 门户。
+          if (mount) {
+            const inlineButton = mount.querySelector(':scope > .ob-weibo-author-block');
+            if (inlineButton) inlineButton.remove();
+          }
+          if (!mount || !enabled || !info.keys.length || Index.isBlocked(info.keys)) {
+            removeWeiboAuthorPortal(card);
+          } else {
+            ensureWeiboAuthorPortal(card, info, link);
+          }
+          continue;
+        }
+        removeWeiboAuthorPortal(card);
         if (!mount) continue;
         let button = mount.querySelector(':scope > .ob-weibo-author-block');
-        const info = extract(card);
         if (!enabled || !info.keys.length || Index.isBlocked(info.keys)) {
           if (button) button.remove();
           continue;
@@ -3163,6 +3399,9 @@
       },
       bulkFabLabel: (n) => '🚫 拉黑已加载微博/评论作者(' + n + ')',
       containerOf: (item) => findContainer(item),
+      virtualRowOf: virtualRowOfItem,
+      virtualBlockKindOf: (item) => virtualPostRowOf(item) ? 'post' : 'comment',
+      hasBlockedVirtualPost,
       onScan: () => { syncCommentButtons(); syncAuthorButtons(); },
       onDisabled: () => { clearCommentButtons(); clearAuthorButtons(); },
     };

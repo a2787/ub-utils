@@ -7,6 +7,7 @@
  * 用法：
  *   node test/real-login-probe.cjs weibo --url=https://weibo.com/... --duration=90
  *   node test/real-login-probe.cjs weibo --current --duration=90
+ *   node test/real-login-probe.cjs weibo --url=https://weibo.com/... --scenario=feed --duration=90
  */
 const crypto = require('crypto');
 const fs = require('fs');
@@ -26,11 +27,15 @@ const durationArg = process.argv.find((arg) => arg.startsWith('--duration='));
 const durationSeconds = Math.max(5, Math.min(600, Number(durationArg ? durationArg.slice(11) : 90) || 90));
 const scenarioArg = process.argv.find((arg) => arg.startsWith('--scenario='));
 const scenario = scenarioArg ? scenarioArg.slice(11) : 'all';
+const targetIdArg = process.argv.find((arg) => arg.startsWith('--target-id='));
+const reuseTargetId = targetIdArg ? targetIdArg.slice('--target-id='.length) : '';
 const expandArg = process.argv.find((arg) => arg.startsWith('--expand-comment-index='));
 const expandCommentIndex = expandArg ? Math.max(0, Number(expandArg.slice('--expand-comment-index='.length)) || 0) : -1;
 const blockArg = process.argv.find((arg) => arg.startsWith('--block-comment-index='));
 const blockCommentIndex = blockArg ? Math.max(0, Number(blockArg.slice('--block-comment-index='.length)) || 0) : 0;
 const disableAutoScroll = process.argv.includes('--no-scroll');
+const disableQuickBlock = process.argv.includes('--disable-quick-block');
+const feedMode = process.argv.includes('--feed') || scenario === 'feed';
 
 function redactUrl(value) {
   try {
@@ -125,11 +130,11 @@ async function evaluate(client, sessionId, expression, timeout = 2500) {
   return result.result && result.result.value;
 }
 
-function gmShim() {
+function gmShim(showQuickBlock = true) {
   return `
 window.__OB_PROBE_SOURCE_HASH__ = ${JSON.stringify(sourceHash)};
 window.__OB_PROBE_DIAGNOSTICS__ = { enabled: true, sourceHash: ${JSON.stringify(sourceHash)} };
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'disappear', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true }}) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'disappear', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:${showQuickBlock ? 'true' : 'false'}, showBulkBlock:true }}) };
 window.GM_getValue = (key, fallback) => (key in window.__gm ? window.__gm[key] : fallback);
 window.GM_setValue = (key, value) => { window.__gm[key] = value; };
 window.GM_deleteValue = (key) => { delete window.__gm[key]; };
@@ -167,6 +172,8 @@ function baselineProbeScript() {
     captchaGate: /验证码|安全验证|滑动验证|人机验证|captcha|challenge/i.test(text),
     hasOmniBlock: !!window.OB,
     gearCount: document.querySelectorAll('#ob-gear').length,
+    articleCount: document.querySelectorAll('article').length,
+    virtualRowCount: document.querySelectorAll('.vue-recycle-scroller__item-view').length,
   };
 })()`;
 }
@@ -175,7 +182,9 @@ function candidateProbeScript(block) {
   return `
 (() => {
   const out = { ready: document.readyState, hasOmniBlock: !!window.OB, selected: false, blocked: false,
-    sourceHash: window.__OB_PROBE_SOURCE_HASH__ || '', runtime: window.OB && window.OB.runtime || null };
+    sourceHash: window.__OB_PROBE_SOURCE_HASH__ || '', runtime: window.OB && window.OB.runtime || null,
+    articleCount: document.querySelectorAll('article').length,
+    virtualRowCount: document.querySelectorAll('.vue-recycle-scroller__item-view').length };
   const title = document.title || '';
   const text = (title + ' ' + (document.body && document.body.innerText || '')).slice(0, 5000);
   const hasContentSurface = !!document.querySelector('article,.wbpro-list,.card-review,[node-type="comment"],[node-type="comment_list"]');
@@ -310,6 +319,104 @@ function stopFlashMonitorScript() {
 })()`;
 }
 
+function installFeedMonitorScript() {
+  return `
+(() => {
+  const previous = window.__OB_PROBE_FEED__;
+  if (previous) {
+    if (previous.timer) clearInterval(previous.timer);
+    if (previous.observer) previous.observer.disconnect();
+  }
+  const state = {
+    startedAt: performance.now(), samples: 0, lastY: Number(window.scrollY || 0),
+    lastHeight: Number(document.documentElement.scrollHeight || 0), minDy: Infinity,
+    maxDy: -Infinity, negativeScrolls: 0, largeScrolls: 0, visualJumps: 0,
+    maxResidual: 0, maxDocDelta: 0, mutations: 0, childMutations: 0,
+    attrMutations: 0, articleMin: Infinity, articleMax: 0, rowMin: Infinity,
+    rowMax: 0, authorMin: Infinity, authorMax: 0, tracked: new Map(),
+    timer: 0, observer: null,
+  };
+  const sample = () => {
+    const y = Number(window.scrollY || 0);
+    const height = Number(document.documentElement.scrollHeight || 0);
+    const dy = y - state.lastY;
+    const dh = height - state.lastHeight;
+    state.samples++;
+    state.minDy = Math.min(state.minDy, dy);
+    state.maxDy = Math.max(state.maxDy, dy);
+    if (dy < -2) state.negativeScrolls++;
+    if (Math.abs(dy) > 1000) state.largeScrolls++;
+    state.maxDocDelta = Math.max(state.maxDocDelta, Math.abs(dh));
+    const articles = Array.from(document.querySelectorAll('article'));
+    const rows = Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+    const authors = document.querySelectorAll('.ob-weibo-author-block').length;
+    state.articleMin = Math.min(state.articleMin, articles.length);
+    state.articleMax = Math.max(state.articleMax, articles.length);
+    state.rowMin = Math.min(state.rowMin, rows.length);
+    state.rowMax = Math.max(state.rowMax, rows.length);
+    state.authorMin = Math.min(state.authorMin, authors);
+    state.authorMax = Math.max(state.authorMax, authors);
+    for (const article of articles) {
+      const rect = article.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+      const previous = state.tracked.get(article);
+      if (previous) {
+        // 对同一物理节点扣除窗口滚动量；剩余位移才是内容/回收器重排。
+        const residual = (rect.top - previous.top) + (y - previous.y);
+        state.maxResidual = Math.max(state.maxResidual, Math.abs(residual));
+        if (Math.abs(residual) > 24) state.visualJumps++;
+      }
+      state.tracked.set(article, { top: rect.top, y });
+    }
+    state.lastY = y;
+    state.lastHeight = height;
+  };
+  state.observer = new MutationObserver((records) => {
+    state.mutations += records.length;
+    for (const record of records) {
+      if (record.type === 'childList') state.childMutations++;
+      else if (record.type === 'attributes') state.attrMutations++;
+    }
+  });
+  state.observer.observe(document.body, {
+    subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'],
+  });
+  sample();
+  state.timer = setInterval(sample, 50);
+  window.__OB_PROBE_FEED__ = state;
+  return {
+    installed: true, y: state.lastY, height: state.lastHeight,
+    articles: document.querySelectorAll('article').length,
+    rows: document.querySelectorAll('.vue-recycle-scroller__item-view').length,
+  };
+})()`;
+}
+
+function stopFeedMonitorScript() {
+  return `
+(() => {
+  const state = window.__OB_PROBE_FEED__;
+  if (!state) return null;
+  if (state.timer) clearInterval(state.timer);
+  if (state.observer) state.observer.disconnect();
+  state.timer = 0;
+  state.observer = null;
+  return {
+    durationMs: Math.round(performance.now() - state.startedAt),
+    samples: state.samples, minDy: state.minDy, maxDy: state.maxDy,
+    negativeScrolls: state.negativeScrolls, largeScrolls: state.largeScrolls,
+    visualJumps: state.visualJumps, maxResidual: state.maxResidual,
+    maxDocDelta: state.maxDocDelta, mutations: state.mutations,
+    childMutations: state.childMutations, attrMutations: state.attrMutations,
+    articleMin: state.articleMin, articleMax: state.articleMax,
+    rowMin: state.rowMin, rowMax: state.rowMax,
+    authorMin: state.authorMin, authorMax: state.authorMax,
+    tracked: state.tracked.size, y: Number(window.scrollY || 0),
+    height: Number(document.documentElement.scrollHeight || 0),
+  };
+})()`;
+}
+
 async function performanceMetrics(client, sessionId) {
   try {
     const result = await client.send('Performance.getMetrics', {}, sessionId, 2500);
@@ -382,21 +489,39 @@ async function runScenario(client, url, name, inject, block) {
     processAfter: null,
     page: null,
     blocked: [],
+    feed: null,
   };
-  const created = await client.send('Target.createTarget', { url: 'about:blank' });
+  const created = reuseTargetId
+    ? { targetId: reuseTargetId }
+    : await client.send('Target.createTarget', { url: 'about:blank' });
   report.targetId = created.targetId;
   const attached = await client.send('Target.attachToTarget', { targetId: created.targetId, flatten: true });
   report.sessionId = attached.sessionId;
+  let injectedScriptId = '';
   try {
     await client.send('Target.activateTarget', { targetId: created.targetId });
     await client.send('Page.enable', {}, report.sessionId);
     await client.send('Performance.enable', {}, report.sessionId);
+    // 专用调试 Chrome 的新标签可能继承 500x1 一类的探针视口；微博在该
+    // 视口下只渲染导航占位，不能作为真实 DOM/滚动证据。固定桌面视口并置前，
+    // 不改变用户主浏览器的窗口或登录态。
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440, height: 900, deviceScaleFactor: 1, mobile: false,
+    }, report.sessionId);
+    await client.send('Page.bringToFront', {}, report.sessionId).catch(() => {});
     if (inject) {
-      await client.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: gmShim() + '\n' + userscript + '\nwindow.__OB_TEST__ = window.OB;\n',
+      const injected = await client.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: gmShim(!disableQuickBlock) + '\n' + userscript + '\nwindow.__OB_TEST__ = window.OB;\n',
       }, report.sessionId);
+      injectedScriptId = injected && injected.identifier || '';
     }
     report.processBefore = await processMetrics(client);
+    if (reuseTargetId) {
+      // 对现有标签页强制经过一个新 document，确保本轮刚注册的
+      // addScriptToEvaluateOnNewDocument 不会被同文档导航/BFCache 跳过。
+      await client.send('Page.navigate', { url: 'about:blank' }, report.sessionId, 10000);
+      await sleep(250);
+    }
     await client.send('Page.navigate', { url }, report.sessionId, 20000);
     await sleep(5000);
     report.page = inject
@@ -420,7 +545,11 @@ async function runScenario(client, url, name, inject, block) {
       report.blocked.push('候选运行标识与当前工作区源码不一致');
       return report;
     }
-    if (inject && !report.page.selected) {
+    if (feedMode && (!report.page || report.page.articleCount < 1 || report.page.virtualRowCount < 1)) {
+      report.blocked.push('真实微博无限流页面未渲染可测帖子卡片/回收行');
+      return report;
+    }
+    if (inject && !feedMode && !report.page.selected) {
       report.blocked.push('登录态页面没有可解析的微博评论目标');
       return report;
     }
@@ -444,18 +573,29 @@ async function runScenario(client, url, name, inject, block) {
       report.flashMonitor = await evaluate(client, report.sessionId,
         'return (' + installFlashMonitorScript().trim() + ');', 3000).catch((error) => ({ installed: false, error: String(error && error.message || error).slice(0, 300) }));
     }
+    if (feedMode) {
+      report.feedMonitor = await evaluate(client, report.sessionId,
+        'return (' + installFeedMonitorScript().trim() + ');', 3000)
+        .catch((error) => ({ installed: false, error: String(error && error.message || error).slice(0, 300) }));
+      if (!report.feedMonitor || report.feedMonitor.installed === false) {
+        report.blocked.push('无限流滚动诊断未能安装');
+        return report;
+      }
+    }
     const initialScrollY = inject
       ? await evaluate(client, report.sessionId, 'return Number(window.scrollY || 0)', 1500).catch(() => 0)
       : 0;
     const deadline = Date.now() + durationSeconds * 1000;
-    let nextScrollAt = Date.now() + 5000;
+    let nextScrollAt = Date.now() + (feedMode ? 800 : 5000);
     while (Date.now() < deadline) {
       await heartbeat(client, report.sessionId, report);
-      if (inject && !disableAutoScroll && Date.now() >= nextScrollAt) {
-        await evaluate(client, report.sessionId,
-          `window.scrollBy(0, 700); setTimeout(() => window.scrollTo(0, ${initialScrollY}), 900); return true`, 1500)
+      if (!disableAutoScroll && Date.now() >= nextScrollAt && (feedMode || inject)) {
+        const scrollExpression = feedMode
+          ? 'const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight); window.scrollTo(0, Math.min(max, Number(window.scrollY || 0) + 700)); return true'
+          : `window.scrollBy(0, 700); setTimeout(() => window.scrollTo(0, ${initialScrollY}), 900); return true`;
+        await evaluate(client, report.sessionId, scrollExpression, 1500)
           .catch(() => {});
-        nextScrollAt = Date.now() + 5000;
+        nextScrollAt = Date.now() + (feedMode ? 800 : 5000);
       }
       await sleep(500);
     }
@@ -465,6 +605,10 @@ async function runScenario(client, url, name, inject, block) {
       'return window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null', 1500).catch(() => null);
     report.longtasks = await evaluate(client, report.sessionId,
       'return window.__OB_PROBE_LONGTASKS__ || null', 1500).catch(() => null);
+    if (feedMode) {
+      report.feed = await evaluate(client, report.sessionId,
+        'return (' + stopFeedMonitorScript().trim() + ');', 2500).catch(() => null);
+    }
     if (block) {
       report.flash = await evaluate(client, report.sessionId,
         'return (' + stopFlashMonitorScript().trim() + ');', 2500).catch(() => null);
@@ -479,6 +623,14 @@ async function runScenario(client, url, name, inject, block) {
   } catch (error) {
     report.blocked.push(String(error && error.message || error).slice(0, 500));
     return report;
+  } finally {
+    // 复用 --target-id 时，初始化脚本只应服务于本轮导航；若一直保留，
+    // 后续每次刷新都会叠加一份候选脚本，制造重复 UI 和重复观察器。
+    if (injectedScriptId) {
+      await client.send('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: injectedScriptId,
+      }, report.sessionId).catch(() => {});
+    }
   }
 }
 
@@ -516,7 +668,9 @@ async function runScenario(client, url, name, inject, block) {
         if (item.page && (item.page.loginGate || item.page.captchaGate)) break;
       }
       // 只有正常完成的标签页才关闭；失败页保留给用户处理或后续诊断。
-      if (!item.blocked.length && item.targetId) await client.send('Target.closeTarget', { targetId: item.targetId }).catch(() => {});
+      if (!item.blocked.length && item.targetId && !reuseTargetId) {
+        await client.send('Target.closeTarget', { targetId: item.targetId }).catch(() => {});
+      }
     }
   } catch (error) {
     report.blocked.push(String(error && error.message || error).slice(0, 500));
