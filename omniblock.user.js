@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.38.0
+// @version       0.40.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.38.0-weibo-nested-comment-guard-douyin-manager';
+  const RUNTIME_BUILD = '0.40.0-weibo-detail-recycler-immediate-sync';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1113,6 +1113,7 @@
   const virtualRowHeightStates = new WeakMap();
   const virtualOwnRowWrites = new WeakMap();
   const virtualOwnListWrites = new WeakMap();
+  const virtualOwnContentWrites = new WeakMap();
   const runtimeDiagnostics = window.__OB_PROBE_DIAGNOSTICS__
     && window.__OB_PROBE_DIAGNOSTICS__.enabled
     ? {
@@ -1126,6 +1127,8 @@
       virtualRowPlatformMutations: 0,
       virtualListOwnWritesIgnored: 0,
       virtualRowOwnWritesIgnored: 0,
+      virtualContentPlatformMutations: 0,
+      virtualContentOwnWritesIgnored: 0,
       virtualSyncThrottled: 0,
       virtualListObserverCallbacks: 0,
       virtualListPlatformMutations: 0,
@@ -1270,6 +1273,26 @@
     return matches;
   }
 
+  function ownVirtualContentStyle(content) {
+    if (!content || !content.style) return false;
+    const state = virtualContentOffsetStates.get(content);
+    if (state && content.style.getPropertyValue('transform') === state.appliedValue
+      && content.style.getPropertyPriority('transform') === state.appliedPriority) return true;
+    const write = virtualOwnContentWrites.get(content);
+    if (!write) return false;
+    const matches = content.style.getPropertyValue('transform') === write.value
+      && content.style.getPropertyPriority('transform') === write.priority;
+    if (matches) virtualOwnContentWrites.delete(content);
+    return matches;
+  }
+
+  // 当前真实结构中，只有帖子详情页把顶层评论的直接内容层放在
+  // .woo-panel-main 内；用户主页的同名 wbpro-list 是整条帖子的嵌套内容，
+  // 不能把它们的行回写切换为立即同步路径。
+  function isWeiboDetailVirtualList(list) {
+    return !!(list && list.closest && list.closest('.woo-panel-main'));
+  }
+
   function refreshVirtualListObserver(list) {
     const state = virtualListSyncStates.get(list);
     if (!state || !state.observer || !list || !list.isConnected) return;
@@ -1280,7 +1303,29 @@
       if (!row.matches || !row.matches(VIRTUAL_ROW_SELECTOR)) continue;
       state.observedRows.add(row);
       state.observer.observe(row, { attributes: true, attributeFilter: ['style'] });
+      const content = row.firstElementChild;
+      if (content && isWeiboDetailVirtualList(list)) {
+        state.observer.observe(content, { attributes: true, attributeFilter: ['style'] });
+      }
     }
+  }
+
+  function syncVirtualListNow(list) {
+    const state = virtualListSyncStates.get(list);
+    if (!state || !list || !list.isConnected) return;
+    if (state.timer) clearTimeout(state.timer);
+    if (state.platformTimer) clearTimeout(state.platformTimer);
+    state.timer = 0;
+    state.platformTimer = 0;
+    state.pending = false;
+    state.force = false;
+    pendingVirtualLists.delete(list);
+    state.lastSyncAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    virtualDiagnostic('virtualListImmediateResyncs');
+    const firstRow = Array.from(list.children || [])
+      .find((child) => child.matches && child.matches(VIRTUAL_ROW_SELECTOR));
+    if (firstRow) syncVirtualRowOffsets(firstRow);
+    if (!virtualListHasBlockedWork(list)) detachVirtualListObserver(list);
   }
 
   function ensureVirtualListObserver(list) {
@@ -1289,7 +1334,8 @@
     if (!state.observer && typeof MutationObserver === 'function') {
       state.observer = new MutationObserver((records) => {
         virtualDiagnostic('virtualListObserverCallbacks');
-        let dirty = false;
+        let immediate = false;
+        let deferred = false;
         for (const record of records) {
           virtualDiagnostic('virtualObserverRecords');
           if (record.type === 'childList' && record.target === list) {
@@ -1302,7 +1348,8 @@
                 state.blockedRows.delete(row);
               }
             }
-            dirty = true;
+            if (isWeiboDetailVirtualList(list)) immediate = true;
+            else deferred = true;
             continue;
           }
           if (record.type !== 'attributes') continue;
@@ -1334,7 +1381,26 @@
               virtualDiagnostic('virtualRowOwnWritesIgnored');
             } else {
               virtualDiagnostic('virtualRowPlatformMutations');
-              dirty = true;
+              // 行重新从回收占位变为活动行时，微博可能同时清掉内容层的
+              // 本地位移。这里不能和 spacer 一样等待 120ms 静默期，否则
+              // 后续评论会在可见区域留下一个隐藏行高度的空洞；同一批次
+              // 的多个行写回在本次 MutationObserver 回调内合并为一次同步。
+              if (isWeiboDetailVirtualList(list)) immediate = true;
+              else deferred = true;
+            }
+          } else {
+            const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
+            if (!row || row.firstElementChild !== record.target) continue;
+            if (ownVirtualContentStyle(record.target)) {
+              virtualDiagnostic('virtualObserverIgnored');
+              virtualDiagnostic('virtualContentOwnWritesIgnored');
+            } else {
+              // 微博有时只重绘内容层，外层 item-view 的 transform 不变；
+              // 这种写回不会触发行观察器，但会把本地补位清掉，必须单独
+              // 立刻恢复，否则详情页会再次留下隐藏主评论的空洞。
+              virtualDiagnostic('virtualContentPlatformMutations');
+              if (isWeiboDetailVirtualList(list)) immediate = true;
+              else deferred = true;
             }
           }
         }
@@ -1342,7 +1408,8 @@
           detachVirtualListObserver(list);
           return;
         }
-        if (dirty) queueVirtualListSync(list, false, 'platform');
+        if (immediate) syncVirtualListNow(list);
+        else if (deferred) queueVirtualListSync(list, false, 'platform');
       });
       refreshVirtualListObserver(list);
     } else if (state.observer) refreshVirtualListObserver(list);
@@ -1636,7 +1703,9 @@
   // 用户页的帖子本身也可能位于 item-view > wbpro-scroller-item 中，但帖子内
   // 展开的评论位于该内容层更深处的普通 wbpro-list。那条 item-view 是整条帖子，
   // 不是评论虚拟行；若把它纳入补位，会移动整条帖子并和微博回收器形成闪动。
-  // 只有评论节点直接挂在 item-view 或其直接内容层下时，才允许虚拟补位。
+  // 详情页的顶层评论也使用 wbpro-list，但当前真站结构能由 woo-panel-main
+  // 区分：只有详情面板中、直接挂在虚拟行内容层下的 wbpro-list > item1，才允许
+  // 虚拟补位；用户页嵌套评论继续走普通 DOM 折叠。
   function virtualCommentRowOf(container) {
     const row = virtualRowOf(container);
     if (!row) return null;
@@ -1646,6 +1715,12 @@
     const content = row.firstElementChild;
     if (!comment || !content || !row.contains(comment)) return null;
     if (comment.parentElement === row || comment.parentElement === content) return row;
+    const detailListComment = comment.classList && comment.classList.contains('item1')
+      && comment.parentElement && comment.parentElement.classList
+      && comment.parentElement.classList.contains('wbpro-list')
+      && comment.parentElement.parentElement === content
+      && row.closest && row.closest('.woo-panel-main');
+    if (detailListComment) return row;
     if (runtimeDiagnostics) virtualDiagnostic('weiboNestedVirtualRowsIgnored');
     return null;
   }
@@ -1745,6 +1820,7 @@
       : state.baselineValue;
     const desiredPriority = state.baselinePriority || '';
     if (currentValue !== desiredValue || currentPriority !== desiredPriority) {
+      virtualOwnContentWrites.set(content, { value: desiredValue, priority: desiredPriority });
       virtualDiagnostic('virtualSyncStyleWrites');
       if (desiredValue) content.style.setProperty('transform', desiredValue, desiredPriority);
       else content.style.removeProperty('transform');
@@ -2150,7 +2226,10 @@
           const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
           if (row) {
             virtualRowHeightStates.delete(row);
-            queueVirtualRowSync(row, false, 'structure');
+            refreshVirtualListObserver(virtualRowListOf(row));
+            // 内容节点被回收器替换时，平台通常会先清掉内容层 transform，
+            // 也必须在下一帧恢复当前隐藏高度的补位，不能走平台静默延迟。
+            queueVirtualRowSync(row, true, 'structure');
           }
         }
         }

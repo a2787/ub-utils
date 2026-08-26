@@ -1,14 +1,15 @@
 /*
  * 微博虚拟列表回放/压力回归。
  *
- * 夹具来源：2026-08-24 用户 Chrome 微博详情页的只读 DOM 契约捕获，已将作者、UID、
- * 文案和页面标识替换为人工合成值。它保留真正影响补位的层级：
- * vue-recycle-scroller__item-view > wbpro-scroller-item > item2，以及平台回收行的
- * opacity:0/translateY(-9999px)。另外模拟登录态首轮给 item-view 写入临时超大高度，
- * 并让平台周期性把后续行 transform 写回约 -20000px 或科学计数法异常值。
+ * 夹具来源：2026-08-24 至 2026-08-26 用户 Chrome 微博详情页的只读 DOM 契约捕获，
+ * 已将作者、UID、文案和页面标识替换为人工合成值。它保留真正影响补位的层级：
+ * vue-recycle-scroller__item-view > wbpro-scroller-item > item2，以及详情页顶层
+ * item1 外包的直接子级 wbpro-list；同时保留平台回收行的 opacity:0/translateY(-9999px)。
+ * 另外模拟登录态首轮给 item-view 写入临时超大高度，并让平台周期性把后续行 transform
+ * 写回约 -20000px 或科学计数法异常值。
  *
  * 默认运行当前工作区源码：node test/weibo-replay.cjs
- * 旧版可失败性：node test/weibo-replay.cjs --git-ref=v0.37.0
+ * 旧版可失败性：node test/weibo-replay.cjs --git-ref=v0.38.0
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { execFileSync } = require('child_process');
@@ -84,6 +85,22 @@ const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><bod
   ${topRow('translateY(-19846px)', '100013', '顶层后续作者二', 110, ' !important', 5)}
   <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0"><div class="wbpro-scroller-item" data-index="17" data-active="false" style="height:63px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100014" usercard="100014">非活动回收作者</a></div></div></div></div></div></div>
 </div></div></div></body></html>`;
+
+// 2026-08-26 专用 Chrome 微博帖子详情页的另一种真实层级：顶层评论的
+// item1 外面还有一个直接挂在 wbpro-scroller-item 下的 wbpro-list。用户主页
+// 的帖子内评论也有 wbpro-list，但它们嵌在整条帖子的回收行中，不能共用这条
+// 详情页虚拟补位路径；因此夹具显式放在 woo-panel-main 下区分两种场景。
+const detailTopRow = (transform, uid, label) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:${transform} translateX(0px);opacity:1">
+    <div class="wbpro-scroller-item" style="display:flex">
+      <div class="wbpro-list"><div class="item1" style="min-height:72px;box-sizing:border-box"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${uid}" usercard="${uid}">${label}</a><span>详情页评论正文</span></div><div class="info"><div class="opt"></div></div></div></div></div></div>
+    </div>
+  </div>`;
+const detailFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="woo-panel-main"><div class="detail-comment-region"><div class="vue-recycle-scroller ready page-mode"><div class="vue-recycle-scroller__item-wrapper" style="min-height:216px">
+  ${detailTopRow('translateY(0px)', '100010', '详情页前置作者')}
+  ${detailTopRow('translateY(72px)', '100001', '详情页被屏蔽作者')}
+  ${detailTopRow('translateY(144px)', '100002', '详情页后续作者')}
+</div></div></div></div></body></html>`;
 
 // 2026-08-25 专用 Chrome 微博个人页展开评论的真实层级回放：帖子本身位于
 // item-view > wbpro-scroller-item，帖子内的评论才位于其更深处的 wbpro-list > item1。
@@ -402,12 +419,96 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const wrapperRestored = wrapper ? wrapper.getBoundingClientRect().height === 400 : false;
       return { afterBlock, hugeActive, expected, wrapperAfterBlock, wrapperRestored, restored, diagnosticsBeforeRestore, diagnostics: window.OB.diagnostics };
     });
+    // 平台可能把 spacer 恢复为原始总高；只要内容层已经连续补位，额外高度
+    // 只会出现在列表尾部，不属于评论中间空洞，因此允许 337（已补偿）或
+    // 400（平台原始基线）之间的结果，避免把平台保留的尾部余量误判为回归。
     if (!top.hugeActive && top.expected && !top.restored.downstreamHuge
-      && top.wrapperAfterBlock === 337 && top.wrapperRestored
+      && top.wrapperAfterBlock >= 337 && top.wrapperAfterBlock <= 400 && top.wrapperRestored
       && top.restored.nextY === 227 && top.restored.downstreamY === 290) {
       report.pass.push('顶层虚拟评论回放：异常超大 transform 被恢复为连续位置，平台反复回写后仍补位，撤销恢复');
     } else report.fail.push('顶层虚拟评论回放失败：' + JSON.stringify(top));
     await topPage.close();
+
+    const detailPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await detailPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: detailFixture }));
+    await detailPage.addInitScript({ content: shim + '\n' + userscript });
+    await detailPage.goto('https://weibo.com/detail-comment-replay', { waitUntil: 'domcontentloaded' });
+    await detailPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(600);
+    const detail = await detailPage.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const wrapper = document.querySelector('.vue-recycle-scroller__item-wrapper');
+      const target = rows[1];
+      const next = rows[2];
+      const targetItem = target && target.querySelector('.wbpro-list > .item1');
+      return {
+        rowCount: rows.length,
+        targetBlocked: !!targetItem && targetItem.hasAttribute('data-ob-blocked'),
+        targetHeight: targetItem ? targetItem.getBoundingClientRect().height : -1,
+        targetOuterTop: target ? target.getBoundingClientRect().top : NaN,
+        nextOuterTop: next ? next.getBoundingClientRect().top : NaN,
+        nextContentTop: next && next.firstElementChild ? next.firstElementChild.getBoundingClientRect().top : NaN,
+        nextContentTransform: next && next.firstElementChild ? next.firstElementChild.style.getPropertyValue('transform') : '',
+        wrapperHeight: wrapper ? wrapper.getBoundingClientRect().height : 0,
+        virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+        nestedIgnored: window.OB.diagnostics ? window.OB.diagnostics.weiboNestedVirtualRowsIgnored : 0,
+      };
+    });
+    const detailPass = detail.rowCount === 3 && detail.targetBlocked && detail.targetHeight === 0
+      && Math.abs(detail.nextContentTop - detail.targetOuterTop) <= 1
+      && /translateY\(-?72px\)/.test(detail.nextContentTransform)
+      && detail.wrapperHeight === 144 && detail.virtualSyncs > 0;
+    if (detailPass) {
+      report.pass.push('详情页 wbpro-list 顶层评论回放：隐藏行补位到后续内容层，用户主页嵌套保护仍独立');
+    } else report.fail.push('详情页 wbpro-list 顶层评论补位失败：' + JSON.stringify(detail));
+
+    const detailRecycle = await detailPage.evaluate(async () => {
+      const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = () => Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const target = rows()[1];
+      const next = rows()[2];
+      const wrapper = rows()[0] && rows()[0].parentElement;
+      if (!target || !next || !wrapper || !next.firstElementChild) return { error: 'missing detail recycle rows' };
+      // 模拟微博把下一条物理行回收到占位位置；回收时内容层的本地
+      // transform 会被平台清掉，重新激活后必须在同一批次观察回调内补回。
+      next.style.setProperty('transform', 'translateY(-9999px) translateX(0px)', '');
+      next.style.setProperty('opacity', '0', '');
+      next.firstElementChild.style.removeProperty('transform');
+      await sleepInPage(180);
+      next.style.setProperty('transform', 'translateY(144px) translateX(0px)', '');
+      next.style.setProperty('opacity', '1', '');
+      next.firstElementChild.style.removeProperty('transform');
+      await sleepInPage(60);
+      const targetTop = target.getBoundingClientRect().top;
+      const nextContent = next.firstElementChild.getBoundingClientRect();
+      // 另一条真实路径：微博只重绘内容层，外层 item-view 的 transform
+      // 不变。专用观察器也必须捕获这个 style 写回并恢复补位。
+      next.firstElementChild.style.removeProperty('transform');
+      await sleepInPage(60);
+      const contentMutationTop = next.firstElementChild.getBoundingClientRect().top;
+      const contentMutationTransform = next.firstElementChild.style.getPropertyValue('transform');
+      return {
+        targetTop,
+        nextOuterTop: next.getBoundingClientRect().top,
+        nextContentTop: nextContent.top,
+        nextContentTransform: next.firstElementChild.style.getPropertyValue('transform'),
+        contentMutationTop,
+        contentMutationTransform,
+        contentMutationRestored: /translateY\(-?72px\)/.test(contentMutationTransform),
+        wrapperHeight: wrapper.getBoundingClientRect().height,
+        virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+      };
+    });
+    const detailRecyclePass = detailRecycle && !detailRecycle.error
+      && Math.abs(detailRecycle.nextContentTop - detailRecycle.targetTop) <= 1
+      && /translateY\(-?72px\)/.test(detailRecycle.nextContentTransform)
+      && detailRecycle.wrapperHeight === 144
+      && detailRecycle.contentMutationRestored
+      && Math.abs(detailRecycle.contentMutationTop - detailRecycle.targetTop) <= 1;
+    if (detailRecyclePass) {
+      report.pass.push('详情页回收行重新激活回放：内容层 transform 在观察回调内恢复，不出现隐藏行高度空洞');
+    } else report.fail.push('详情页回收行重新激活补位失败：' + JSON.stringify(detailRecycle));
+    await detailPage.close();
 
     const feedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await feedPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: feedFixture }));
