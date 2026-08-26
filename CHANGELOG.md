@@ -20,7 +20,9 @@
 
 ### 版本/发布状态
 
-- 当前候选使用 `@version 0.37.0`，构建标识为 `0.37.0-weibo-virtual-content-offset-douyin-manager`；待本轮最终门禁通过后发布。
+- `v0.37.0` 已发布；提交 `915c333` 已推送到 `origin/master`，`v0.37.0` tag 已创建并推送，GitHub Release 已发布：
+  <https://github.com/a2787/ub-utils/releases/tag/v0.37.0>。构建标识为 `0.37.0-weibo-virtual-content-offset-douyin-manager`；
+  既有 `v0.35.0`、`v0.36.0` 保留，未覆盖。
 
 ## 0.36.0 - 2026-08-25
 

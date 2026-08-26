@@ -124,12 +124,13 @@
 
 **版本/发布状态**
 
-- 当前工作区候选为 `v0.37.0`，尚未提交、推送、创建 tag 或 GitHub Release；既有 `v0.35.0`、`v0.36.0` 不覆盖。
+- `v0.37.0` 已发布：提交 `915c333` 已推送到 `origin/master`，`v0.37.0` tag 已创建并推送，GitHub Release：
+  <https://github.com/a2787/ub-utils/releases/tag/v0.37.0>。既有 `v0.35.0`、`v0.36.0` 不覆盖。
 
 **下一步最有价值的验证**
 
-完成版本定稿后的完整本地矩阵和专用 Chrome 短时复核；全部通过后，显式暂存本轮文件、审阅 staged diff，再提交并发布
-`v0.37.0`。
+用户在 Tampermonkey 中更新到 `0.37.0`，刷新微博详情页，确认齿轮上的运行标识为
+`0.37.0-weibo-virtual-content-offset-douyin-manager`，再观察本地屏蔽评论后的补位和长时间滚动。
 
 ### 2026-08-25 - v0.36.0 - 已安装用户更新号修订
 
