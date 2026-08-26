@@ -26,7 +26,11 @@ const durationArg = process.argv.find((arg) => arg.startsWith('--duration='));
 const durationSeconds = Math.max(5, Math.min(600, Number(durationArg ? durationArg.slice(11) : 90) || 90));
 const scenarioArg = process.argv.find((arg) => arg.startsWith('--scenario='));
 const scenario = scenarioArg ? scenarioArg.slice(11) : 'all';
-const KEEP_TARGET = true;
+const expandArg = process.argv.find((arg) => arg.startsWith('--expand-comment-index='));
+const expandCommentIndex = expandArg ? Math.max(0, Number(expandArg.slice('--expand-comment-index='.length)) || 0) : -1;
+const blockArg = process.argv.find((arg) => arg.startsWith('--block-comment-index='));
+const blockCommentIndex = blockArg ? Math.max(0, Number(blockArg.slice('--block-comment-index='.length)) || 0) : 0;
+const disableAutoScroll = process.argv.includes('--no-scroll');
 
 function redactUrl(value) {
   try {
@@ -190,10 +194,11 @@ function candidateProbeScript(block) {
     '.wbpro-layer .vue-recycle-scroller__item-view > .item2',
     '[node-type="reply_list"] .item2',
   ].join(',');
-  const target = Array.from(document.querySelectorAll(selectors)).find((node) => {
+  const candidates = Array.from(document.querySelectorAll(selectors)).filter((node) => {
     const info = adapter.extract(node);
     return !!(info && info.keys && info.keys.length && !window.OB.Index.isBlocked(info.keys));
   });
+  const target = candidates[${blockCommentIndex}] || candidates[0];
   if (!target) return out;
   const info = adapter.extract(target);
   out.selected = !!(info && info.keys && info.keys.length);
@@ -203,6 +208,105 @@ function candidateProbeScript(block) {
     window.__OB_PROBE_BLOCK_TARGET__ = { node: target, keys: info.keys };
   }
   return out;
+})()`;
+}
+
+function expansionStateScript(articleIndex) {
+  return `
+(() => {
+  const articles = Array.from(document.querySelectorAll('article'));
+  const article = articles[${articleIndex}] || null;
+  const icon = article && article.querySelector('i[title="评论"], [aria-label="评论"]');
+  const target = icon && (icon.closest('div[class*="_item_"]') || icon.parentElement || icon);
+  if (!target) return { article: !!article, icon: !!icon, target: false };
+  target.scrollIntoView({ block: 'center', inline: 'nearest' });
+  const rect = target.getBoundingClientRect();
+  return { article: true, icon: true, target: true, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+})()`;
+}
+
+function installFlashMonitorScript() {
+  return `
+(() => {
+  const state = window.__OB_PROBE_BLOCK_TARGET__;
+  const target = state && state.node && state.node.isConnected ? state.node : null;
+  const row = target && target.closest('.vue-recycle-scroller__item-view');
+  const list = row && row.parentElement;
+  const monitor = { startedAt: performance.now(), samples: 0, signatureChanges: 0, targetStateChanges: 0, listMutationRecords: 0, listStyleMutations: 0, rowStyleMutations: 0, maxUnblockedEmptyRows: 0, maxVisibleGap: 0, lastSignature: '', targetStates: [], signatures: [], timer: 0, observer: null };
+  window.__OB_PROBE_FLASH__ = monitor;
+  if (!row || !list) return { installed: false, target: !!target, row: !!row, list: !!list };
+  const sample = () => {
+    const rows = Array.from(list.children || []).filter((item) => item.matches && item.matches('.vue-recycle-scroller__item-view'));
+    const measurements = rows.map((item) => {
+      const rect = item.getBoundingClientRect();
+      const contentRect = item.firstElementChild && item.firstElementChild.getBoundingClientRect();
+      const style = getComputedStyle(item);
+      return { item, rect, contentRect, style };
+    });
+    const entries = measurements.map(({ item, rect, contentRect, style }) => (
+      [Math.round(rect.top), Math.round(rect.height), contentRect ? Math.round(contentRect.top) : 0, contentRect ? Math.round(contentRect.height) : 0, item.style.getPropertyValue('transform'), style.display, style.visibility, item.style.getPropertyValue('opacity')].join(',')
+    ));
+    const unblockedEmptyRows = measurements.filter(({ item, contentRect, style }) => {
+      const inactive = item.style.getPropertyValue('opacity').trim() === '0'
+        || style.display === 'none' || style.visibility === 'hidden';
+      const blocked = !!item.querySelector('[data-ob-blocked="1"]');
+      return !inactive && !blocked && (!contentRect || contentRect.height <= 0);
+    }).length;
+    const visible = measurements.filter(({ item, contentRect, style }) => {
+      const inactive = item.style.getPropertyValue('opacity').trim() === '0'
+        || style.display === 'none' || style.visibility === 'hidden';
+      const blocked = !!item.querySelector('[data-ob-blocked="1"]');
+      return !inactive && !blocked && contentRect && contentRect.height > 0;
+    }).sort((left, right) => left.contentRect.top - right.contentRect.top);
+    let visibleGap = 0;
+    for (let index = 1; index < visible.length; index++) {
+      visibleGap = Math.max(visibleGap, visible[index].contentRect.top
+        - (visible[index - 1].contentRect.top + visible[index - 1].contentRect.height));
+    }
+    monitor.maxUnblockedEmptyRows = Math.max(monitor.maxUnblockedEmptyRows, unblockedEmptyRows);
+    monitor.maxVisibleGap = Math.max(monitor.maxVisibleGap, Math.round(Math.max(0, visibleGap)));
+    const signature = entries.join('|');
+    const hidden = target && (target.classList.contains('ob-hidden') || getComputedStyle(target).display === 'none' || target.getBoundingClientRect().height === 0);
+    monitor.samples++;
+    if (signature !== monitor.lastSignature) {
+      monitor.signatureChanges++;
+      monitor.lastSignature = signature;
+      if (monitor.signatures.length < 120) monitor.signatures.push({ at: Math.round(performance.now() - monitor.startedAt), rows: entries.length, signature });
+    }
+    const previous = monitor.targetStates.length ? monitor.targetStates[monitor.targetStates.length - 1].hidden : null;
+    if (previous !== hidden) {
+      monitor.targetStateChanges++;
+      if (monitor.targetStates.length < 120) monitor.targetStates.push({ at: Math.round(performance.now() - monitor.startedAt), hidden });
+    }
+  };
+  monitor.observer = new MutationObserver((records) => {
+    monitor.listMutationRecords += records.length;
+    for (const record of records) {
+      if (record.type !== 'attributes') continue;
+      if (record.target === list) monitor.listStyleMutations++;
+      else if (record.target.matches && record.target.matches('.vue-recycle-scroller__item-view')) monitor.rowStyleMutations++;
+    }
+  });
+  monitor.observer.observe(list, { childList: true, attributes: true, attributeFilter: ['style'] });
+  for (const item of list.children || []) {
+    if (item.matches && item.matches('.vue-recycle-scroller__item-view')) monitor.observer.observe(item, { attributes: true, attributeFilter: ['style'] });
+  }
+  sample();
+  monitor.timer = setInterval(sample, 50);
+  return { installed: true, target: true, row: true, list: true, rowCount: list.children.length };
+})()`;
+}
+
+function stopFlashMonitorScript() {
+  return `
+(() => {
+  const monitor = window.__OB_PROBE_FLASH__;
+  if (!monitor) return null;
+  if (monitor.timer) clearInterval(monitor.timer);
+  if (monitor.observer) monitor.observer.disconnect();
+  monitor.timer = 0;
+  monitor.observer = null;
+  return { ...monitor, signatures: monitor.signatures.slice(0, 120), targetStates: monitor.targetStates.slice(0, 120) };
 })()`;
 }
 
@@ -228,6 +332,23 @@ async function processMetrics(client) {
     const renderers = (result.processInfo || []).filter((item) => item.type === 'renderer');
     return { rendererCount: renderers.length, rendererCpuTime: renderers.reduce((sum, item) => sum + (Number(item.cpuTime) || 0), 0) };
   } catch (error) { return { error: String(error && error.message || error) }; }
+}
+
+async function expandCommentAction(client, sessionId, articleIndex) {
+  const point = await evaluate(client, sessionId, `return (${expansionStateScript(articleIndex).trim()});`, 3000);
+  if (!point || !point.target) return point;
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y }, sessionId, 2500);
+  await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 }, sessionId, 2500);
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 }, sessionId, 2500);
+  await sleep(2500);
+  return await evaluate(client, sessionId, `
+    return {
+      article: true,
+      commentLists: document.querySelectorAll('.wbpro-list').length,
+      rootComments: document.querySelectorAll('.wbpro-list > .item1').length,
+      virtualRows: document.querySelectorAll('.vue-recycle-scroller__item-view').length,
+    };
+  `, 3000);
 }
 
 async function heartbeat(client, sessionId, report) {
@@ -286,6 +407,13 @@ async function runScenario(client, url, name, inject, block) {
       report.blocked.push(report.page && report.page.captchaGate ? '验证码/安全验证拦截' : '登录页拦截');
       return report;
     }
+    if (inject && expandCommentIndex >= 0) {
+      report.commentExpansion = await expandCommentAction(client, report.sessionId, expandCommentIndex)
+        .catch((error) => ({ error: String(error && error.message || error).slice(0, 300) }));
+    }
+    if (inject && expandCommentIndex >= 0) {
+      report.page = await evaluate(client, report.sessionId, `return (${candidateProbeScript(block).trim()});`, 3000);
+    }
     if (inject && (!report.page.hasOmniBlock || report.page.sourceHash !== sourceHash
       || !report.page.runtime || report.page.runtime.version !== version
       || report.page.runtime.build !== build)) {
@@ -313,6 +441,8 @@ async function runScenario(client, url, name, inject, block) {
         await sleep(100);
       }
       if (!report.localBlock.hidden) report.blocked.push('内存本地屏蔽未在当前微博评论页确认');
+      report.flashMonitor = await evaluate(client, report.sessionId,
+        'return (' + installFlashMonitorScript().trim() + ');', 3000).catch((error) => ({ installed: false, error: String(error && error.message || error).slice(0, 300) }));
     }
     const initialScrollY = inject
       ? await evaluate(client, report.sessionId, 'return Number(window.scrollY || 0)', 1500).catch(() => 0)
@@ -321,7 +451,7 @@ async function runScenario(client, url, name, inject, block) {
     let nextScrollAt = Date.now() + 5000;
     while (Date.now() < deadline) {
       await heartbeat(client, report.sessionId, report);
-      if (inject && Date.now() >= nextScrollAt) {
+      if (inject && !disableAutoScroll && Date.now() >= nextScrollAt) {
         await evaluate(client, report.sessionId,
           `window.scrollBy(0, 700); setTimeout(() => window.scrollTo(0, ${initialScrollY}), 900); return true`, 1500)
           .catch(() => {});
@@ -335,6 +465,13 @@ async function runScenario(client, url, name, inject, block) {
       'return window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null', 1500).catch(() => null);
     report.longtasks = await evaluate(client, report.sessionId,
       'return window.__OB_PROBE_LONGTASKS__ || null', 1500).catch(() => null);
+    if (block) {
+      report.flash = await evaluate(client, report.sessionId,
+        'return (' + stopFlashMonitorScript().trim() + ');', 2500).catch(() => null);
+      if (report.flash && report.flash.maxUnblockedEmptyRows > 0) {
+        report.blocked.push('采样到未屏蔽活动虚拟行零高度');
+      }
+    }
     const latencies = report.heartbeats.map((item) => item.latencyMs).sort((a, b) => a - b);
     report.p95HeartbeatMs = latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] : null;
     if (report.heartbeatErrors.length) report.blocked.push('页面心跳出现 CDP 超时，标签页已保留');

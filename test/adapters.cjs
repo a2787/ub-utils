@@ -762,6 +762,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const nextVirtualRow = nextReplyRow.closest('.vue-recycle-scroller__item-view');
       const recycledVirtualRow = recycledReplyRow && recycledReplyRow.closest('.vue-recycle-scroller__item-view');
       const nextBeforeTop = nextReplyRow.getBoundingClientRect().top;
+      const nextBeforeContentTransform = nextVirtualRow && nextVirtualRow.firstElementChild
+        ? nextVirtualRow.firstElementChild.style.getPropertyValue('transform') : '';
       const nextOriginalTransform = nextVirtualRow && nextVirtualRow.style.getPropertyValue('transform');
       const recycledOriginalTransform = recycledVirtualRow && recycledVirtualRow.style.getPropertyValue('transform');
       const recycledOriginalPriority = recycledVirtualRow && recycledVirtualRow.style.getPropertyPriority('transform');
@@ -770,6 +772,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       let recycledRowUntouched = false;
       let virtualRowStyleMutationCount = 0;
       let nextFinalTop = null;
+      let nextFinalContentTransform = '';
       if (replyButton) {
         replyButton.click();
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -800,12 +803,14 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         }
         const toast = document.getElementById('ob-toast');
         if (toast) toast.querySelector('button').click();
-        await new Promise((resolve) => setTimeout(resolve, 140));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         restored = !window.OB.Index.isBlocked('weibo:uid:123460002')
           && replyRow.getBoundingClientRect().height > 0;
         wrapperRestored = !!replyWrapper && replyWrapper.getBoundingClientRect().height > 0;
         nextRestored = Math.abs(nextReplyRow.getBoundingClientRect().top - nextBeforeTop) < 1;
         nextFinalTop = nextReplyRow.getBoundingClientRect().top;
+        nextFinalContentTransform = nextVirtualRow && nextVirtualRow.firstElementChild
+          ? nextVirtualRow.firstElementChild.style.getPropertyValue('transform') : '';
       }
       return {
         fixtureOk: true,
@@ -827,6 +832,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         nextRestored,
         nextBeforeTop,
         nextFinalTop,
+        nextBeforeContentTransform,
+        nextFinalContentTransform,
         restored,
         wrapperRestored,
       };
@@ -841,7 +848,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboModal.rootVisible && weiboModal.nextMovedUp && weiboModal.restored && weiboModal.wrapperRestored
       && weiboModal.virtualRowReconciled && weiboModal.virtualRowStyleMutationCount <= 4
       && weiboModal.recycledRowUntouched
-      && weiboModal.nextRestored) {
+      && weiboModal.nextRestored
+      && weiboModal.nextFinalContentTransform === weiboModal.nextBeforeContentTransform) {
       report.pass.push('weibo-reply-modal: scroller-wrapped replies in the expand dialog resolve identity, get inline entries, hide independently and restore');
     } else report.fail.push('weibo-reply-modal: ' + JSON.stringify(weiboModal));
     await modalPage.close();

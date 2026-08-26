@@ -386,6 +386,8 @@ async function pickWeiboDetailTarget(browser, candidates) {
               const nextVirtualRow = siblings().slice(targetIndex + 1)
                 .find((candidate) => !inactive(candidate) && topCommentOf(candidate));
               const nextBeforeTop = nextVirtualRow ? nextVirtualRow.getBoundingClientRect().top : NaN;
+              const nextBeforeContentTop = nextVirtualRow && nextVirtualRow.firstElementChild
+                ? nextVirtualRow.firstElementChild.getBoundingClientRect().top : NaN;
               const targetHeight = rowHeight(targetVirtualRow);
               const listBefore = sizeOf(list);
               const inlineBefore = inlineSizeOf(list);
@@ -419,11 +421,17 @@ async function pickWeiboDetailTarget(browser, candidates) {
                   .filter((height) => Number.isFinite(height) && height > 0);
                 const stableFor500ms = sampleHeights.length > 0
                   && sampleHeights.every((height) => Math.abs(height - expectedListHeight) <= 3);
-                const spacerCompensated = targetHidden && targetHeight > 0
-                  && Math.abs(spacerDelta - targetHeight) <= 3 && stableFor500ms;
+                const stableAtPlatformBaseline = sampleHeights.length > 0
+                  && sampleHeights.every((height) => Math.abs(height - listBefore) <= 3);
                 const nextAfterTop = liveNext ? liveNext.getBoundingClientRect().top : NaN;
-                const nextShifted = Number.isFinite(nextBeforeTop) && Number.isFinite(nextAfterTop)
-                  ? nextAfterTop <= nextBeforeTop - targetHeight + 3 : true;
+                const nextAfterContentTop = liveNext && liveNext.firstElementChild
+                  ? liveNext.firstElementChild.getBoundingClientRect().top : NaN;
+                const contentCompensated = Number.isFinite(nextBeforeContentTop) && Number.isFinite(nextAfterContentTop)
+                  ? nextAfterContentTop <= nextBeforeContentTop - targetHeight + 3 : true;
+                const spacerCompensated = targetHidden && targetHeight > 0
+                  && ((Math.abs(spacerDelta - targetHeight) <= 3 && stableFor500ms)
+                    || (contentCompensated && stableAtPlatformBaseline));
+                const nextShifted = contentCompensated;
                 const diagnosticsBeforeUndo = window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null;
                 const topToast = document.getElementById('ob-toast');
                 const topUndo = topToast && topToast.querySelector('button');
@@ -452,6 +460,8 @@ async function pickWeiboDetailTarget(browser, candidates) {
                   listInfoAfter: listInfo(listAfter),
                   listSamples,
                   stableFor500ms,
+                  stableAtPlatformBaseline,
+                  contentCompensated,
                   spacerCompensated,
                   nextShifted,
                   spacerRestored,
@@ -475,7 +485,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
             result.errors.push(spacer.blocked);
           } else if (!spacer.attempted || !spacer.confirm || !spacer.spacerCompensated
             || !spacer.spacerRestored || !spacer.targetRestored) {
-            result.errors.push('验证失败：微博顶层虚拟评论隐藏后 spacer 未补位或撤销未恢复');
+            result.errors.push('验证失败：微博顶层虚拟评论隐藏后内容层未补位、spacer 振荡或撤销未恢复');
           }
           if (onDetail) {
             if (platform.identifiedRootCount && platform.rootButtonCount !== platform.identifiedRootCount) {

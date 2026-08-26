@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.36.0
+// @version       0.37.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.36.0-weibo-virtual-spacer-douyin-manager';
+  const RUNTIME_BUILD = '0.37.0-weibo-virtual-content-offset-douyin-manager';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1123,16 +1123,28 @@
       virtualSyncStyleWrites: 0,
       virtualObserverRecords: 0,
       virtualObserverIgnored: 0,
+      virtualRowPlatformMutations: 0,
+      virtualListOwnWritesIgnored: 0,
+      virtualRowOwnWritesIgnored: 0,
       virtualSyncThrottled: 0,
       virtualListObserverCallbacks: 0,
       virtualListPlatformMutations: 0,
       virtualListImmediateResyncs: 0,
+      weiboItemsHandled: 0,
+      weiboItemsMissingIdentity: 0,
+      weiboBlockTransitions: 0,
+      weiboUnblockTransitions: 0,
+      weiboUnmarkTransitions: 0,
+      virtualStaleBlockedRows: 0,
+      virtualListSamples: [],
       virtualLastList: null,
     } : null;
+  const virtualContentOffsetStates = new WeakMap();
   const VIRTUAL_ROW_SELECTOR = '.vue-recycle-scroller__item-view';
   const MAX_VIRTUAL_ROW_HEIGHT = 20000;
   const MAX_VIRTUAL_ROW_GAP = 4096;
   const VIRTUAL_SYNC_THROTTLE_MS = 100;
+  const VIRTUAL_PLATFORM_QUIET_MS = 120;
   const BLOCKED_WRAPPER_INLINE_PROPS = [
     'box-sizing', 'min-height', 'height', 'max-height', 'flex-basis',
     'padding', 'margin', 'border-width', 'overflow',
@@ -1204,6 +1216,7 @@
       force: false,
       lastSyncAt: 0,
       timer: 0,
+      platformTimer: 0,
       hiddenPixels: 0,
     };
     virtualListSyncStates.set(list, state);
@@ -1293,24 +1306,38 @@
           }
           if (record.type !== 'attributes') continue;
           if (record.target === list) {
-            if (ownVirtualListStyle(list)) virtualDiagnostic('virtualObserverIgnored');
+            if (ownVirtualListStyle(list)) {
+              virtualDiagnostic('virtualObserverIgnored');
+              virtualDiagnostic('virtualListOwnWritesIgnored');
+            }
             else {
               virtualDiagnostic('virtualListPlatformMutations');
-              const hiddenPixels = Number(state.hiddenPixels) || 0;
-              if (hiddenPixels > 0) {
-                virtualDiagnostic('virtualListImmediateResyncs');
-                // spacer 只依赖已缓存的屏蔽行高度；在当前 mutation 回调中纠正，
-                // 不等下一帧，避免平台基线在下一次绘制中留下空白。
-                syncVirtualListSize(list, hiddenPixels);
+              if (runtimeDiagnostics && runtimeDiagnostics.virtualListSamples.length < 240) {
+                const stateSnapshot = virtualListSyncStates.get(list);
+                const listState = virtualListInlineStates.get(list);
+                runtimeDiagnostics.virtualListSamples.push({
+                  at: Math.round((performance && performance.now ? performance.now() : Date.now())),
+                  current: list.style.getPropertyValue('min-height') || list.style.getPropertyValue('height'),
+                  applied: listState ? listState.appliedValue : '',
+                  base: listState ? listState.basePixels : 0,
+                  hidden: stateSnapshot ? stateSnapshot.hiddenPixels : 0,
+                });
               }
-              dirty = true;
+              // spacer 是平台自己的总高基线。正常补位已经在直接内容层完成，
+              // 单独的 spacer 回写不需要再次扫描全部虚拟行；主动屏蔽、撤销和
+              // 行/结构变化仍会通过 force 或对应的 row sync 进入协调器。
             }
           } else if (record.target.matches && record.target.matches(VIRTUAL_ROW_SELECTOR)) {
-            if (ownVirtualRowStyle(record.target)) virtualDiagnostic('virtualObserverIgnored');
-            else dirty = true;
+            if (ownVirtualRowStyle(record.target)) {
+              virtualDiagnostic('virtualObserverIgnored');
+              virtualDiagnostic('virtualRowOwnWritesIgnored');
+            } else {
+              virtualDiagnostic('virtualRowPlatformMutations');
+              dirty = true;
+            }
           }
         }
-        if (!state.blockedRows.size && !virtualListInlineStates.has(list)) {
+        if (!state.blockedRows.size && !virtualListInlineStates.has(list) && !state.pending) {
           detachVirtualListObserver(list);
           return;
         }
@@ -1324,6 +1351,7 @@
     const state = virtualListSyncStates.get(list);
     if (!state) return;
     if (state.timer) clearTimeout(state.timer);
+    if (state.platformTimer) clearTimeout(state.platformTimer);
     if (state.observer) state.observer.disconnect();
     pendingVirtualLists.delete(list);
     virtualListSyncStates.delete(list);
@@ -1337,7 +1365,14 @@
       const lists = Array.from(pendingVirtualLists);
       for (const list of lists) {
         const state = virtualListSyncStates.get(list);
-        if (!state || !state.pending) { pendingVirtualLists.delete(list); continue; }
+        if (!state) {
+          pendingVirtualLists.delete(list);
+          continue;
+        }
+        if (!state.pending) {
+          pendingVirtualLists.delete(list);
+          continue;
+        }
         if (!list.isConnected) { detachVirtualListObserver(list); continue; }
         const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
         const elapsed = now - state.lastSyncAt;
@@ -1360,6 +1395,12 @@
         if (firstRow) syncVirtualRowOffsets(firstRow);
         if (!virtualListHasBlockedWork(list)) detachVirtualListObserver(list);
       }
+      // 扫描器可能在同一个 rAF 中撤销屏蔽并重新把列表加入 pending 集合。
+      // 当前 flush 已经取过快照时，必须再排一次，否则撤销后的内容层位移会
+      // 留在旧值，表现为评论已经恢复但后续评论仍停在上移后的位置。
+      if (pendingVirtualLists.size) {
+        requestVirtualSyncFlush();
+      }
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
     else setTimeout(flush, 0);
@@ -1372,6 +1413,18 @@
     state.force = state.force || force;
     pendingVirtualLists.add(list);
     virtualDiagnostic('virtualSyncQueued');
+    if (reason !== 'platform' && state.platformTimer) {
+      clearTimeout(state.platformTimer);
+      state.platformTimer = 0;
+    }
+    if (!force && reason === 'platform') {
+      if (state.platformTimer) clearTimeout(state.platformTimer);
+      state.platformTimer = setTimeout(() => {
+        state.platformTimer = 0;
+        requestVirtualSyncFlush();
+      }, VIRTUAL_PLATFORM_QUIET_MS);
+      return;
+    }
     const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
     const elapsed = now - state.lastSyncAt;
     if (force || state.lastSyncAt <= 0 || elapsed >= VIRTUAL_SYNC_THROTTLE_MS) {
@@ -1431,6 +1484,7 @@
       basePixels,
       appliedValue: list.style.getPropertyValue(prop),
       appliedPriority: list.style.getPropertyPriority(prop),
+      appliedHiddenPixels: 0,
     });
     return list;
   }
@@ -1447,18 +1501,25 @@
     if (!state || !state.prop) return;
     const currentValue = list.style.getPropertyValue(state.prop);
     const currentPriority = list.style.getPropertyPriority(state.prop);
+    const normalizedHiddenPixels = Math.max(0, hiddenPixels);
+    const hiddenPixelsChanged = state.appliedHiddenPixels !== normalizedHiddenPixels;
     if (currentValue !== state.appliedValue || currentPriority !== state.appliedPriority) {
       const computed = window.getComputedStyle ? getComputedStyle(list) : null;
       const observedPixels = parseVirtualListPixels(currentValue)
         || parseVirtualListPixels(computed && computed.getPropertyValue(state.prop));
-      const expectedCompensated = Math.max(0, state.basePixels - hiddenPixels);
-      // 平台重排通常把原始总高重新写回；若它已经写入脚本的补偿后高度，
-      // 则保留现有基线，避免重复扣减。
-      if (observedPixels > 0 && Math.abs(observedPixels - expectedCompensated) > 1) {
+      // 平台回收器可能把 spacer 恢复为同一个原始基线。隐藏行已经由内容层
+      // 位移完成可见补位时，不再和它反复争夺同一个 style；只有隐藏高度变化
+      // 或平台确实建立了新的总高基线时才重新计算一次。
+      if (!hiddenPixelsChanged && observedPixels > 0
+        && Math.abs(observedPixels - state.basePixels) <= 1) {
+        state.appliedValue = currentValue;
+        state.appliedPriority = currentPriority;
+        return;
+      }
+      if (observedPixels > 0 && Math.abs(observedPixels - state.basePixels) > 1) {
         state.basePixels = observedPixels;
       }
     }
-    const normalizedHiddenPixels = Math.max(0, hiddenPixels);
     const expectedCompensated = Math.max(0, state.basePixels - normalizedHiddenPixels);
     const desiredPixels = expectedCompensated;
     const desiredValue = desiredPixels + 'px';
@@ -1485,6 +1546,7 @@
     }
     state.appliedValue = desiredValue;
     state.appliedPriority = state.originalPriority;
+    state.appliedHiddenPixels = normalizedHiddenPixels;
     if (runtimeDiagnostics) {
       runtimeDiagnostics.virtualLastList.afterValue = list.style.getPropertyValue(state.prop);
       runtimeDiagnostics.virtualLastList.afterPriority = list.style.getPropertyPriority(state.prop);
@@ -1618,6 +1680,62 @@
     return state;
   }
 
+  function shiftVirtualContentTransform(value, offset) {
+    const amount = Number(offset);
+    if (!(amount > 0)) return String(value || '');
+    const text = String(value || '').trim();
+    if (!text || text === 'none') return 'translateY(' + (-amount) + 'px)';
+    const translate3d = text.match(/translate3d\(\s*(-?(?:\d+(?:\.\d*)?|\.\d+))px\s*,\s*(-?(?:\d+(?:\.\d*)?|\.\d+))px\s*,\s*(-?(?:\d+(?:\.\d*)?|\.\d+))px\s*\)/i);
+    if (translate3d) {
+      const nextY = Number(translate3d[2]) - amount;
+      return text.replace(translate3d[0], 'translate3d(' + translate3d[1] + 'px, ' + nextY + 'px, ' + translate3d[3] + 'px)');
+    }
+    const shifted = shiftTranslateY(text, amount);
+    return shifted || (text + ' translateY(' + (-amount) + 'px)');
+  }
+
+  // 外层 item-view 的 transform 是微博回收器的控制面：脚本改它会立刻触发
+  // 回收器重排，回收器再写回原值，最终形成频闪。正常补位只移动直接内容层，
+  // 保留外层 transform 供异常基线修复使用。
+  function syncVirtualContentOffset(row, offset) {
+    if (!row || !row.firstElementChild) return;
+    const content = row.firstElementChild;
+    const amount = Number(offset) > 0 ? Number(offset) : 0;
+    let state = virtualContentOffsetStates.get(content);
+    const currentValue = content.style.getPropertyValue('transform');
+    const currentPriority = content.style.getPropertyPriority('transform');
+    if (state && (currentValue !== state.appliedValue || currentPriority !== state.appliedPriority)) {
+      // 内容节点可能被平台复用并写入新的基线；不要把旧的本地位移
+      // 当成平台 transform 继续叠加。
+      state.baselineValue = currentValue;
+      state.baselinePriority = currentPriority;
+      state.appliedValue = '';
+      state.appliedPriority = '';
+    }
+    if (!state && amount > 0) {
+      state = {
+        baselineValue: currentValue,
+        baselinePriority: currentPriority,
+        appliedValue: '',
+        appliedPriority: '',
+      };
+      virtualContentOffsetStates.set(content, state);
+    }
+    if (!state) return;
+    const desiredValue = amount > 0
+      ? shiftVirtualContentTransform(state.baselineValue, amount)
+      : state.baselineValue;
+    const desiredPriority = state.baselinePriority || '';
+    if (currentValue !== desiredValue || currentPriority !== desiredPriority) {
+      virtualDiagnostic('virtualSyncStyleWrites');
+      if (desiredValue) content.style.setProperty('transform', desiredValue, desiredPriority);
+      else content.style.removeProperty('transform');
+    }
+    state.appliedValue = desiredValue;
+    state.appliedPriority = desiredPriority;
+    if (amount === 0) virtualContentOffsetStates.delete(content);
+  }
+
   function restoreVirtualRowInlineStyle(row) {
     const state = virtualRowInlineStates.get(row);
     if (!state || !row.style) return;
@@ -1713,12 +1831,24 @@
           virtualRowInlineStates.delete(candidate);
         }
       }
+      let blockedByState = blockedVirtualRowStates.has(candidate);
+      if (blockedByState && !hiddenWeiboCommentInVirtualRow(candidate)) {
+        if (runtimeDiagnostics) virtualDiagnostic('virtualStaleBlockedRows');
+        // 回收器已经把这条物理行换成了新的评论，但身份扫描尚未完成时，
+        // 旧的屏蔽状态不能继续参与累计高度和后续行偏移；否则新评论会被
+        // 当成旧的屏蔽行，滚动后整段列表出现空洞。下一轮扫描若确认新身份
+        // 仍在名单中，会重新注册同一物理行。
+        blockedVirtualRowStates.delete(candidate);
+        const syncState = virtualListSyncStates.get(list);
+        if (syncState) syncState.blockedRows.delete(candidate);
+        blockedByState = false;
+      }
       return {
         candidate,
         source,
         y: readTranslateY(source),
         inactive,
-        blocked: blockedVirtualRowStates.has(candidate),
+        blocked: blockedByState,
         height: safeVirtualRowHeight(blockedVirtualRowStates.get(candidate)?.height)
           || safeVirtualRowHeight(readVirtualRowHeight(candidate)),
       };
@@ -1737,6 +1867,7 @@
       const entry = meta[i];
       if (entry.inactive) {
         // 保留平台的回收标记和原始 transform；等它重新变为活动行后再补位。
+        syncVirtualContentOffset(entry.candidate, 0);
         continue;
       }
 
@@ -1771,31 +1902,30 @@
         if (inferred > 0 && inferred <= MAX_VIRTUAL_ROW_HEIGHT) entry.height = inferred;
       }
 
-      const desiredY = Number.isFinite(baseY) ? baseY - shift : NaN;
-      if (Number.isFinite(desiredY) && (shift > 0 || abnormal)) {
-        const nextTransform = abnormal
-          ? setTranslateY(baseSource, desiredY)
-          : shiftTranslateY(baseSource, shift);
-        if (nextTransform) {
-          const state = virtualRowInlineState(entry.candidate);
-          if (abnormal && Number.isFinite(baseY)) {
-            state.value = baseSource;
-            state.priority = 'important';
-            state.safeValue = baseSource;
-            state.safePriority = 'important';
-            state.safeY = baseY;
-          }
-          if (entry.candidate.style.getPropertyValue('transform') !== nextTransform
-            || entry.candidate.style.getPropertyPriority('transform') !== 'important') {
-            virtualDiagnostic('virtualSyncStyleWrites');
-            entry.candidate.style.setProperty('transform', nextTransform, 'important');
-          }
-          state.applied = nextTransform;
-          state.appliedPriority = 'important';
+      if (abnormal && Number.isFinite(baseY)) {
+        // 异常的 -20000px/-1e6px 基线仍需修复外层回收行；正常的本地补位
+        // 不再写外层 transform，避免和微博回收器互相触发。
+        const nextTransform = setTranslateY(baseSource, baseY) || baseSource;
+        const state = virtualRowInlineState(entry.candidate);
+        state.value = nextTransform;
+        state.priority = 'important';
+        state.safeValue = nextTransform;
+        state.safePriority = 'important';
+        state.safeY = baseY;
+        if (entry.candidate.style.getPropertyValue('transform') !== nextTransform
+          || entry.candidate.style.getPropertyPriority('transform') !== 'important') {
+          virtualDiagnostic('virtualSyncStyleWrites');
+          entry.candidate.style.setProperty('transform', nextTransform, 'important');
         }
-      } else if (shift === 0 && virtualRowInlineStates.has(entry.candidate)) {
+        state.applied = nextTransform;
+        state.appliedPriority = 'important';
+      } else if (virtualRowInlineStates.has(entry.candidate)) {
         restoreVirtualRowInlineStyle(entry.candidate);
       }
+
+      // 真站 item-view 和其直接内容层均允许 overflow visible；把累计隐藏高度
+      // 放到内容层不会改变回收器的物理行位置，也不会触发它的外层 style 观察器。
+      syncVirtualContentOffset(entry.candidate, shift);
 
       if (entry.blocked) shift += Math.max(0, entry.height);
       if (Number.isFinite(baseY)) previousActive = { baseY, height: entry.height };
@@ -1901,7 +2031,7 @@
         blockedVirtualRowStates.delete(virtualRow);
         unregisterVirtualBlockedRow(virtualRow);
       } else registerVirtualBlockedRow(virtualRow);
-      queueVirtualRowSync(virtualRow, hadVirtualWork);
+      queueVirtualRowSync(virtualRow, hadVirtualWork, 'unmark');
     }
   }
 
@@ -1957,14 +2087,26 @@
   function handleItem(adapter, item) {
     const info = adapter.extract(item);
     const container = (info && adapter.containerOf && adapter.containerOf(item)) || (info && info.container) || item;
-    if (!info || !info.keys || !info.keys.length) { unmark(container); return; }
+    const wasBlocked = !!(container && (container.hasAttribute && container.hasAttribute('data-ob-blocked')));
+    if (adapter.id === 'weibo') virtualDiagnostic('weiboItemsHandled');
+    if (!info || !info.keys || !info.keys.length) {
+      if (adapter.id === 'weibo') {
+        virtualDiagnostic('weiboItemsMissingIdentity');
+        if (wasBlocked) virtualDiagnostic('weiboUnmarkTransitions');
+      }
+      unmark(container); return;
+    }
     if (Index.isBlocked(info.keys)) {
+      if (adapter.id === 'weibo' && !wasBlocked) virtualDiagnostic('weiboBlockTransitions');
       const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container) : null;
       if (virtualRow) rememberVirtualList(virtualRow);
       markBlocked(container, info.label, modeForItem(adapter, item));
       collapseBlockedWrappers(container);
-      if (virtualRow) queueVirtualRowSync(virtualRow);
-    } else unmark(container);
+      if (virtualRow) queueVirtualRowSync(virtualRow, true, 'block');
+    } else {
+      if (adapter.id === 'weibo' && wasBlocked) virtualDiagnostic('weiboUnblockTransitions');
+      unmark(container);
+    }
   }
 
   // ====================================================================
@@ -1989,7 +2131,7 @@
           const row = record.target && record.target.closest && record.target.closest(VIRTUAL_ROW_SELECTOR);
           if (row) {
             virtualRowHeightStates.delete(row);
-            queueVirtualRowSync(row);
+            queueVirtualRowSync(row, false, 'structure');
           }
         }
         }
