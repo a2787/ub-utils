@@ -117,7 +117,9 @@
 - 版本元数据更新后的专用详情页 90 秒回归已经完成：`sourceHash` 与 0.40.0 构建标识一致，
   `maxVisibleGap=0`、`maxUnblockedEmptyRows=0`、CDP 心跳 p95 4ms、无心跳错误；观察器记录 34 次立即重同步，
   没有产生自激心跳超时。
-- 用户已在专用 Chrome 保留页面中确认 v0.40.0 无问题；本次按既有授权继续提交、推送、创建 `v0.40.0` tag 和 GitHub Release。
+- 用户已在专用 Chrome 保留页面中确认 v0.40.0 无问题；提交
+  `46849119394b2595f7ec2281e490769c797b2422` 已推送到 `origin/master`，`v0.40.0` tag 已创建并推送，
+  GitHub Release：<https://github.com/a2787/ub-utils/releases/tag/v0.40.0>。
 
 **下一步验证**
 

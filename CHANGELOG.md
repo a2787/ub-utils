@@ -28,7 +28,9 @@
 
 ### 版本/发布状态
 
-- `0.40.0` 已通过用户在专用 Chrome 保留页面中的手工验收；本次按授权提交、推送、创建 tag 和 GitHub Release。
+- `0.40.0` 已通过用户在专用 Chrome 保留页面中的手工验收；提交
+  `46849119394b2595f7ec2281e490769c797b2422` 已推送到 `origin/master`，`v0.40.0` tag 已创建并推送，
+  GitHub Release：<https://github.com/a2787/ub-utils/releases/tag/v0.40.0>。
 
 ## 0.39.0 - 2026-08-26
 
