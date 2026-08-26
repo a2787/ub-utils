@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.37.0
+// @version       0.38.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.37.0-weibo-virtual-content-offset-douyin-manager';
+  const RUNTIME_BUILD = '0.38.0-weibo-nested-comment-guard-douyin-manager';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
@@ -1136,6 +1136,7 @@
       weiboUnblockTransitions: 0,
       weiboUnmarkTransitions: 0,
       virtualStaleBlockedRows: 0,
+      weiboNestedVirtualRowsIgnored: 0,
       virtualListSamples: [],
       virtualLastList: null,
     } : null;
@@ -1617,7 +1618,7 @@
   }
 
   function rememberVirtualRow(container) {
-    const row = virtualRowOf(container);
+    const row = virtualCommentRowOf(container);
     if (!row) return row;
     const existing = blockedVirtualRowStates.get(row);
     if (existing) {
@@ -1630,6 +1631,23 @@
     const height = readVirtualRowHeight(row);
     blockedVirtualRowStates.set(row, { height });
     return row;
+  }
+
+  // 用户页的帖子本身也可能位于 item-view > wbpro-scroller-item 中，但帖子内
+  // 展开的评论位于该内容层更深处的普通 wbpro-list。那条 item-view 是整条帖子，
+  // 不是评论虚拟行；若把它纳入补位，会移动整条帖子并和微博回收器形成闪动。
+  // 只有评论节点直接挂在 item-view 或其直接内容层下时，才允许虚拟补位。
+  function virtualCommentRowOf(container) {
+    const row = virtualRowOf(container);
+    if (!row) return null;
+    const commentSelector = '.item1,.item2,.card-review[comment_id]';
+    const comment = container.matches && container.matches(commentSelector)
+      ? container : (container.closest && container.closest(commentSelector));
+    const content = row.firstElementChild;
+    if (!comment || !content || !row.contains(comment)) return null;
+    if (comment.parentElement === row || comment.parentElement === content) return row;
+    if (runtimeDiagnostics) virtualDiagnostic('weiboNestedVirtualRowsIgnored');
+    return null;
   }
 
   function readVirtualRowHeight(row) {
@@ -2007,7 +2025,8 @@
 
   function unmark(container) {
     if (!container) return;
-    const virtualRow = virtualRowOf(container);
+    const isWeibo = currentAdapter && currentAdapter.id === 'weibo';
+    const virtualRow = isWeibo ? virtualCommentRowOf(container) : virtualRowOf(container);
     const virtualList = virtualRow && virtualRowListOf(virtualRow);
     const hadVirtualWork = !!virtualRow && (
       virtualRowInlineStates.has(virtualRow) || blockedVirtualRowStates.has(virtualRow)

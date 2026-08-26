@@ -8,7 +8,7 @@
  * 并让平台周期性把后续行 transform 写回约 -20000px 或科学计数法异常值。
  *
  * 默认运行当前工作区源码：node test/weibo-replay.cjs
- * 旧版可失败性：node test/weibo-replay.cjs --git-ref=v0.28.0
+ * 旧版可失败性：node test/weibo-replay.cjs --git-ref=v0.37.0
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { execFileSync } = require('child_process');
@@ -85,9 +85,10 @@ const topFixture = `<!doctype html><html><head><meta charset="utf-8"></head><bod
   <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(-9999px) translateX(0px);opacity:0"><div class="wbpro-scroller-item" data-index="17" data-active="false" style="height:63px !important"><div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100014" usercard="100014">非活动回收作者</a></div></div></div></div></div></div>
 </div></div></div></body></html>`;
 
-// 2026-08-25 专用 Chrome 微博个人页展开评论的真实层级回放：每个顶层评论
-// 都位于独立的 item-view > wbpro-scroller-item > wbpro-list > item1 中。
-// 这是人工合成夹具，只保留回收、补位和节点复用所需的结构。
+// 2026-08-25 专用 Chrome 微博个人页展开评论的真实层级回放：帖子本身位于
+// item-view > wbpro-scroller-item，帖子内的评论才位于其更深处的 wbpro-list > item1。
+// 这是人工合成夹具，只保留帖子回收和嵌套评论隐藏所需的结构；嵌套评论不能触发
+// 外层帖子的虚拟补位。
 const feedRow = (index, uid = 400000 + index, active = true) => `
   <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 72}px) translateX(0px);opacity:${active ? 1 : 0}">
     <div class="wbpro-scroller-item" style="box-sizing:border-box;height:72px !important">
@@ -185,7 +186,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       }, 45);
       await new Promise((resolve) => setTimeout(resolve, 700));
       clearInterval(timer);
-      await new Promise((resolve) => setTimeout(resolve, 180));
+      // 固定 sleep 在浏览器并行负载较高时可能早于最后一轮 rAF；等待明确的
+      // 补偿结果，仍保留超时，让未收敛的实现继续失败而不是放宽断言。
+      await new Promise((resolve) => {
+        const deadline = performance.now() + 1200;
+        const waitForCompensation = () => {
+          const wrapper = rows()[0] && rows()[0].parentElement;
+          const height = wrapper ? wrapper.getBoundingClientRect().height : 0;
+          if (Math.abs(height - 337) <= 1 || performance.now() >= deadline) return resolve();
+          setTimeout(waitForCompensation, 20);
+        };
+        waitForCompensation();
+      });
       const afterBlock = rows().map((row) => ({
         y: parseY(row),
         opacity: getComputedStyle(row).opacity,
@@ -413,8 +425,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         blocked: !!targetItem && targetItem.hasAttribute('data-ob-blocked'),
         blockedHeight: targetItem ? targetItem.getBoundingClientRect().height : -1,
         targetOuterTop: target ? target.getBoundingClientRect().top : NaN,
+        targetContentTop: target && target.firstElementChild ? target.firstElementChild.getBoundingClientRect().top : NaN,
+        targetContentTransform: target && target.firstElementChild ? target.firstElementChild.style.getPropertyValue('transform') : '',
+        nextOuterTop: next ? next.getBoundingClientRect().top : NaN,
         nextContentTop: next && next.firstElementChild ? next.firstElementChild.getBoundingClientRect().top : NaN,
         nextContentTransform: next && next.firstElementChild ? next.firstElementChild.style.getPropertyValue('transform') : '',
+        nestedIgnored: window.OB && window.OB.diagnostics
+          ? window.OB.diagnostics.weiboNestedVirtualRowsIgnored : 0,
       };
     });
     const feedRecycle = await feedPage.evaluate(async () => {
@@ -432,6 +449,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const placeholder = {
         targetHiddenState: !!target.querySelector('[data-ob-blocked="1"]'),
         targetOuterTop: target.getBoundingClientRect().top,
+        nextOuterTop: next.getBoundingClientRect().top,
         nextContentTop: next.firstElementChild ? next.firstElementChild.getBoundingClientRect().top : NaN,
         nextContentTransform: next.firstElementChild ? next.firstElementChild.style.getPropertyValue('transform') : '',
       };
@@ -441,6 +459,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const replacement = {
         visible: !!target.querySelector('.wbpro-list > .item1')
           && !target.querySelector('.wbpro-list > .item1').hasAttribute('data-ob-blocked'),
+        nextOuterTop: next.getBoundingClientRect().top,
         nextContentTop: next.firstElementChild ? next.firstElementChild.getBoundingClientRect().top : NaN,
         nextContentTransform: next.firstElementChild ? next.firstElementChild.style.getPropertyValue('transform') : '',
       };
@@ -448,16 +467,22 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     const feedPass = feedInitial.rowCount === 16 && feedInitial.blocked && feedInitial.blockedHeight === 0
       && Number.isFinite(feedInitial.targetOuterTop) && Number.isFinite(feedInitial.nextContentTop)
-      && Math.abs(feedInitial.nextContentTop - feedInitial.targetOuterTop) <= 1
-      && /translateY\(-?72px\)/.test(feedInitial.nextContentTransform)
+      && feedInitial.nestedIgnored > 0
+      && Math.abs(feedInitial.targetContentTop - feedInitial.targetOuterTop) <= 1
+      && Math.abs(feedInitial.nextOuterTop - feedInitial.targetOuterTop - 72) <= 2
+      && Math.abs(feedInitial.nextContentTop - feedInitial.nextOuterTop) <= 1
+      && !/translateY\(-?72px\)/.test(feedInitial.targetContentTransform)
+      && !/translateY\(-?72px\)/.test(feedInitial.nextContentTransform)
       && feedRecycle && !feedRecycle.error
       && !feedRecycle.placeholder.targetHiddenState
-      && Math.abs(feedRecycle.placeholder.nextContentTop - feedRecycle.placeholder.targetOuterTop - 72) <= 2
+      && Math.abs(feedRecycle.placeholder.nextOuterTop - feedRecycle.placeholder.targetOuterTop - 72) <= 2
+      && Math.abs(feedRecycle.placeholder.nextContentTop - feedRecycle.placeholder.nextOuterTop) <= 1
       && !/translateY\(-?72px\)/.test(feedRecycle.placeholder.nextContentTransform)
       && feedRecycle.replacement.visible
+      && Math.abs(feedRecycle.replacement.nextContentTop - feedRecycle.replacement.nextOuterTop) <= 1
       && !/translateY\(-?72px\)/.test(feedRecycle.replacement.nextContentTransform);
     if (feedPass) {
-      report.pass.push('个人页评论回放：独立顶层虚拟行补位连续，物理行复用后不会继承旧屏蔽空洞');
+      report.pass.push('个人页评论回放：嵌套评论不移动帖子虚拟行，物理行复用后不会继承旧屏蔽空洞');
     } else report.fail.push('个人页评论/回收复用失败：' + JSON.stringify({ feedInitial, feedRecycle }));
     await feedPage.close();
   } catch (error) {

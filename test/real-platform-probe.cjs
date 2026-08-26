@@ -302,6 +302,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
             // 这里专门检查 item-wrapper 的 min-height 是否随隐藏行扣减；只移动行的
             // transform 而不缩短这个 spacer，正是评论下方出现整段空白的原因。
             const topCommentOf = (virtualRow) => {
+              const content = virtualRow && virtualRow.firstElementChild;
               const candidates = Array.from(virtualRow.querySelectorAll('.item1,.item2,.card-review[comment_id]'));
               return candidates.find((comment) => {
                 let parent = comment.parentElement;
@@ -309,7 +310,11 @@ async function pickWeiboDetailTarget(browser, candidates) {
                   if (parent.matches && parent.matches('.item1,.item2,.card-review[comment_id]')) return false;
                   parent = parent.parentElement;
                 }
-                return comment.matches('.item1');
+                // 用户主页的帖子回收行也可能包含一个更深层的 wbpro-list；
+                // 那里的 item1 是帖内嵌套评论，不能拿外层 item-view 做顶层
+                // spacer/补位验证，否则探针会把“正确忽略嵌套行”误报成失败。
+                return comment.matches('.item1')
+                  && (comment.parentElement === virtualRow || comment.parentElement === content);
               }) || null;
             };
             const virtualRows = () => Array.from(document.querySelectorAll(
