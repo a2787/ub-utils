@@ -31,8 +31,8 @@
 
 ### 版本/发布状态
 
-- 当前为 `0.38.0` 发布候选；工作区验证和文档收口完成后，才创建与 userscript `@version` 一致的 `v0.38.0` tag
-  和 GitHub Release。
+- `v0.38.0` 已发布；提交 `0c94669` 已推送到 `origin/master`，`v0.38.0` tag 已创建并推送，GitHub Release：
+  <https://github.com/a2787/ub-utils/releases/tag/v0.38.0>。既有 `v0.37.0` 及更早版本保留，未覆盖。
 
 ## 0.37.0 - 2026-08-26
 
