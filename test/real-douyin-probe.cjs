@@ -213,6 +213,11 @@ if (commentFab) {
   out.commentManagerPresent = !!commentManager;
   out.commentSearchPresent = !!(commentManager && commentManager.querySelector('.ob-cm-search'));
   out.commentLoadPresent = !!(commentManager && commentManager.querySelector('.ob-cm-load-all'));
+  const commentScope = document.querySelector('#relatedVideoCard');
+  out.commentModalScopePresent = !!commentScope;
+  out.commentModalBulkCount = commentScope
+    ? commentScope.querySelectorAll('.ob-bulk[data-ob-kind="modal"]').length : 0;
+  out.commentModalBulkAbsent = !commentScope || out.commentModalBulkCount === 0;
   const commentRows = commentManager && commentManager.querySelectorAll('.ob-cm-row');
   out.commentManagerStaysOpen = !!commentManager && document.getElementById('ob-comment-manager') === commentManager;
   if (commentManager && commentRows && commentRows.length) {
@@ -446,6 +451,7 @@ async function runStabilityCheck(send, sessionId) {
       || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored
       || !probe.commentManagerPresent || !probe.commentManagerStaysOpen || !probe.commentSearchPresent || !probe.commentLoadPresent
       || probe.commentSearchWorks === false || !probe.commentBatchEnabled
+      || (probe.commentModalScopePresent && !probe.commentModalBulkAbsent)
       || !probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
       || !probe.blocked || !probe.hidden || !probe.restored || probe.noTarget) {
       report.blocked.push('抖音弹幕本地拉黑闭环未完成：' + JSON.stringify(probe));

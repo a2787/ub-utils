@@ -431,6 +431,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
       result.fabPresent = !!fab;
       result.fabRightColumn = !!fab && fab.style.left === 'auto' && fab.style.right === '14px' && fab.style.bottom === '106px';
+      result.commentModalBulkCount = document.querySelectorAll('#relatedVideoCard .ob-bulk[data-ob-kind="modal"]').length;
+      result.commentModalBulkAbsent = result.commentModalBulkCount === 0;
       const gear = document.querySelector('#ob-gear');
       result.gearRightColumn = !!gear && getComputedStyle(gear).right === '14px' && getComputedStyle(gear).bottom === '14px';
       if (!fab) return result;
@@ -551,6 +553,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 2 && dyComments.threadMenuCount === 1 && dyComments.menuConfirmHasRootAuthor
       && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
       && dyComments.fabRightColumn && dyComments.gearRightColumn
+      && dyComments.commentModalBulkAbsent
       && dyComments.initialRows >= 1 && dyComments.expandedRows >= 3 && dyComments.expandedAuthors
       && dyComments.commentSearchRows === 1 && dyComments.commentSearchMatch && dyComments.lazyCommentLoaded
       && dyComments.batchSelected && dyComments.allBlocked && dyComments.dmToolPresent && dyComments.dmToolVisible

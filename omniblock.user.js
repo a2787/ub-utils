@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.43.0-douyin-danmaku-video-session-guard';
+  const RUNTIME_BUILD = '0.43.0-douyin-comment-modal-manager-cleanup';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -3201,6 +3201,10 @@
         loadAll: loadAllCommentRecords,
         loadThread,
         isRootComment,
+        // `#relatedVideoCard.LookModalFrameFast` 同时承担评论侧栏和平台 Modal 语义；
+        // 它已经由统一管理器接管，不能再被通用 Modal 扫描器插入“拉黑全部”。
+        isScope: (root) => !!(root && root !== document && root.id === 'relatedVideoCard'
+          && querySelectorAllDeep(root, SEL.comment).length > 0),
       },
       rememberMenuContext: rememberCommentMenuContext,
       menuContextInfo,
@@ -3821,6 +3825,8 @@
         loadAll: loadAllCommentRecords,
         loadThread,
         isRootComment,
+        // 微博评论弹窗同样走统一多选管理器；含真实评论行的 Modal 不保留旧批量条。
+        isScope: (root) => !!(root && root !== document && querySelectorAllDeep(root, SEL.comment).length > 0),
       },
       canBulkModal(modal) {
         return querySelectorAllDeep(modal || document, WB_MODAL_USER_SEL)
@@ -4430,6 +4436,12 @@
         loadAll: fetchAllCommentAuthors,
         loadThread,
         isRootComment,
+        // 已接入统一多选管理器的评论承载层，不再显示旧的“拉黑全部”弹窗按钮。
+        isScope: (root) => {
+          if (!root || root === document) return false;
+          const tag = String(root.tagName || '').toLowerCase();
+          return tag === 'bili-comments' || querySelectorAllDeep(root, SEL.comment).length > 0;
+        },
       },
       containerOf: commentContainer,
       onScan: syncBiliAuthorButtons,
@@ -5752,6 +5764,19 @@
     }
     function tryModal(modal) {
       let btn = Array.from(modal.children || []).find((child) => child.matches && child.matches('.ob-bulk[data-ob-kind="modal"]')) || null;
+      // 评论区已经有统一的可多选管理器时，旧版通用“拉黑全部”条会造成两个入口，
+      // 且可能遮挡平台评论内容。适配器通过 isScope 明确声明哪些 Modal 是评论承载层；
+      // 命中时同时清理历史注入的按钮和标记，其他用户列表 Modal 仍保留原有入口。
+      let managedCommentScope = false;
+      try {
+        managedCommentScope = !!(a.commentManager && typeof a.commentManager.isScope === 'function'
+          && a.commentManager.isScope(modal));
+      } catch (error) { managedCommentScope = false; }
+      if (managedCommentScope) {
+        if (btn) btn.remove();
+        modal.removeAttribute('data-ob-bulk');
+        return;
+      }
       if (modal.hasAttribute('data-ob-bulk') && !isVisible(modal)) {
         // 弹窗被隐藏后复用（微博点赞/转发列表就是同一个节点反复显示）时，
         // 必须先清掉上一次的控件；此时按钮可能已被前端重绘删掉。

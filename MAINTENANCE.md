@@ -76,6 +76,61 @@
 
 ## 当前交接
 
+### 2026-08-27 - 0.43.0 未发布候选 - 清理已迁移评论 Modal 的旧批量条
+
+**范围**
+
+抖音评论区已经由右下角统一多选评论管理器接管，但评论侧栏同时带有平台 Modal 语义，旧版通用 Modal 扫描器
+仍会在其顶部插入红色「拉黑全部」条，造成重复入口和内容遮挡。本轮只清理已经接入统一评论管理器的评论承载层；
+其他用户列表 Modal 的通用批量入口不变。候选保持 `@version 0.43.0`，没有消耗新版本号。
+
+**改动文件**
+
+- `omniblock.user.js`：为抖音、B站、微博评论管理器增加 `isScope` 契约；通用 Modal 扫描命中评论承载层时，
+  删除历史或新注入的 `data-ob-kind="modal"` 批量条及标记，不影响非评论 Modal。构建标识为
+  `0.43.0-douyin-comment-modal-manager-cleanup`。
+- `test/adapters.cjs`：抖音评论侧栏增加“旧 Modal 批量条数量为 0”的回归；改动前旧行为为 1 个批量条并使
+  20/21 通过，改动后要求 21/21。
+- `test/real-douyin-probe.cjs`：真实登录态只读探针记录评论 Modal 是否存在及旧批量条数量，并在评论侧栏可确认时
+  将非零数量记为阻塞。
+- `README.md`：标明未发布候选的入口变化和版本边界。
+
+**证据**
+
+- **`structure regression`**：`node test/adapters.cjs` 改动前为 `PASS: 20 / FAIL: 1`，失败结果为
+  `commentModalBulkCount: 1`；当前候选为 `PASS: 21 / FAIL: 0`。其余适配器断言同时通过。
+- **`real-site verified`**：2026-08-27，在用户已登录的专用持久 Chrome（固定 `127.0.0.1:9222`）的脱敏抖音视频页
+  `douyin.com/jingxuan?...` 中直接注入当前候选，源码 SHA-256 为
+  `a60d06ff18b60f9ef47562ab1a81c8b90bc37bf11092c9724f7221581a198cb2`。评论承载层已捕获，评论 DOM/记录各为
+  10，旧 `data-ob-kind="modal"` 批量条为 `0`；统一评论管理器保持打开，搜索和多选可用。连续 10 秒采样 18 次，
+  心跳错误 `0`，评论数量从最低 20 增至最终 151，最大单次 CDP 响应延迟 149ms。探针只使用内存名单 stub，未读取
+  Cookie，未点击举报、官方拉黑、关注或其他平台写入控件。
+- **`blocked`**：2026-08-27，隔离公开探针 `node test/real-platform-probe.cjs douyin --verify-local` 被抖音验证码
+  中间页拦截，候选数和带身份条目数均为 `0`；因此该探针不作为本候选的真实行为通过证据。
+
+**检查**
+
+`node --check omniblock.user.js`、`node --check test/adapters.cjs`、`node --check test/real-douyin-probe.cjs`、
+`node test/comment-manager.cjs`（3/3）、`node test/quickblock.cjs`（32/32）、`node test/adapters.cjs`（21/21）、
+`node test/state.cjs`（7/7）、`node test/run.cjs`（14/14）、`node test/douyin.cjs`（2/2）、
+`node test/weibo-replay.cjs`（11/11）和 `git diff --check` 均通过。专用登录态探针
+`node test/real-douyin-probe.cjs --current --duration=10` 返回 `blocked: []`。
+
+**限制**
+
+真实站点证据覆盖本次专用 Chrome 中可见的评论侧栏；平台未来若改变侧栏根节点 ID，`isScope` 会安全地保留旧条
+而不会误删其他 Modal，但需要捕获新结构后再适配。未迁移到统一管理器的平台或非评论用户列表 Modal 仍保留原有
+「拉黑全部」入口。
+
+**发布**
+
+候选仅修改工作区，当前状态为未提交、未推送、未打 tag、未创建 Release；已发布的 `v0.43.0` 不受影响。
+
+**下一步验证**
+
+用户确认专用 Chrome 中只保留新的右下角多选评论入口后，再将候选版本提升为 `0.44.0`，同步 changelog 并按发布门禁
+提交、推送和创建 Release。
+
 ### 2026-08-27 - 0.43.0 - 抖音弹幕跨视频会话隔离
 
 **范围**
