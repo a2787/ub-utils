@@ -339,6 +339,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const dyCommentFixture = `<!doctype html><html><body>
       <!-- 人工合成：真实抖音评论侧栏的 #relatedVideoCard.LookModalFrameFast 结构。 -->
       <div id="relatedVideoCard" class="LookModalFrameFast" style="height:180px;overflow:auto">
+      <!-- 人工合成：2026-08-27 专用 Chrome 真站捕获的播放器容器；精选流切视频时
+           路由可不变，但容器 class 中的 video_<id> 会随当前视频变化。 -->
+      <div id="dy-player" class="basePlayerContainer video_1111111111111111111"></div>
       <!-- 人工合成：视频页可观察到的带发送者身份弹幕节点；同一作者出现两条，管理器应去重。 -->
       <div class="dy-danmaku-layer">
         <div id="dy-dm-one" data-danmu-id="dm-one" data-danmaku-user-id="900001">弹幕甲</div>
@@ -359,6 +362,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       </div>
       <script>
         const dyCard = document.getElementById('relatedVideoCard');
+        const dyPlayer = document.getElementById('dy-player');
+        const initialDmLayer = document.querySelector('.dy-danmaku-layer');
+        if (dyPlayer && initialDmLayer) dyPlayer.appendChild(initialDmLayer);
         dyCard.addEventListener('scroll', function () {
           if (dyCard.dataset.lazyLoaded || dyCard.scrollTop <= 0) return;
           dyCard.dataset.lazyLoaded = '1';
@@ -366,7 +372,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         });
         const dyVideo = document.createElement('video');
         dyVideo.id = 'dy-video';
-        document.body.appendChild(dyVideo);
+        if (dyPlayer) dyPlayer.appendChild(dyVideo); else document.body.appendChild(dyVideo);
         let dyVideoTime = 0;
         Object.defineProperty(dyVideo, 'duration', { configurable: true, value: 45 });
         Object.defineProperty(dyVideo, 'currentTime', {
@@ -521,13 +527,21 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       }
       const dmLayer = document.querySelector('.dy-danmaku-layer');
       if (dmLayer) dmLayer.remove();
-      history.pushState({}, '', '/video/fixture-two');
+      // 精选/推荐流的真实切换：URL 保持不变，只复用播放器并替换 video_<id>。
+      const dyPlayer = document.querySelector('#dy-player');
+      if (dyPlayer) {
+        dyPlayer.className = 'basePlayerContainer video_2222222222222222222';
+        dyPlayer.insertAdjacentHTML('beforeend', '<div class="dy-danmaku-layer"><div id="dy-dm-next" data-danmu-id="dm-next" data-danmaku-user-id="900004">新视频弹幕</div></div>');
+      }
       await pause(1050);
       result.dmResetText = dmTool && dmTool.textContent;
       if (dmTool) dmTool.click();
       await pause(100);
       const nextDmManager = document.querySelector('#ob-douyin-dm-manager');
       result.dmResetRows = nextDmManager ? nextDmManager.querySelectorAll('.ob-dd-row').length : -1;
+      result.dmResetOldAbsent = !!nextDmManager && !Array.from(nextDmManager.querySelectorAll('.ob-dd-row'))
+        .some((row) => ['douyin:uid:900001', 'douyin:uid:900002', 'douyin:uid:900003'].includes(row.getAttribute('data-key')));
+      result.dmResetNewPresent = !!nextDmManager && !!nextDmManager.querySelector('[data-key="douyin:uid:900004"]');
       if (nextDmManager) {
         const closeNextDm = nextDmManager.querySelector('.ob-dd-close');
         if (closeNextDm) closeNextDm.click();
@@ -543,7 +557,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && dyComments.dmToolRightColumn && /\(2\)/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
       && dyComments.dmSearchRows === 1 && dyComments.dmSearchMatch && dyComments.dmBatchSelected
       && dyComments.dmBlocked && dyComments.dmHidden && dyComments.dmScanPresent && dyComments.dmTimelineLoaded && dyComments.dmTimelineRestored
-      && /\(0\)/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 0) {
+      && /\(1\)/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 1
+      && dyComments.dmResetOldAbsent && dyComments.dmResetNewPresent) {
       report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block; comment manager expands/batches replies; video danmaku manager dedupes, batches, and resets on video change');
     } else report.fail.push('douyin-comment-tools: ' + JSON.stringify(dyComments));
     await dyCommentPage.close();

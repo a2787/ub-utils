@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.42.0
+// @version       0.43.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.42.0-comment-manager-thread-runtime-guard';
+  const RUNTIME_BUILD = '0.43.0-douyin-danmaku-video-session-guard';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -2959,8 +2959,51 @@
         || !!document.querySelector('.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
     }
 
+    // 精选/推荐流是 SPA：切换下一个视频时，URL 经常仍保持 `/jingxuan` 或推荐页，
+    // 但播放器容器会复用并把 `video_<id>` class 换成新视频的标识。只用路由做会话键
+    // 会让弹幕管理器把旧视频的观察缓存一直带到后续视频。
+    function activeVideoRoot() {
+      const marked = $(SEL.feedActive);
+      const roots = querySelectorAllDeep(document, '.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
+      if (marked) {
+        const markedPlayer = querySelectorAllDeep(marked, '.basePlayerContainer, .playerContainer, [data-e2e="video-player"]')
+          .find((root) => {
+            const media = querySelectorAllDeep(root, 'video, audio')[0];
+            return !!media && !media.paused && !media.ended && isVisible(root);
+          });
+        if (markedPlayer) return markedPlayer;
+        // 某些页面把播放器本身标成 feed-active-video；只有它真的带视频身份时
+        // 才直接采用，避免一个无身份的外层标记遮住可用的 video_<id> class。
+        if (videoIdentityFromRoot(marked)) return marked;
+      }
+      const playing = roots.find((root) => {
+        const media = querySelectorAllDeep(root, 'video, audio')[0];
+        return !!media && !media.paused && !media.ended && isVisible(root);
+      });
+      if (playing) return playing;
+      const visible = roots.find((root) => isVisible(root));
+      return visible || roots[0] || null;
+    }
+
+    function videoIdentityFromRoot(root) {
+      if (!root) return '';
+      for (const name of ['data-e2e-vid', 'data-video-id', 'data-item-id']) {
+        const value = normId(attr(root, name));
+        if (value) return value;
+      }
+      const className = typeof root.className === 'string' ? root.className : '';
+      const match = className.match(/(?:^|\s)video_([0-9]{6,})(?:\s|$)/);
+      return match ? match[1] : '';
+    }
+
     function videoKey() {
-      return location.pathname + location.search;
+      const route = location.pathname + location.search;
+      const identity = videoIdentityFromRoot(activeVideoRoot());
+      return route + (identity ? '|video:' + identity : '');
+    }
+
+    function danmakuRoot() {
+      return activeVideoRoot() || document;
     }
 
     function collectDanmaku(root) {
@@ -3149,6 +3192,7 @@
       },
       isVideoPage,
       videoKey,
+      danmakuRoot,
       collectDanmaku,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
       commentManager: {
@@ -5246,21 +5290,33 @@
     const records = new Map();
     const selected = new Set();
     let videoKey = '';
+    let sessionGeneration = 0;
     let searchText = '';
     let scanRunning = false;
     let scanStatus = '';
+    let scanRun = null;
 
     const keyOf = (info) => (info && info.keys || []).join('|');
+    const readVideoKey = () => typeof adapter.videoKey === 'function'
+      ? adapter.videoKey() : location.pathname + location.search;
+    const resetForVideo = (nextVideoKey) => {
+      if (!videoKey) { videoKey = nextVideoKey; return false; }
+      if (nextVideoKey === videoKey) return false;
+      videoKey = nextVideoKey;
+      sessionGeneration++;
+      records.clear(); selected.clear();
+      searchText = '';
+      scanStatus = '';
+      if (scanRun) scanRun.cancelled = true;
+      scanRun = null;
+      scanRunning = false;
+      closeDouyinDanmakuManager();
+      return true;
+    };
     const collectRecords = () => {
-      const nextVideoKey = typeof adapter.videoKey === 'function'
-        ? adapter.videoKey() : location.pathname + location.search;
-      if (videoKey && nextVideoKey !== videoKey) {
-        videoKey = nextVideoKey;
-        records.clear(); selected.clear();
-        scanStatus = '';
-        closeDouyinDanmakuManager();
-      } else if (!videoKey) videoKey = nextVideoKey;
-      for (const info of adapter.collectDanmaku(document) || []) {
+      resetForVideo(readVideoKey());
+      const scope = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
+      for (const info of adapter.collectDanmaku(scope || document) || []) {
         const key = keyOf(info);
         if (!key) continue;
         const existing = records.get(key);
@@ -5275,15 +5331,19 @@
     };
 
     function render() {
-      if (!douyinDanmakuManager || !douyinDanmakuManager.isConnected) return;
+      const panel = douyinDanmakuManager;
+      if (!panel || !panel.isConnected) return;
       const available = collectRecords();
+      // collectRecords() 可能在本次渲染中发现播放器已切到下一个视频并关闭旧面板；
+      // 不能继续向已移除的旧节点写 DOM，也不能让旧面板的事件回调复活它。
+      if (douyinDanmakuManager !== panel || !panel.isConnected) return;
       const availableKeys = new Set(available.map(keyOf));
       for (const key of Array.from(selected)) if (!availableKeys.has(key)) selected.delete(key);
       const term = String(searchText || '').replace(/\s+/g, ' ').trim().toLowerCase();
       const filtered = term
         ? available.filter((info) => [info.label, info.note, ...(info.keys || [])].join(' ').toLowerCase().includes(term))
         : available;
-      const list = douyinDanmakuManager.querySelector('.ob-dd-list');
+      const list = panel.querySelector('.ob-dd-list');
       list.textContent = '';
       if (!filtered.length) {
         const empty = document.createElement('div'); empty.className = 'ob-dd-empty';
@@ -5306,7 +5366,7 @@
         body.append(name, note);
         row.append(checkbox, body); list.appendChild(row);
       }
-      const checkAll = douyinDanmakuManager.querySelector('.ob-dd-checkall input');
+      const checkAll = panel.querySelector('.ob-dd-checkall input');
       checkAll.checked = !!filtered.length && filtered.every((info) => selected.has(keyOf(info)));
       checkAll.indeterminate = !checkAll.checked && filtered.some((info) => selected.has(keyOf(info)));
       checkAll.onchange = () => {
@@ -5317,7 +5377,7 @@
         render();
       };
       const selectedRecords = available.filter((info) => selected.has(keyOf(info)));
-      const batch = douyinDanmakuManager.querySelector('.ob-dd-batch');
+      const batch = panel.querySelector('.ob-dd-batch');
       batch.disabled = !selectedRecords.length;
       batch.textContent = '屏蔽选中(' + selectedRecords.length + ')';
       batch.onclick = () => {
@@ -5328,23 +5388,29 @@
         });
       };
       const totalMessages = filtered.reduce((sum, info) => sum + (Number(info.messageCount) || 1), 0);
-      douyinDanmakuManager.querySelector('.ob-dd-status').textContent = scanStatus
+      panel.querySelector('.ob-dd-status').textContent = scanStatus
         || (filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕');
-      const scan = douyinDanmakuManager.querySelector('.ob-dd-scan');
+      const scan = panel.querySelector('.ob-dd-scan');
       scan.disabled = scanRunning;
       scan.textContent = scanRunning ? '扫描中…' : '尽量加载弹幕';
     }
 
     async function scanDanmakuTimeline() {
       if (scanRunning) return;
-      const video = querySelectorAllDeep(document, 'video')[0];
+      resetForVideo(readVideoKey());
+      const scope = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
+      const video = querySelectorAllDeep(scope || document, 'video')[0]
+        || querySelectorAllDeep(document, 'video')[0];
       const duration = Number(video && video.duration);
       if (!video || !Number.isFinite(duration) || duration <= 0) {
         scanStatus = '播放器尚未提供可扫描的总时长';
         render();
         return;
       }
-      const requestedKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
+      const requestedKey = readVideoKey();
+      const requestedGeneration = sessionGeneration;
+      const run = { key: requestedKey, generation: requestedGeneration, cancelled: false };
+      scanRun = run;
       const originalTime = Number(video.currentTime) || 0;
       const wasPlaying = !video.paused && !video.ended;
       const sampleCount = Math.min(60, Math.max(6, Math.ceil(duration / 15)));
@@ -5352,6 +5418,14 @@
       scanRunning = true;
       scanStatus = '正在扫描弹幕时间轴 0/' + sampleCount + '…';
       render();
+      const sessionIsCurrent = () => {
+        const currentKey = readVideoKey();
+        if (currentKey !== requestedKey) {
+          resetForVideo(currentKey);
+          return false;
+        }
+        return scanRun === run && !run.cancelled && sessionGeneration === requestedGeneration;
+      };
       const seekAndWait = (time) => new Promise((resolve) => {
         let finished = false;
         const done = () => {
@@ -5360,6 +5434,7 @@
           try { video.removeEventListener('seeked', done); } catch (e) {}
           resolve();
         };
+        if (!sessionIsCurrent()) { done(); return; }
         try { video.addEventListener('seeked', done, { once: true }); } catch (e) {}
         try { video.currentTime = time; } catch (e) { done(); return; }
         setTimeout(done, 650);
@@ -5367,22 +5442,30 @@
       try {
         if (wasPlaying) video.pause();
         for (let index = 0; index < sampleCount; index++) {
-          const currentKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
-          if (currentKey !== requestedKey) break;
+          if (!sessionIsCurrent()) break;
           const time = sampleCount === 1 ? 0 : Math.min(Math.max(0, duration - 0.05), duration * index / (sampleCount - 1));
           await seekAndWait(time);
+          if (!sessionIsCurrent()) break;
           await new Promise((resolve) => setTimeout(resolve, 180));
+          if (!sessionIsCurrent()) break;
           collectRecords();
           completed = index + 1;
           scanStatus = '正在扫描弹幕时间轴 ' + completed + '/' + sampleCount + '…';
           render();
         }
       } finally {
+        const currentKey = readVideoKey();
+        if (currentKey !== requestedKey) {
+          resetForVideo(currentKey);
+          return;
+        }
+        if (scanRun !== run || run.cancelled || sessionGeneration !== requestedGeneration) return;
         try { video.currentTime = Math.min(Math.max(0, originalTime), Math.max(0, duration - 0.05)); } catch (e) {}
         if (wasPlaying) {
           try { const playing = video.play(); if (playing && playing.catch) playing.catch(() => {}); } catch (e) {}
         }
         scanRunning = false;
+        scanRun = null;
         scanStatus = completed
           ? '已扫描 ' + completed + '/' + sampleCount + ' 个时间点；平台未渲染的弹幕不会被猜测。'
           : '未完成弹幕时间轴扫描；可稍后重试。';

@@ -15,7 +15,7 @@
 | `test/adapters.cjs` | 微博、知乎、贴吧、X、抖音的身份契约回归夹具。 |
 | `test/douyin.cjs` | 人工合成的抖音推荐流节点复用、跳过上限和延迟守卫回归。 |
 | `test/real-bilibili-probe.cjs` | 隔离、只读的真实 B 站探针，可启用严格断言。 |
-| `test/real-douyin-probe.cjs` | 抖音登录态只读探针：连接用户调试浏览器，临时标签页注入内存存储。 |
+| `test/real-douyin-probe.cjs` | 抖音登录态只读探针：连接用户调试浏览器，临时标签页注入内存存储；支持复用专用当前标签页和双视频切换断言。 |
 | `test/real-platform-probe.cjs` | 其余平台的隔离、只读真实页面探针。 |
 | `test/weibo-replay.cjs` | 基于真实微博虚拟列表契约的本地回放和平台反复回写压力回归；支持 `--git-ref=` 做旧版可失败性复核。 |
 | `test/weibo-dom-capture.cjs` | 连接专用 9222 Chrome 的微博 DOM/布局只读捕获器；只接受显式 target，不读取 Cookie 或平台写入控件。 |
@@ -75,6 +75,71 @@
 ```
 
 ## 当前交接
+
+### 2026-08-27 - 0.43.0 - 抖音弹幕跨视频会话隔离
+
+**范围**
+
+用户反馈：在抖音精选/推荐流刷到下一个视频后，弹幕屏蔽管理器仍显示上一个甚至更早视频的发送者。复现确认：
+当前管理器只用 `location.pathname + location.search` 作为缓存会话键；同一路由复用播放器时 URL 不变，旧记录因此
+持续累积。时间轴扫描还可能在视频切换后继续写回旧会话。
+
+**改动文件**
+
+- `omniblock.user.js`：抖音适配器从已捕获的播放器容器 `basePlayerContainer` 读取 `video_<id>`，将其与路由组成
+  视频会话键；管理器按视频键清空记录、选中项、搜索和扫描状态，并把弹幕收集范围限制到当前播放器。时间轴扫描
+  增加会话代际与取消保护：切视频后旧扫描不再恢复旧播放器时间、不再继续把旧弹幕写入新视频；渲染同时防止已关闭的旧
+  管理器节点被异步回调再次写入。工作区 `RUNTIME_BUILD` 和 `@version` 已提升为
+  `0.43.0-douyin-danmaku-video-session-guard` / `0.43.0`。
+- `test/adapters.cjs`：抖音弹幕夹具增加“URL 不变、播放器 `video_<id>` 变化、旧层移除并挂载新层”的回归；旧实现
+  在该断言上显示旧记录并失败，新实现要求只显示新视频发送者。
+- `test/real-douyin-probe.cjs`：增加 `--current` 复用专用 Chrome 当前抖音标签页和
+  `--verify-video-switch` 双视频断言；探针在管理器滚动后重新选择仍连接的当前弹幕节点，避免把平台回收造成的旧节点
+  当成插件故障。
+- `README.md`、`CHANGELOG.md`：补充精选/推荐流换视频时弹幕观察缓存隔离的用户可见说明、验证边界和发布信息。
+
+**证据**
+
+- **`structure regression`**：改动前运行 `node test/adapters.cjs` 为 20 项通过、1 项失败；失败项的实际夹具结果为
+  同一路由切换后仍显示旧弹幕 2 条。改动后同一命令为 21/21，断言管理器只显示新视频的 1 条记录，旧作者键均不在
+  新面板中；`node --check omniblock.user.js` 与 `git diff --check` 通过。
+- **`real-site verified`**：2026-08-27，在用户已登录的专用持久 Chrome 当前抖音标签页中直接注入版本元数据提升前的工作区候选，脱敏
+  页面形式为 `douyin.com/jingxuan?...`。该候选与 `0.43.0` 的行为代码相同，仅版本/构建标识不同；真实点击“下一个视频”后，
+  初始视频会话键和下一视频会话键不同；初始管理器 12 行，切换后旧管理器关闭，新管理器 12 行，旧视频身份 12 个全部不再
+  出现，新视频记录存在。换片完成后继续采样 10 秒、20 次，CDP 心跳错误 0、最大单次响应延迟 25ms。该候选源码 SHA-256 为
+  `dbdbf87cdd10e55510e71b1090a4868a6ea2b4939d3e0afe8d901125adbe373c`；名单仅使用探针内存 stub，未读取 Cookie 或触发平台
+  写入控件。
+- **`real-site verified`**：2026-08-27，在同一专用 Chrome 的抖音视频页不切换视频连续采样 30 秒、55 次，版本元数据提升前候选
+  运行期间心跳错误 0，最少观察到 11 条弹幕和 10 条评论，最终分别为 20 条和 172 条，最大单次响应 224ms；这项只证明该次
+  真实页面会话的稳定性，不外推到其他视频或未加载的弹幕。
+- **`blocked`**：版本提升为 `0.43.0` 后在专用 Chrome 的两次精确短探针中均未渲染出带发送者身份的弹幕，无法重新执行双视频断言；
+  同日重复运行 90 秒真实探针时，抖音动态渲染还出现过换片后短暂 4 次弹幕/评论节点为空。探针没有记录 CDP 超时或脚本
+  异常；这些结果不改写为 `0.43.0` 的长时无缺口通过，也不否定已经通过的行为隔离断言。
+
+**检查**
+
+已运行 userscript、评论管理器、适配器、微博回放和抖音真实探针的 `node --check`；本地完整矩阵为
+`node test/comment-manager.cjs` 3/3、`node test/quickblock.cjs` 32/32、`node test/adapters.cjs` 21/21、
+`node test/state.cjs` 7/7、`node test/run.cjs` 14/14、`node test/douyin.cjs` 2/2、`node test/weibo-replay.cjs` 11/11，
+均通过。`git diff --check` 退出码 0；仓库要求的 `node test/real-platform-probe.cjs douyin --verify-local` 在公开
+未登录页停在验证码中间页，按规则记为 `blocked`。版本元数据提升前专用 Chrome 的
+`node test/real-douyin-probe.cjs --current --verify-video-switch --duration=10`（双视频断言通过）和
+`node test/real-douyin-probe.cjs --current --duration=30`（基线通过）已记录；提升到 `0.43.0` 后的精确短探针因无身份
+弹幕记为 `blocked`。
+
+**限制**
+
+视频标识优先使用当前真站捕获到的播放器 `video_<id>` class；如果未来平台同时移除路由和播放器标识，脚本会退回
+路由键并保持安全的当前 DOM 观察范围，不能在没有可靠身份时猜测视频归属。
+
+**发布**
+
+发布动作正在进行；`v0.42.0` 保留，不覆盖历史 tag 或 Release。
+
+**下一步验证**
+
+发布后的下一项最有价值验证是用户在自己的 Tampermonkey 中更新到 `0.43.0`、刷新抖音页面，再实际滚动精选/推荐流并
+打开弹幕管理器，核对齿轮上的版本和构建标识。
 
 ### 2026-08-27 - 0.42.0 - 三平台评论管理器、屏蔽该楼回复与运行时防重复
 
