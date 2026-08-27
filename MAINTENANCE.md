@@ -134,7 +134,8 @@
 
 **发布**
 
-发布动作正在进行；`v0.42.0` 保留，不覆盖历史 tag 或 Release。
+`0.43.0` 已发布：功能提交 `8c8eb23` 已推送到 `origin/master`，`v0.43.0` tag 已创建并推送，GitHub Release：
+<https://github.com/a2787/ub-utils/releases/tag/v0.43.0>。既有 `v0.42.0` tag 和 Release 保留，未覆盖。
 
 **下一步验证**
 
