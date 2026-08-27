@@ -12,7 +12,7 @@ const { ROOT } = require('./runtime.cjs');
 const trackedFiles = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
   .split(/\r?\n/).filter(Boolean);
 const privacyFiles = trackedFiles.filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
-for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/maintenance-check.cjs']) {
+for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/maintenance-check.cjs']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
 }
 const privacyPatterns = [
@@ -31,9 +31,11 @@ for (const relative of privacyFiles) {
 const checks = [
   { label: 'userscript syntax', command: process.execPath, args: ['--check', 'omniblock.user.js'] },
   { label: 'comment manager syntax', command: process.execPath, args: ['--check', 'test/comment-manager.cjs'] },
+  { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
   { label: 'generic UI/state', command: process.execPath, args: ['test/run.cjs'] },
   { label: 'core state', command: process.execPath, args: ['test/state.cjs'] },
   { label: 'Bilibili', command: process.execPath, args: ['test/quickblock.cjs'] },
+  { label: 'automatic danmaku rules', command: process.execPath, args: ['test/danmaku-auto.cjs'] },
   { label: 'unified comment manager', command: process.execPath, args: ['test/comment-manager.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },

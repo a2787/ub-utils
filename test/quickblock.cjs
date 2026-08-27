@@ -1201,6 +1201,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await pakkuBeforePage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const pakkuBefore = await pakkuBeforePage.evaluate(async () => {
       window.OB.Store.addIdentities(['bili:dmhash:678f8529'], 'PAKKU before fixture');
+      const autoRule = window.OB.danmakuRules.add('bili', 'keyword', 'uid mapped');
       try {
         const response = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
@@ -1211,7 +1212,14 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           xhr.send();
         });
         const text = new TextDecoder().decode(response);
-        return { blockedRemoved: !text.includes('hello danmaku'), unblockedKept: text.includes('keep danmaku') };
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return {
+          blockedRemoved: !text.includes('hello danmaku'),
+          unblockedKept: text.includes('keep danmaku'),
+          autoRuleAdded: !!autoRule.ok,
+          autoRemoved: !text.includes('uid mapped danmaku'),
+          autoHashStored: window.OB.Index.isBlocked('bili:dmhash:0a6216d9'),
+        };
       } finally {
         window.OB.Store.removeIdentity('bili:dmhash:678f8529');
       }
@@ -1225,8 +1233,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return { visible: !!tool && getComputedStyle(tool).display !== 'none', text: tool && tool.textContent };
     });
     await pakkuBeforePage.close();
-    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(7)'))
-      report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 7 位发送者');
+    if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBefore.autoRuleAdded && pakkuBefore.autoRemoved
+      && pakkuBefore.autoHashStored && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(6)'))
+      report.pass.push('QB-Q PAKKU 先安装时，自动规则只过滤命中文案并保存 hash，其他 PAKKU 弹幕链保持可用');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
 
     // 人工合成：统一评论管理器必须保留“当前已加载”路径，并显示作者去重、

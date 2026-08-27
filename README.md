@@ -95,10 +95,14 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
 隔离观察缓存，换片时清空旧记录并终止旧视频的时间轴扫描。未加载、没有身份属性或尚未在页面出现的弹幕仍不会
 被猜测进来。
 
-> 工作区当前另有一个尚未发布的入口清理候选：构建标识为
-> `0.43.0-douyin-comment-modal-manager-cleanup`。它会移除已经由右下角多选评论管理器接管的抖音评论侧栏
-> 内旧版红色「拉黑全部」条；弹幕管理器、评论多选入口以及非评论用户列表 Modal 的批量入口保留。该候选
-> 仍使用 `@version 0.43.0`，只用于专用 Chrome 验证，尚未覆盖已发布的 `v0.43.0`。
+> 工作区当前有一个尚未发布的自动弹幕规则候选：构建标识为
+> `0.43.0-bili-douyin-auto-danmaku-rules`，仍使用 `@version 0.43.0`，只用于专用 Chrome 和本地夹具验证，
+> 尚未覆盖已发布的 `v0.43.0`。设置面板新增分开的 B站/抖音规则区，支持不区分大小写的关键词和正则表达式，
+> 添加并启用后自动隐藏命中的弹幕。B站沿用现有 `seg.so`/PAKKU XHR 兼容链，命中先保存 `mid_hash`，只有
+> 唯一候选且用户卡片正向校验成功时才补充 UID；不复制 PAKKU 的去重主体，也不改变其对弹幕的处理职责。抖音
+> 只观察当前播放器已经出现的弹幕，带可靠 `uid/sec_uid` 时写入本地身份并隐藏；没有可靠身份时只隐藏当前节点，
+> 不伪造身份。候选不会调用抖音私有弹幕接口或主动跳转时间轴，因此不能承诺打开视频后立即得到未加载的整段弹幕。
+> 抖音视频弹幕去重仍是后续第二阶段，B站不重复实现 PAKKU 去重。
 
 从 v0.13.0 起，每次用户可见版本还会同时创建同版本的 **GitHub Release**，并在
 [CHANGELOG.md](CHANGELOG.md) 登记更新内容。仓库 `master` / raw 地址会继续向前移动，供
@@ -130,6 +134,12 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
   会匿名查询可能发送者并请求用户卡片接口剔除不存在账号：唯一且已正向校验的候选直接
   显示「拉黑本人」，点击后同时保存 hash 与 UID，不再弹二次确认；同一文案存在多个存活
   候选（CRC32 碰撞）时仍显示「确认并拉黑」，打开主页核对后才会合并身份。
+- 工作区自动弹幕规则候选的设置面板按平台分开管理：可分别为 B站和抖音添加关键词或正则表达式，
+  勾选启用或删除规则。规则只在本机匹配弹幕文字；命中后自动走该平台已有的本地屏蔽链，不触发举报、官方拉黑
+  或 PAKKU 去重。B站普通弹幕没有原始 UID 时会保留 `mid_hash`，唯一且经过公开用户卡片正向校验的候选才会
+  与 UID 关联；抖音没有可靠身份的命中只隐藏当前节点，不会写入猜测身份。删除规则只停止后续自动匹配，已经
+  写入本地名单的身份仍需在名单中手动删除。该候选尚未发布，只有专用 Chrome 中的运行版本/构建标识与本轮源码
+  一致时才代表正在测试它。
 - 也可以直接把鼠标移到播放器里正在飘的一条弹幕上，弹幕上方会浮出「🚫 拉黑该弹幕
   发送者」，按钮会跟随弹幕移动，点一下即可；仅在这条弹幕能唯一对应一个发送者时出现。
 - 微博详情页和用户主页帖子内当前已加载的每条评论操作区都有 **「本地拉黑」**；屏蔽后只让该评论无占位
@@ -315,8 +325,9 @@ node test/state.cjs               # 状态可逆、身份规范化、导入安�
 node test/quickblock.cjs          # B站楼中楼、弹幕分组、列表分段、浮动弹幕坐标命中、UID 候选、批量范围面板、PAKKU 与 XHR 回归
 node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器共 21 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
-node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku
-node test/real-douyin-probe.cjs   # 登录态只读探针：需用户调试浏览器 127.0.0.1:9222，临时标签页注入内存存储
+node test/danmaku-auto.cjs       # B站/抖音关键词正则自动弹幕规则与 PAKKU 共存结构回归
+node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
+node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=90 # 专用 Chrome 登录态只读探针
 node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
 node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针

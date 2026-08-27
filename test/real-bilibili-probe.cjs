@@ -1,7 +1,7 @@
 /* 真实 B站页面只读探针。
  * 使用隔离的临时 Chrome 配置和内存 GM 存储；只修改该临时本地名单，
  * 不会读取用户 Cookie，也不会触发平台写操作或官方拉黑。
- * 运行：node test/real-bilibili-probe.cjs
+ * 运行：node test/real-bilibili-probe.cjs [--verify-auto-danmaku]
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { discoverTargets, redactTarget } = require('./discover.cjs');
@@ -19,6 +19,7 @@ const VERIFY_SUB_COMMENT = process.argv.includes('--verify-sub-comment');
 const VERIFY_DANMAKU_UID = process.argv.includes('--verify-danmaku-uid');
 const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VERIFY_DANMAKU_UID;
 const VERIFY_FLOATING_DANMAKU = process.argv.includes('--verify-floating-danmaku');
+const VERIFY_AUTO_DANMAKU = process.argv.includes('--verify-auto-danmaku');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
@@ -940,6 +941,80 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         }
         return result;
       });
+    }
+
+    if (VERIFY_AUTO_DANMAKU) {
+      // 只取当前页面已出现的弹幕内容生成临时关键词；规则和身份都在探针内存存储中，
+      // 结束前清理，不记录正文、hash、UID，也不调用 B站原生写入控件。
+      result.autoDanmaku = await page.evaluate(async () => {
+        const out = { attempted: true, targetFound: false, ruleAdded: false, matched: false, hidden: false, hashPersisted: false, restored: false, resolverCountBefore: null, resolverCountAfter: null, statusBefore: null, statusAfter: null, newHashCount: 0, autoMarker: false, manualMarker: false, errors: [] };
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const waitFor = async (fn, ms) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (fn()) return true; await pause(100); } return !!fn(); };
+        const OB = window.OB;
+        const adapter = OB && OB.adapters && OB.adapters.bilibili;
+        if (!OB || !adapter || !OB.danmakuRules) { out.reason = '自动规则运行时未就绪'; return out; }
+        const cleanContent = (node) => {
+          const copy = node.cloneNode(true);
+          copy.querySelectorAll('.ob-dm-block,.ob-dm-pick').forEach((element) => element.remove());
+          return String(copy.textContent || '').replace(/\\s+/g, ' ').trim();
+        };
+        const candidates = [
+          ...Array.from(document.querySelectorAll('.bili-danmaku-x-dm')),
+          ...Array.from(document.querySelectorAll('.dm-info-dm[title],.dm-info-dm')),
+        ];
+        const target = candidates.find((node) => {
+          const content = node.getAttribute('title') || cleanContent(node);
+          const rect = node.getBoundingClientRect();
+          return content && content.trim() && rect.width > 0 && rect.height > 0;
+        }) || candidates.find((node) => !!((node.getAttribute('title') || cleanContent(node)).trim()));
+        if (!target) { out.reason = '当前页面没有可用于自动规则验证的弹幕节点'; return out; }
+        const content = String(target.getAttribute('title') || cleanContent(target)).replace(/\\s+/g, ' ').trim();
+        const token = content.slice(0, Math.min(6, content.length));
+        if (!token) { out.reason = '当前弹幕没有可匹配文案'; return out; }
+        out.targetFound = true;
+        const resolver = typeof window.__omniblockFloatingDanmakuResolver === 'function'
+          ? window.__omniblockFloatingDanmakuResolver : null;
+        out.resolverCountBefore = resolver ? resolver(content, -1).length : null;
+        const hiddenTarget = target.matches('.dm-info-dm')
+          ? (target.closest('li.bui-long-list-item') || target)
+          : target;
+        const beforeKeys = new Set(OB.Store.allIdentities());
+        const beforeStatus = adapter.getAutoDanmakuStatus();
+        out.statusBefore = { matchedMessages: beforeStatus.matchedMessages, matchedHashes: beforeStatus.matchedHashes, observedSenders: beforeStatus.observedSenders };
+        const rule = OB.danmakuRules.add('bili', 'keyword', token);
+        out.ruleAdded = !!(rule && rule.ok);
+        if (!out.ruleAdded) { out.reason = '无法创建临时关键词规则'; return out; }
+        await waitFor(() => {
+          const currentKeys = new Set(OB.Store.allIdentities());
+          return (hiddenTarget.getAttribute('data-ob-dm-auto-blocked') === '1'
+            || hiddenTarget.getAttribute('data-ob-dm-blocked') === '1')
+            && Array.from(currentKeys).some((key) => !beforeKeys.has(key) && key.startsWith('bili:dmhash:'));
+        }, 3200);
+        const afterStatus = adapter.getAutoDanmakuStatus();
+        const afterKeys = new Set(OB.Store.allIdentities());
+        out.statusAfter = { matchedMessages: afterStatus.matchedMessages, matchedHashes: afterStatus.matchedHashes, observedSenders: afterStatus.observedSenders };
+        out.newHashCount = Array.from(afterKeys).filter((key) => !beforeKeys.has(key) && key.startsWith('bili:dmhash:')).length;
+        out.matched = afterStatus.matchedMessages > beforeStatus.matchedMessages
+          || afterStatus.matchedHashes > beforeStatus.matchedHashes;
+        out.resolverCountAfter = resolver ? resolver(content, -1).length : null;
+        out.autoMarker = hiddenTarget.getAttribute('data-ob-dm-auto-blocked') === '1';
+        out.manualMarker = hiddenTarget.getAttribute('data-ob-dm-blocked') === '1';
+        out.hidden = (hiddenTarget.getAttribute('data-ob-dm-auto-blocked') === '1'
+          || hiddenTarget.getAttribute('data-ob-dm-blocked') === '1')
+          && getComputedStyle(hiddenTarget).display === 'none';
+        out.hashPersisted = afterStatus.matchedHashes > beforeStatus.matchedHashes
+          && Array.from(afterKeys).some((key) => !beforeKeys.has(key) && key.startsWith('bili:dmhash:'));
+        OB.danmakuRules.remove('bili', rule.rule.id);
+        for (const key of afterKeys) if (!beforeKeys.has(key) && /^bili:(?:dmhash|uid):/.test(key)) OB.Store.removeIdentity(key);
+        out.restored = await waitFor(() => hiddenTarget.getAttribute('data-ob-dm-auto-blocked') !== '1'
+          && hiddenTarget.getAttribute('data-ob-dm-blocked') !== '1', 2200);
+        return out;
+      });
+      const automatic = result.autoDanmaku || {};
+      if (!automatic.targetFound) result.errors.push('blocked：当前页面没有可用于自动规则验证的 B站弹幕');
+      else if (!automatic.ruleAdded || !automatic.matched || !automatic.hidden || !automatic.hashPersisted || !automatic.restored) {
+        result.errors.push('验证失败：B站自动弹幕规则未完成命中、hash 入库和恢复闭环');
+      }
     }
 
     result.probe = await page.evaluate(() => {

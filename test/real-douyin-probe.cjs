@@ -3,7 +3,7 @@
  * --current 复用专用当前标签页并在结束后保留它。两种模式只做抖音页面的只读导航、
  * 滚动和脚本自身 UI 操作，不读取/导出 Cookie，不点击平台写入控件。
  * 运行：node test/real-douyin-probe.cjs [--url=https://www.douyin.com/...] [--duration=90]
- *        node test/real-douyin-probe.cjs --current --verify-video-switch --duration=90
+ *        node test/real-douyin-probe.cjs --current --verify-video-switch --verify-auto-danmaku --duration=90
  *        node test/real-douyin-probe.cjs --open-entry --duration=90
  */
 const http = require('http');
@@ -22,6 +22,7 @@ const durationArg = process.argv.find((arg) => arg.startsWith('--duration='));
 const durationSeconds = Math.max(5, Math.min(600, Number(durationArg ? durationArg.slice(11) : 90) || 90));
 const openEntry = process.argv.includes('--open-entry');
 const verifyVideoSwitch = process.argv.includes('--verify-video-switch');
+const verifyAutoDanmaku = process.argv.includes('--verify-auto-danmaku');
 
 const shim = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
@@ -294,7 +295,7 @@ return out;
 `;
 
 const VIDEO_SWITCH_TEST_SCRIPT = `
-const out = { attempted: true, errors: [], initialKey: '', nextKey: '', initialRows: 0, nextRows: 0, nextDomCount: 0, managerClosed: false, oldRowsAbsent: false, newRowsPresent: false, emptyNextValid: false };
+const out = { attempted: true, errors: [], initialKey: '', nextKey: '', initialRows: 0, nextRows: 0, nextDomCount: 0, nextCurrentRows: 0, staleRows: 0, managerClosed: false, sentinelRecorded: false, sentinelPresent: false, oldRowsAbsent: false, newRowsPresent: false, emptyNextValid: false };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const waitFor = async (fn, ms) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (fn()) return true; await pause(100); } return !!fn(); };
 const OB = window.__OB_TEST__;
@@ -309,6 +310,21 @@ let manager = document.getElementById('ob-douyin-dm-manager');
 if (!manager) { out.reason = '当前视频弹幕管理器未能打开'; return out; }
 await waitFor(() => manager.querySelectorAll('.ob-dd-row').length > 0, 2500);
 out.initialKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
+const sentinelKey = 'douyin:uid:999999999999999999';
+const oldRoot = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
+const sentinel = document.createElement('div');
+sentinel.setAttribute('data-danmu-id', 'ob-video-switch-sentinel');
+sentinel.setAttribute('data-danmaku-user-id', '999999999999999999');
+sentinel.textContent = 'OmniBlock video switch sentinel';
+if (oldRoot && oldRoot.appendChild) oldRoot.appendChild(sentinel);
+const oldClose = manager.querySelector('.ob-dd-close');
+if (oldClose) oldClose.click();
+await waitFor(() => !document.getElementById('ob-douyin-dm-manager'), 1500);
+dmTool.click();
+await pause(180);
+manager = document.getElementById('ob-douyin-dm-manager');
+if (!manager) { if (sentinel.isConnected) sentinel.remove(); out.reason = '加入切换哨兵后旧管理器未能重新打开'; return out; }
+out.sentinelRecorded = await waitFor(() => !!manager.querySelector('[data-key="' + sentinelKey + '"]'), 2500);
 const initialRows = Array.from(manager.querySelectorAll('.ob-dd-row')).map((row) => row.getAttribute('data-key')).filter(Boolean);
 out.initialRows = initialRows.length;
 const activeMedia = Array.from(document.querySelectorAll('video, audio')).find((media) => !media.paused && !media.ended);
@@ -321,6 +337,7 @@ const next = nextCandidates.find((el) => {
   return rect.width > 0 && rect.height > 0 && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
 }) || nextCandidates.find((el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true');
 if (!next) { out.reason = '当前页面没有可见的下一个视频导航'; return out; }
+if (sentinel.isConnected) sentinel.remove();
 next.click();
 const changed = await waitFor(() => {
   const key = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
@@ -337,11 +354,115 @@ if (!manager) { out.reason = '切换后新弹幕管理器未能打开'; return o
 await waitFor(() => manager.querySelectorAll('.ob-dd-row').length > 0, 5000);
 const nextRows = Array.from(manager.querySelectorAll('.ob-dd-row')).map((row) => row.getAttribute('data-key')).filter(Boolean);
 out.nextRows = nextRows.length;
-out.nextDomCount = document.querySelectorAll('[data-danmu-id],[data-danmaku-id],[data-danmaku-user-id],[data-danmu-user-id]').length;
-out.oldRowsAbsent = initialRows.length > 0 && initialRows.every((key) => !nextRows.includes(key));
+const currentRoot = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
+const currentItems = currentRoot && currentRoot.querySelectorAll
+  ? Array.from(currentRoot.querySelectorAll('[data-danmu-id],[data-danmaku-id],[data-danmaku-user-id],[data-danmu-user-id]')) : [];
+const currentKeys = new Set();
+for (const item of currentItems) {
+  const info = adapter.extract(item);
+  for (const key of (info && info.keys || [])) if (key.startsWith('douyin:')) currentKeys.add(key);
+}
+out.nextDomCount = currentItems.length;
+out.nextCurrentRows = nextRows.filter((key) => currentKeys.has(key)).length;
+out.staleRows = nextRows.filter((key) => !currentKeys.has(key)).length;
+out.sentinelPresent = nextRows.includes(sentinelKey);
+// 同一作者可以在相邻视频发言，且当前视频早先观察到的历史发送者可以暂时
+// 不在屏幕上；受控哨兵才是可以无歧义证明旧缓存未跨视频泄漏的断言。
+out.oldRowsAbsent = out.sentinelRecorded && !out.sentinelPresent;
 out.newRowsPresent = nextRows.length > 0;
 out.emptyNextValid = !out.newRowsPresent && out.nextDomCount === 0 && /\\(0\\)/.test(dmTool.textContent || '');
-out.overlap = initialRows.filter((key) => nextRows.includes(key));
+return out;
+`;
+
+const AUTO_DANMAKU_TEST_SCRIPT = `
+const out = { attempted: true, targetFound: false, ruleAdded: false, matched: false, hidden: false, identityPersisted: false, restored: false, errors: [] };
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitFor = async (fn, ms) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (fn()) return true; await pause(80); } return !!fn(); };
+const OB = window.__OB_TEST__;
+const adapter = OB && OB.adapters && OB.adapters.douyin;
+if (!OB || !adapter || !OB.danmakuRules) { out.reason = '自动规则运行时未就绪'; return out; }
+const currentRoot = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
+const deepQuery = (root, selector) => {
+  const result = [];
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    if (node.nodeType === 1 && node.matches && node.matches(selector)) result.push(node);
+    if (node.shadowRoot) walk(node.shadowRoot);
+    for (const child of node.children || []) walk(child);
+  };
+  walk(root); return result;
+};
+const hasVideoIdentity = (root) => {
+  if (!root || !root.getAttribute) return false;
+  if (['data-e2e-vid', 'data-video-id', 'data-item-id'].some((name) => !!root.getAttribute(name))) return true;
+  return /(?:^|\s)video_[0-9]{6,}(?:\s|$)/.test(String(root.className || ''));
+};
+const playerRoots = deepQuery(document, '.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
+const playerDiagnostics = playerRoots.map((root, index) => {
+  const media = deepQuery(root, 'video, audio')[0];
+  const rect = root.getBoundingClientRect();
+  return {
+    index,
+    danmakuCount: deepQuery(root, '[data-danmu-id],[data-danmaku-id],[data-danmaku-user-id],[data-danmu-user-id]').length,
+    visible: rect.width > 0 && rect.height > 0,
+    playing: !!media && !media.paused && !media.ended,
+    identity: hasVideoIdentity(root),
+    current: root === currentRoot,
+  };
+});
+out.rootDiagnostics = {
+  documentDanmakuCount: deepQuery(document, '[data-danmu-id],[data-danmaku-id],[data-danmaku-user-id],[data-danmu-user-id]').length,
+  currentRootDanmakuCount: deepQuery(currentRoot, '[data-danmu-id],[data-danmaku-id],[data-danmaku-user-id],[data-danmu-user-id]').length,
+  currentRootVisible: currentRoot === document || (() => { const rect = currentRoot && currentRoot.getBoundingClientRect ? currentRoot.getBoundingClientRect() : { width:0, height:0 }; return rect.width > 0 && rect.height > 0; })(),
+  currentRootIdentity: hasVideoIdentity(currentRoot),
+  playerRoots: playerDiagnostics,
+};
+const candidates = deepQuery(currentRoot, '[data-danmu-id],[data-danmaku-id]');
+const visible = (node) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+const contentOf = (node) => {
+  const copy = node.cloneNode(true);
+  copy.querySelectorAll('.ob-dy-dm-block').forEach((button) => button.remove());
+  return String(copy.textContent || '').replace(/\\s+/g, ' ').trim();
+};
+const target = candidates.find((node) => {
+  const info = adapter.extract(node);
+  const hasUid = !!(info && info.keys && info.keys.some((key) => key.startsWith('douyin:uid:')));
+  const content = contentOf(node);
+  return hasUid && content && visible(node) && !OB.Index.isBlocked(info.keys);
+}) || candidates.find((node) => {
+  const info = adapter.extract(node);
+  return !!(info && info.keys && info.keys.some((key) => key.startsWith('douyin:uid:'))) && !!contentOf(node);
+});
+if (!target) { out.reason = '当前页面没有可见且带可靠发送者身份的弹幕'; return out; }
+out.targetFound = true;
+const info = adapter.extract(target);
+const content = contentOf(target);
+const token = content.slice(0, Math.min(6, content.length));
+const beforeKeys = new Set(OB.Store.allIdentities());
+const beforeStatus = adapter.getAutoDanmakuStatus();
+const rule = OB.danmakuRules.add('douyin', 'keyword', token);
+out.ruleAdded = !!(rule && rule.ok);
+if (!out.ruleAdded) { out.reason = '无法创建临时关键词规则'; return out; }
+adapter.scanAutoDanmaku();
+await waitFor(() => target.getAttribute('data-ob-auto-dm-blocked') === '1', 1800);
+// 自动规则先同步隐藏节点，再用一个零延迟批次写入本地名单；等待名单本身，
+// 避免把“节点已隐藏但持久化批次尚未落盘”误报成身份链失败。
+await waitFor(() => info.keys.some((key) => OB.Index.isBlocked(key))
+  && Array.from(OB.Store.allIdentities()).some((key) => !beforeKeys.has(key) && key.startsWith('douyin:')), 1800);
+const afterStatus = adapter.getAutoDanmakuStatus();
+const afterKeys = new Set(OB.Store.allIdentities());
+out.matched = afterStatus.matchedMessages > beforeStatus.matchedMessages;
+out.hidden = target.getAttribute('data-ob-auto-dm-blocked') === '1'
+  && getComputedStyle(target).display === 'none';
+out.identityPersisted = info.keys.some((key) => OB.Index.isBlocked(key))
+  && Array.from(afterKeys).some((key) => !beforeKeys.has(key) && key.startsWith('douyin:'));
+OB.danmakuRules.remove('douyin', rule.rule.id);
+for (const key of afterKeys) if (!beforeKeys.has(key) && key.startsWith('douyin:')) OB.Store.removeIdentity(key);
+adapter.scanAutoDanmaku();
+out.restored = await waitFor(() => target.getAttribute('data-ob-auto-dm-blocked') !== '1'
+  && getComputedStyle(target).display !== 'none', 1800);
 return out;
 `;
 
@@ -372,7 +493,9 @@ async function runStabilityCheck(send, sessionId) {
       if (result.minCommentCount === null || state.commentCount < result.minCommentCount) result.minCommentCount = state.commentCount;
       result.finalDanmakuCount = state.danmakuCount;
       result.finalCommentCount = state.commentCount;
-      if (!state.hasOB || state.ready !== 'complete' || state.danmakuCount < 1 || state.commentCount < 1) {
+      // 弹幕节点会随时间滚出/回收，也可能被当前自动规则全部隐藏；它的最低数量
+      // 只作诊断。页面是否仍可用以运行时和持续评论为准，自动规则命中则由专门断言验证。
+      if (!state.hasOB || state.ready !== 'complete' || state.commentCount < 1) {
         result.heartbeatErrors++;
       }
     } catch (error) {
@@ -439,6 +562,16 @@ async function runStabilityCheck(send, sessionId) {
       if (count > 0) break;
       await sleep(1000);
     }
+    if (verifyAutoDanmaku) {
+      // 先在初始播放器弹幕稳定后验证自动规则；评论管理器的滚动/回收可能会
+      // 让抖音重挂弹幕层，不能把评论操作后的正常节点回收当成自动规则失败。
+      report.autoDanmaku = await evaluate(client.send, sessionId, AUTO_DANMAKU_TEST_SCRIPT);
+      const automatic = report.autoDanmaku || {};
+      if (!automatic.targetFound) report.blocked.push('blocked：当前页面没有可用于自动规则验证的可靠抖音弹幕');
+      else if (!automatic.ruleAdded || !automatic.matched || !automatic.hidden || !automatic.identityPersisted || !automatic.restored) {
+        report.blocked.push('抖音自动弹幕规则真实验证未完成：' + JSON.stringify(automatic));
+      }
+    }
     report.probe = await evaluate(client.send, sessionId, TEST_SCRIPT);
     const probe = report.probe || {};
     if (!probe.hasOB || !probe.adapterReady || !probe.runtime || probe.runtime.version !== version
@@ -467,8 +600,30 @@ async function runStabilityCheck(send, sessionId) {
     if (!report.blocked.length) {
       // 抖音切换视频时会先销毁旧播放器，再异步挂载新弹幕/评论节点；
       // 等待平台完成这段过渡后再测稳定性，避免把正常换片空窗计成插件错误。
-      if (verifyVideoSwitch) await sleep(3500);
-      report.stability = await runStabilityCheck(client.send, sessionId);
+      if (verifyVideoSwitch) {
+        await sleep(1200);
+        await evaluate(client.send, sessionId, `(() => {
+          const videos = Array.from(document.querySelectorAll('video, audio'));
+          const media = videos.find((item) => !item.ended) || videos[0];
+          if (media) {
+            media.muted = true;
+            const playing = media.play();
+            if (playing && playing.catch) playing.catch(() => {});
+          }
+          return true;
+        })()`);
+        await sleep(3500);
+        let resumed = false;
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const state = await evaluate(client.send, sessionId, `return {
+            comments: document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length,
+          }`);
+          if (state && state.comments > 0) { resumed = true; break; }
+          await sleep(500);
+        }
+        if (!resumed) report.blocked.push('抖音换片后弹幕/评论未在过渡窗口内恢复');
+      }
+      if (!report.blocked.length) report.stability = await runStabilityCheck(client.send, sessionId);
       if (!report.stability.samples || report.stability.heartbeatErrors) {
         report.blocked.push('抖音 ' + durationSeconds + ' 秒稳定性检查出现心跳错误或页面内容消失');
       }

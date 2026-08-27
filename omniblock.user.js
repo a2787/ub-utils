@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.43.0-douyin-comment-modal-manager-cleanup';
+  const RUNTIME_BUILD = '0.43.0-bili-douyin-auto-danmaku-rules';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -177,6 +177,76 @@
     tieba: 'tieba:uid', x: 'x:handle', douyin: 'douyin:secuid',
   };
 
+  // 自动弹幕规则只允许两种可审计的本地匹配方式：不区分大小写的关键词和
+  // 正则表达式。规则不进入身份键，也不上传；命中后仍由各平台自己的身份链
+  // 负责建立本地屏蔽身份。限制长度/数量是为了避免把一个失控表达式放进热路径。
+  const DANMAKU_RULE_LIMIT = 64;
+  const DANMAKU_RULE_MAX_LENGTH = 240;
+  const DANMAKU_RULE_KINDS = new Set(['keyword', 'regex']);
+  const DANMAKU_RULE_SETTING_KEYS = {
+    bili: 'biliDanmakuRules',
+    douyin: 'douyinDanmakuRules',
+  };
+
+  function ruleText(value) {
+    return String(value == null ? '' : value)
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, DANMAKU_RULE_MAX_LENGTH);
+  }
+
+  function ruleHash(value) {
+    let hash = 2166136261;
+    const text = String(value || '');
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  function compileDanmakuRule(rule) {
+    if (!rule || rule.kind !== 'regex') return null;
+    let source = rule.pattern;
+    let flags = 'iu';
+    // 同时接受裸正则和常见的 /pattern/flags 写法；默认仍强制 Unicode + 忽略大小写，
+    // 避免正则规则和关键词规则在中英文大小写上的行为不一致。
+    const literal = source.match(/^\/(.*)\/([dgimsuvy]*)$/);
+    if (literal) {
+      source = literal[1];
+      flags = Array.from(new Set((literal[2] || '').split('').concat(['i', 'u']))).join('');
+    }
+    try { return new RegExp(source, flags); } catch (e) { return null; }
+  }
+
+  function normalizeDanmakuRule(raw) {
+    if (!raw || typeof raw !== 'object' || !DANMAKU_RULE_KINDS.has(raw.kind)) return null;
+    const pattern = ruleText(raw.pattern);
+    if (!pattern) return null;
+    const rule = {
+      id: 'r_' + ruleHash(raw.kind + '\x1f' + pattern),
+      kind: raw.kind,
+      pattern,
+      enabled: raw.enabled !== false,
+    };
+    if (rule.kind === 'regex' && !compileDanmakuRule(rule)) return null;
+    return rule;
+  }
+
+  function sanitizeDanmakuRules(input) {
+    const out = [];
+    const seen = new Set();
+    for (const raw of Array.isArray(input) ? input : []) {
+      const rule = normalizeDanmakuRule(raw);
+      if (!rule || seen.has(rule.id)) continue;
+      seen.add(rule.id);
+      out.push(rule);
+      if (out.length >= DANMAKU_RULE_LIMIT) break;
+    }
+    return out;
+  }
+
   function normalizeDigits(value) {
     const digits = normId(value);
     return /^\d+$/.test(digits) ? digits.replace(/^0+(?=\d)/, '') : '';
@@ -244,6 +314,8 @@
     showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
     showBulkBlock: true,         // 本页/弹窗内"一键拉黑全部用户"
     localBackupEnabled: true,    // 自动保留最近 5 份本地快照（不上传）
+    biliDanmakuRules: [],        // B站自动弹幕关键词/正则；不承担 PAKKU 去重
+    douyinDanmakuRules: [],      // 抖音自动弹幕关键词/正则
   };
 
   const Store = (function () {
@@ -269,6 +341,10 @@
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
       const cap = Number(source.skipCap);
       if (Number.isFinite(cap)) out.skipCap = clamp(Math.round(cap), 0, 50);
+      for (const platform of Object.keys(DANMAKU_RULE_SETTING_KEYS)) {
+        const key = DANMAKU_RULE_SETTING_KEYS[platform];
+        out[key] = sanitizeDanmakuRules(source[key]);
+      }
       return out;
     }
 
@@ -436,7 +512,10 @@
     function setSetting(k, v) {
       if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k)) return false;
       const next = sanitizeSettings({ ...load().settings, [k]: v });
-      if (next[k] === load().settings[k]) return true;
+      const previous = load().settings[k];
+      if (Array.isArray(next[k]) || Array.isArray(previous)) {
+        if (JSON.stringify(next[k]) === JSON.stringify(previous)) return true;
+      } else if (next[k] === previous) return true;
       data.settings = next; persist(); return true;
     }
     function getSetting(k) { return load().settings[k]; }
@@ -711,6 +790,79 @@
 
   // 首次加载即建立一个恢复点；没有本地备份开关或 GM 存储支持时静默降级，不影响名单。
   try { Store.ensureLocalBackup(); } catch (e) {}
+
+  // 规则引擎只做纯匹配；它不决定平台身份、不执行存储写入，也不负责弹幕去重。
+  // 这样 B站的 PAKKU 可以继续独立处理去重，OmniBlock 只在命中后接入现有屏蔽链。
+  const DanmakuRules = (function () {
+    const compiledCache = new Map();
+    function settingKey(platform) { return DANMAKU_RULE_SETTING_KEYS[platform] || ''; }
+    function rulesFor(platform) {
+      const key = settingKey(platform);
+      return key ? Store.getSetting(key) || [] : [];
+    }
+    function signature(platform) {
+      return JSON.stringify(rulesFor(platform));
+    }
+    function compiled(platform) {
+      const key = settingKey(platform);
+      if (!key) return [];
+      const rules = rulesFor(platform);
+      const sig = JSON.stringify(rules);
+      const previous = compiledCache.get(platform);
+      if (previous && previous.signature === sig) return previous.rules;
+      const next = rules.map((rule) => ({ rule, regex: compileDanmakuRule(rule) }));
+      compiledCache.set(platform, { signature: sig, rules: next });
+      return next;
+    }
+    function match(platform, value) {
+      const text = ruleText(value);
+      if (!text) return null;
+      const lower = text.toLowerCase();
+      const hits = [];
+      for (const item of compiled(platform)) {
+        if (!item.rule.enabled) continue;
+        if (item.rule.kind === 'keyword') {
+          if (lower.includes(item.rule.pattern.toLowerCase())) hits.push(item.rule);
+          continue;
+        }
+        if (!item.regex) continue;
+        item.regex.lastIndex = 0;
+        if (item.regex.test(text)) hits.push(item.rule);
+      }
+      return hits.length ? { text, rules: hits } : null;
+    }
+    function hasEnabled(platform) { return compiled(platform).some((item) => item.rule.enabled); }
+    function add(platform, kind, pattern) {
+      const key = settingKey(platform);
+      if (!key || !DANMAKU_RULE_KINDS.has(kind)) return { ok: false, error: '规则类型不支持' };
+      const rule = normalizeDanmakuRule({ kind, pattern });
+      if (!rule) return { ok: false, error: kind === 'regex' ? '正则表达式无效或为空' : '关键词不能为空' };
+      const rules = rulesFor(platform);
+      if (rules.some((item) => item.id === rule.id)) return { ok: false, error: '这条规则已经存在' };
+      if (rules.length >= DANMAKU_RULE_LIMIT) return { ok: false, error: '单个平台最多保存 ' + DANMAKU_RULE_LIMIT + ' 条规则' };
+      Store.setSetting(key, rules.concat(rule));
+      return { ok: true, rule };
+    }
+    function remove(platform, id) {
+      const key = settingKey(platform);
+      if (!key) return false;
+      const rules = rulesFor(platform);
+      const next = rules.filter((rule) => rule.id !== id);
+      if (next.length === rules.length) return false;
+      Store.setSetting(key, next);
+      return true;
+    }
+    function setEnabled(platform, id, enabled) {
+      const key = settingKey(platform);
+      if (!key) return false;
+      const rules = rulesFor(platform);
+      const next = rules.map((rule) => rule.id === id ? { ...rule, enabled: !!enabled } : rule);
+      if (JSON.stringify(next) === JSON.stringify(rules)) return false;
+      Store.setSetting(key, next);
+      return true;
+    }
+    return { settingKey, rulesFor, signature, match, hasEnabled, add, remove, setEnabled };
+  })();
 
   // 内存索引：身份键 → 是否屏蔽（O(1) 判定）
   const Index = (function () {
@@ -1205,6 +1357,22 @@
     #ob-panel .ob-item .ob-note { color: #777; font-size: 11px; margin-top: 2px; word-break: break-word; }
     #ob-panel .ob-del { color: #c0392b; cursor: pointer; border: 0; background: transparent; font-size: 12px; white-space: nowrap; }
     #ob-panel .ob-close { float: right; cursor: pointer; border: 0; background: transparent; font-size: 18px; color: #999; }
+    #ob-panel .ob-auto-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
+    #ob-panel .ob-auto-platform { border: 1px solid #eee; border-radius: 8px; padding: 9px 10px; margin-top: 8px; }
+    #ob-panel .ob-auto-platform h4 { margin: 0 0 7px; font-size: 13px; color: #444; }
+    #ob-panel .ob-auto-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    #ob-panel .ob-auto-add select { width: 82px; flex: 0 0 82px; }
+    #ob-panel .ob-auto-add input { flex: 1 1 220px; min-width: 160px; }
+    #ob-panel .ob-auto-add button { border: 0; border-radius: 6px; padding: 6px 10px; background: #c0392b; color: #fff; cursor: pointer; white-space: nowrap; }
+    #ob-panel .ob-auto-add button:hover { background: #a93226; }
+    #ob-panel .ob-auto-rule-list { display: grid; gap: 4px; margin-top: 8px; }
+    #ob-panel .ob-auto-rule { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 6px; background: #f8f8f9; border-radius: 5px; }
+    #ob-panel .ob-auto-rule input[type="checkbox"] { flex: 0 0 auto; }
+    #ob-panel .ob-auto-rule-kind { flex: 0 0 auto; color: #777; font-size: 11px; }
+    #ob-panel .ob-auto-rule-pattern { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #333; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+    #ob-panel .ob-auto-rule-remove { flex: 0 0 auto; border: 0; background: transparent; color: #c0392b; cursor: pointer; font-size: 12px; }
+    #ob-panel .ob-auto-empty, #ob-panel .ob-auto-status { color: #999; font-size: 11px; line-height: 1.5; }
+    #ob-panel .ob-auto-empty { padding: 4px 0; }
     #ob-gear {
       position: fixed; right: 14px; bottom: 14px; z-index: 2147483643;
       width: 40px; height: 40px; border: 0; border-radius: 50%; padding: 0;
@@ -2360,6 +2528,12 @@
 
   // 通用：处理一个"条目"——抽出身份，命中则隐藏
   function handleItem(adapter, item) {
+    // 平台可在通用身份处理前声明“这个节点已经由平台专用逻辑处理”。
+    // 目前只有抖音自动弹幕规则使用它：无可靠身份的命中弹幕仍可即时隐藏，
+    // 但不会伪造一个身份键；下一轮通用扫描也不能把它错误恢复。
+    try {
+      if (adapter.beforeHandle && adapter.beforeHandle(item) === true) return;
+    } catch (e) {}
     const info = adapter.extract(item);
     const container = (info && adapter.containerOf && adapter.containerOf(item)) || (info && info.container) || item;
     const wasBlocked = !!(container && (container.hasAttribute && container.hasAttribute('data-ob-blocked')));
@@ -2613,6 +2787,12 @@
   window.addEventListener('scroll', clearHover, true);
 
   let currentScanner = null;
+  // B站弹幕运行时在适配器之后初始化；通过这个窄桥把状态面板查询与网络过滤
+  // 解耦，避免在适配器对象构造阶段引用尚未定义的局部函数。
+  let biliDanmakuAutoStatus = () => ({
+    enabled: DanmakuRules.hasEnabled('bili'), ruleCount: DanmakuRules.rulesFor('bili').filter((rule) => rule.enabled).length,
+    observedSenders: 0, matchedMessages: 0, matchedHashes: 0, linkedUids: 0, hashOnly: 0, unidentifiable: 0, uidLimit: 0,
+  });
 
   // 右键：若光标在某条目上，弹出自建菜单（不触发平台原生"不感兴趣"）
   document.addEventListener('contextmenu', (e) => {
@@ -2798,7 +2978,6 @@
       if (attr(item, 'data-is-danmu-author') === 'true') {
         appendIdentityKey(keys, 'douyin:secuid', currentVideoAuthorSecUid());
       }
-      if (!keys.length) return null;
       return { keys, label: '', note: noteFor('抖音弹幕', item), container: item };
     }
 
@@ -2965,22 +3144,33 @@
     function activeVideoRoot() {
       const marked = $(SEL.feedActive);
       const roots = querySelectorAllDeep(document, '.basePlayerContainer, .playerContainer, [data-e2e="video-player"]');
+      const hasDanmaku = (root) => querySelectorAllDeep(root, SEL.danmaku).length > 0;
       if (marked) {
         const markedPlayer = querySelectorAllDeep(marked, '.basePlayerContainer, .playerContainer, [data-e2e="video-player"]')
           .find((root) => {
             const media = querySelectorAllDeep(root, 'video, audio')[0];
-            return !!media && !media.paused && !media.ended && isVisible(root);
+            return !!media && !media.paused && !media.ended && isVisible(root) && hasDanmaku(root);
           });
         if (markedPlayer) return markedPlayer;
-        // 某些页面把播放器本身标成 feed-active-video；只有它真的带视频身份时
-        // 才直接采用，避免一个无身份的外层标记遮住可用的 video_<id> class。
-        if (videoIdentityFromRoot(marked)) return marked;
       }
+      // 抖音推荐流有时把 feed-active-video 标在一个只负责状态的外层容器上，
+      // 实际弹幕层则挂在同级的播放器根节点。必须先选“正在播放且含弹幕”的
+      // 根节点，否则外层容器会以视频身份抢先返回，自动规则看不到弹幕。
+      const playingWithDanmaku = roots.find((root) => {
+        const media = querySelectorAllDeep(root, 'video, audio')[0];
+        return !!media && !media.paused && !media.ended && isVisible(root) && hasDanmaku(root);
+      });
+      if (playingWithDanmaku) return playingWithDanmaku;
+      const visibleWithDanmaku = roots.find((root) => isVisible(root) && hasDanmaku(root));
+      if (visibleWithDanmaku) return visibleWithDanmaku;
       const playing = roots.find((root) => {
         const media = querySelectorAllDeep(root, 'video, audio')[0];
         return !!media && !media.paused && !media.ended && isVisible(root);
       });
       if (playing) return playing;
+      // 没有具体播放器根节点时，保留 feed-active 的身份节点作为会话键和后续
+      // 节点出现前的兜底；一旦真实弹幕层出现，上面的含弹幕分支会优先接管。
+      if (marked && videoIdentityFromRoot(marked)) return marked;
       const visible = roots.find((root) => isVisible(root));
       return visible || roots[0] || null;
     }
@@ -2998,8 +3188,206 @@
 
     function videoKey() {
       const route = location.pathname + location.search;
-      const identity = videoIdentityFromRoot(activeVideoRoot());
+      // feed-active-video 可能与实际弹幕播放器是两个节点；身份优先从前者取，
+      // 扫描根节点则由 activeVideoRoot() 按真实弹幕层选择。
+      const marked = $(SEL.feedActive);
+      const identity = videoIdentityFromRoot(marked) || videoIdentityFromRoot(activeVideoRoot());
       return route + (identity ? '|video:' + identity : '');
+    }
+
+    const DY_AUTO_QUEUE_LIMIT = 256;
+    const dyAutoSeenMessages = new Set();
+    const dyAutoQueue = new Map();
+    const dyAutoHiddenNodes = new Set();
+    const dyAutoDisplayStates = new WeakMap();
+    let dyAutoFlushTimer = 0;
+    let dyAutoVideoKey = '';
+    let dyAutoGeneration = 0;
+    let dyAutoStatus = { matchedMessages: 0, queuedSenders: 0, persistedSenders: 0, noIdentity: 0 };
+    function setDouyinAutoHidden(node, hidden) {
+      if (!node || !node.style) return;
+      if (hidden) {
+        let state = dyAutoDisplayStates.get(node);
+        const currentValue = node.style.getPropertyValue('display');
+        const currentPriority = node.style.getPropertyPriority('display');
+        if (!state) {
+          state = { value: currentValue, priority: currentPriority, appliedValue: '', appliedPriority: '' };
+          dyAutoDisplayStates.set(node, state);
+        } else if (currentValue !== state.appliedValue || currentPriority !== state.appliedPriority) {
+          // 播放器回收/复用节点时可能在自动隐藏期间改写 display；把该值视为
+          // 新平台基线，不能把旧视频的 display 恢复到新视频上。
+          state.value = currentValue;
+          state.priority = currentPriority;
+        }
+        if (currentValue !== 'none' || currentPriority !== 'important') node.style.setProperty('display', 'none', 'important');
+        state.appliedValue = node.style.getPropertyValue('display');
+        state.appliedPriority = node.style.getPropertyPriority('display');
+        node.setAttribute('data-ob-auto-dm-blocked', '1');
+        dyAutoHiddenNodes.add(node);
+        return;
+      }
+      const state = dyAutoDisplayStates.get(node);
+      if (state) {
+        const currentValue = node.style.getPropertyValue('display');
+        const currentPriority = node.style.getPropertyPriority('display');
+        // 只有当前仍是本脚本最后写入的值时才恢复；平台已经写入的新值必须保留。
+        if (currentValue === state.appliedValue && currentPriority === state.appliedPriority) {
+          if (state.value) node.style.setProperty('display', state.value, state.priority);
+          else node.style.removeProperty('display');
+        }
+        dyAutoDisplayStates.delete(node);
+      }
+      node.removeAttribute('data-ob-auto-dm-blocked');
+      dyAutoHiddenNodes.delete(node);
+    }
+    function clearDouyinAutoHidden() {
+      for (const node of Array.from(dyAutoHiddenNodes)) setDouyinAutoHidden(node, false);
+      dyAutoHiddenNodes.clear();
+    }
+    function isInActiveDanmakuRoot(item) {
+      const root = activeVideoRoot();
+      if (!root) return false;
+      if (root === document || root === item) return true;
+      let current = item;
+      for (let guard = 0; current && guard < 32; guard++, current = composedParent(current)) {
+        if (current === root) return true;
+      }
+      return false;
+    }
+    function resetDyAutoSessionIfNeeded() {
+      const key = videoKey();
+      if (!dyAutoVideoKey) {
+        dyAutoVideoKey = key;
+        return false;
+      }
+      if (key === dyAutoVideoKey) return false;
+      clearDouyinAutoHidden();
+      dyAutoVideoKey = key;
+      if (dyAutoFlushTimer) clearTimeout(dyAutoFlushTimer);
+      dyAutoFlushTimer = 0;
+      dyAutoSeenMessages.clear();
+      dyAutoQueue.clear();
+      dyAutoGeneration++;
+      dyAutoStatus = { matchedMessages: 0, queuedSenders: 0, persistedSenders: 0, noIdentity: 0 };
+      return true;
+    }
+    function autoDouyinRuleNote(content, match) {
+      const rules = match && match.rules || [];
+      const summary = rules.slice(0, 3).map((rule) => (
+        (rule.kind === 'regex' ? '正则' : '关键词') + '「' + String(rule.pattern || '').slice(0, 80) + '」'
+      )).join('、') || '当前规则';
+      return '抖音弹幕自动屏蔽：' + summary + '；代表弹幕：' + String(content || '').slice(0, 360);
+    }
+    function danmakuText(item) {
+      if (!item) return '';
+      const ownButton = item.querySelector && item.querySelector('.ob-dy-dm-block');
+      if (!ownButton) return textOf(item).replace(/\s+/g, ' ').trim();
+      const parts = [];
+      const walk = (node) => {
+        if (!node || node === ownButton) return;
+        if (node.nodeType === 3) {
+          const value = String(node.nodeValue || '').trim();
+          if (value) parts.push(value);
+          return;
+        }
+        for (const child of node.childNodes || []) walk(child);
+      };
+      walk(item);
+      return parts.join(' ').replace(/\s+/g, ' ').trim();
+    }
+    function applyDouyinAutoDanmaku(item, info, content) {
+      if (!item || !item.matches || !item.matches(SEL.danmaku)) return false;
+      if (!isInActiveDanmakuRoot(item)) {
+        if (item.getAttribute('data-ob-auto-dm-blocked') === '1') setDouyinAutoHidden(item, false);
+        return false;
+      }
+      resetDyAutoSessionIfNeeded();
+      const text = content == null ? danmakuText(item) : String(content || '').replace(/\s+/g, ' ').trim();
+      const enabled = Store.getSetting('enabled') && DanmakuRules.hasEnabled('douyin');
+      const match = enabled ? DanmakuRules.match('douyin', text) : null;
+      if (!match) {
+        if (item.getAttribute('data-ob-auto-dm-blocked') === '1') setDouyinAutoHidden(item, false);
+        return false;
+      }
+      queueDouyinAutoDanmaku(info || { keys: [] }, text);
+      setDouyinAutoHidden(item, true);
+      return true;
+    }
+    function flushDouyinAutoQueue() {
+      dyAutoFlushTimer = 0;
+      if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('douyin')) {
+        dyAutoQueue.clear();
+        return;
+      }
+      if (!dyAutoQueue.size) return;
+      const generation = dyAutoGeneration;
+      const batch = Array.from(dyAutoQueue.values());
+      dyAutoQueue.clear();
+      if (generation !== dyAutoGeneration) return;
+      const existing = Store.allIdentities();
+      const groups = batch.filter((entry) => entry.keys.some((key) => !existing.has(key))).map((entry) => ({
+        keys: entry.keys,
+        label: entry.label || '抖音弹幕自动规则',
+        note: entry.note,
+      }));
+      if (!groups.length) return;
+      const results = Store.addIdentityGroups(groups);
+      dyAutoStatus.persistedSenders += results.filter((result) => result && result.added > 0).length;
+    }
+    function scheduleDouyinAutoFlush() {
+      if (dyAutoFlushTimer || !dyAutoQueue.size) return;
+      dyAutoFlushTimer = setTimeout(flushDouyinAutoQueue, 0);
+    }
+    function queueDouyinAutoDanmaku(info, content) {
+      if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('douyin')) return false;
+      resetDyAutoSessionIfNeeded();
+      const match = DanmakuRules.match('douyin', content);
+      if (!match) return false;
+      const keys = normalizeIdentityKeys(info && info.keys);
+      const text = String(content || '').replace(/\s+/g, ' ').trim();
+      const fingerprint = (keys.length ? keys.join('|') : 'no-key') + '\x1f' + text;
+      if (dyAutoSeenMessages.has(fingerprint)) return true;
+      if (dyAutoSeenMessages.size >= 20000) dyAutoSeenMessages.delete(dyAutoSeenMessages.values().next().value);
+      dyAutoSeenMessages.add(fingerprint);
+      dyAutoStatus.matchedMessages++;
+      if (!keys.length) {
+        dyAutoStatus.noIdentity++;
+        return true;
+      }
+      const key = keys.join('|');
+      if (!dyAutoQueue.has(key) && dyAutoQueue.size < DY_AUTO_QUEUE_LIMIT) {
+        dyAutoQueue.set(key, {
+          keys,
+          label: info.label || '抖音弹幕发送者',
+          note: autoDouyinRuleNote(text, match),
+        });
+        dyAutoStatus.queuedSenders++;
+      }
+      scheduleDouyinAutoFlush();
+      return true;
+    }
+    function scanAutoDanmaku() {
+      resetDyAutoSessionIfNeeded();
+      if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('douyin')) {
+        clearDouyinAutoHidden();
+        if (dyAutoFlushTimer) clearTimeout(dyAutoFlushTimer);
+        dyAutoFlushTimer = 0;
+        dyAutoQueue.clear();
+        return;
+      }
+      const root = activeVideoRoot();
+      if (root) collectDanmaku(root);
+    }
+    function autoDanmakuStatus() {
+      resetDyAutoSessionIfNeeded();
+      return {
+        enabled: Store.getSetting('enabled') && DanmakuRules.hasEnabled('douyin'),
+        ruleCount: DanmakuRules.rulesFor('douyin').filter((rule) => rule.enabled).length,
+        matchedMessages: dyAutoStatus.matchedMessages,
+        queuedSenders: dyAutoStatus.queuedSenders,
+        persistedSenders: dyAutoStatus.persistedSenders,
+        noIdentity: dyAutoStatus.noIdentity,
+      };
     }
 
     function danmakuRoot() {
@@ -3011,11 +3399,12 @@
       for (const item of querySelectorAllDeep(root || document, SEL.danmaku)) {
         if (!item || !item.matches || !item.matches(SEL.danmaku)) continue;
         const info = extractDanmaku(item);
-        if (!info || !info.keys || !info.keys.length) continue;
+        if (!info) continue;
+        const text = danmakuText(item);
+        applyDouyinAutoDanmaku(item, info, text);
         const keys = normalizeIdentityKeys(info.keys);
         if (!keys.length) continue;
         const key = keys.join('|');
-        const text = textOf(item).replace(/\s+/g, ' ').trim();
         const existing = byIdentity.get(key);
         if (existing) {
           existing.messageCount++;
@@ -3031,6 +3420,12 @@
         });
       }
       return Array.from(byIdentity.values());
+    }
+
+    function beforeHandle(item) {
+      if (!item || !item.matches || !item.matches(SEL.danmaku)) return false;
+      const info = extractDanmaku(item);
+      return applyDouyinAutoDanmaku(item, info, danmakuText(item));
     }
 
     // 抖音弹幕是持续滚动的节点，通用固定悬浮按钮会停在原地。这里把按钮挂进
@@ -3144,6 +3539,9 @@
     }
 
     function feedTick() {
+      // 弹幕规则与弹幕管理器 UI 解耦：即使用户关闭右下角入口，当前播放器中新出现的
+      // 节点仍会经过同一份只读收集器；它不会触发时间轴跳转，也不会调用抖音私有接口。
+      scanAutoDanmaku();
       const active = activeFeedItem();
       if (!active) { cancelPendingSkip(); clearCover(); consecutive = 0; return; }
       const link = active.querySelector(SEL.feedAuthorLink);
@@ -3180,7 +3578,7 @@
       pendingSkip = { timer, active, token };
     }
 
-    function disableFeed() { cancelPendingSkip(); clearCover(); consecutive = 0; }
+    function disableFeed() { cancelPendingSkip(); clearCover(); consecutive = 0; clearDouyinAutoHidden(); }
 
     return {
       id: 'douyin',
@@ -3194,6 +3592,9 @@
       videoKey,
       danmakuRoot,
       collectDanmaku,
+      scanAutoDanmaku,
+      getAutoDanmakuStatus: autoDanmakuStatus,
+      beforeHandle,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
       commentManager: {
         available: () => isVideoPage() && collectCommentRecords(document).length > 0,
@@ -4430,6 +4831,7 @@
       bulkFabLabel: (n) => '🚫 拉黑已加载评论作者(' + n + ')',
       // 批量精细化只在视频评论区可用；动态页/空间页没有这套接口契约。
       bulkScope: { available: isVideoCommentPage, fetchAll: fetchAllCommentAuthors, unit: '评论作者' },
+      getAutoDanmakuStatus: () => biliDanmakuAutoStatus(),
       commentManager: {
         available: () => isVideoCommentPage() && collectCommentRecords(document).length > 0,
         collectRecords: () => collectCommentRecords(document),
@@ -5537,8 +5939,12 @@
     }
 
     Store.onChange(refresh);
-    setInterval(refresh, 900);
+    setInterval(() => {
+      refresh();
+      if (typeof adapter.scanAutoDanmaku === 'function') adapter.scanAutoDanmaku();
+    }, 900);
     refresh();
+    if (typeof adapter.scanAutoDanmaku === 'function') adapter.scanAutoDanmaku();
   }
 
   let refreshBulkBlock = () => {};
@@ -6023,7 +6429,180 @@
     let dmBootstrapRetryAt = 0;
     let dmBootstrapPromise = null;
     let dmBootstrapTimer = 0;
+    const DM_AUTO_UID_LIMIT = 64;
+    const dmAutoSeenMessages = new Set();
+    const dmAutoBlockedHashes = new Set();
+    const dmAutoHashQueue = new Map();
+    const dmAutoUidQueue = new Map();
+    const dmAutoUidStates = new Map();
+    let dmAutoHashTimer = 0;
+    let dmAutoUidTimer = 0;
+    let dmAutoUidLookups = 0;
+    let dmAutoGeneration = 0;
+    let dmAutoRuleSignature = '';
+    let dmAutoStatus = {
+      matchedMessages: 0,
+      matchedHashes: 0,
+      linkedUids: 0,
+      hashOnly: 0,
+      unidentifiable: 0,
+      uidLimit: 0,
+    };
     function cleanDmText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+    function autoDmRuleNote(content, match) {
+      const rules = match && match.rules || [];
+      const summary = rules.slice(0, 3).map((rule) => (
+        (rule.kind === 'regex' ? '正则' : '关键词') + '「' + String(rule.pattern || '').slice(0, 80) + '」'
+      )).join('、') || '当前规则';
+      return 'B站弹幕自动屏蔽：' + summary + '；代表弹幕：' + cleanDmText(content).slice(0, 360);
+    }
+    function resetDmAutoState() {
+      if (dmAutoHashTimer) clearTimeout(dmAutoHashTimer);
+      dmAutoHashTimer = 0;
+      if (dmAutoUidTimer) clearTimeout(dmAutoUidTimer);
+      dmAutoUidTimer = 0;
+      if (dmAutoUidQueue) dmAutoUidQueue.clear();
+      if (dmAutoHashQueue) dmAutoHashQueue.clear();
+      if (dmAutoUidStates) dmAutoUidStates.clear();
+      dmAutoSeenMessages.clear();
+      dmAutoBlockedHashes.clear();
+      dmAutoUidLookups = 0;
+      dmAutoGeneration++;
+      dmAutoStatus = {
+        matchedMessages: 0,
+        matchedHashes: 0,
+        linkedUids: 0,
+        hashOnly: 0,
+        unidentifiable: 0,
+        uidLimit: 0,
+      };
+    }
+    function scheduleAutoBiliUidFlush() {
+      if (dmAutoUidTimer || !dmAutoUidQueue.size) return;
+      dmAutoUidTimer = setTimeout(() => {
+        dmAutoUidTimer = 0;
+        flushAutoBiliUidQueue();
+      }, 0);
+    }
+    function scheduleAutoBiliHashFlush() {
+      if (dmAutoHashTimer || !dmAutoHashQueue.size) return;
+      dmAutoHashTimer = setTimeout(() => {
+        dmAutoHashTimer = 0;
+        const generation = dmAutoGeneration;
+        const entries = Array.from(dmAutoHashQueue.values());
+        dmAutoHashQueue.clear();
+        if (generation !== dmAutoGeneration || !entries.length) return;
+        const existing = Store.allIdentities();
+        const groups = entries
+          .filter((entry) => entry && entry.hash && !existing.has(makeIdentityKey('bili:dmhash', entry.hash)))
+          .map((entry) => ({
+            keys: [makeIdentityKey('bili:dmhash', entry.hash)],
+            label: 'B站弹幕自动规则',
+            note: entry.note,
+          }));
+        if (groups.length) Store.addIdentityGroups(groups);
+        for (const entry of entries) queueAutoBiliUidLookup(entry.hash, entry.content, entry.match);
+      }, 0);
+    }
+    function queueAutoBiliHash(hash, content, match) {
+      const normalized = normalHash(hash);
+      if (!normalized || !match) return false;
+      const isNew = !dmAutoBlockedHashes.has(normalized);
+      dmAutoBlockedHashes.add(normalized);
+      if (isNew) dmAutoStatus.matchedHashes++;
+      dmAutoHashQueue.set(normalized, {
+        hash: normalized,
+        content: cleanDmText(content),
+        match,
+        note: autoDmRuleNote(content, match),
+      });
+      scheduleAutoBiliHashFlush();
+      return true;
+    }
+    function queueAutoBiliContent(content, hashes, match) {
+      if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('bili') || !match) return false;
+      const list = Array.from(new Set((hashes || []).map(normalHash).filter(Boolean)));
+      if (!list.length) {
+        dmAutoStatus.unidentifiable++;
+        return true;
+      }
+      for (const hash of list) queueAutoBiliHash(hash, content, match);
+      return true;
+    }
+    function queueAutoBiliUidLookup(hash, content, match) {
+      const normalized = normalHash(hash);
+      if (!normalized || dmAutoUidStates.has(normalized) || dmAutoUidQueue.has(normalized)) return;
+      if (dmAutoUidLookups + dmAutoUidQueue.size >= DM_AUTO_UID_LIMIT) {
+        dmAutoStatus.uidLimit++;
+        return;
+      }
+      dmAutoUidQueue.set(normalized, { hash: normalized, content, match });
+      scheduleAutoBiliUidFlush();
+    }
+    function flushAutoBiliUidQueue() {
+      if (!dmAutoUidQueue.size) return;
+      const generation = dmAutoGeneration;
+      const entries = Array.from(dmAutoUidQueue.values());
+      dmAutoUidQueue.clear();
+      const run = (async () => {
+        const links = [];
+        for (const entry of entries) {
+          if (generation !== dmAutoGeneration || !Store.getSetting('enabled') || !DanmakuRules.hasEnabled('bili')) return;
+          dmAutoUidLookups++;
+          dmAutoUidStates.set(entry.hash, { status: 'loading' });
+          let candidates = [];
+          try { candidates = crackUidHash(entry.hash); } catch (e) { candidates = []; }
+          if (candidates.length !== 1) {
+            dmAutoStatus.hashOnly++;
+            dmAutoUidStates.set(entry.hash, { status: 'hash-only', candidateCount: candidates.length });
+            continue;
+          }
+          try {
+            const card = await requestDmUidCard(candidates[0]);
+            if (!card || generation !== dmAutoGeneration) {
+              dmAutoStatus.hashOnly++;
+              dmAutoUidStates.set(entry.hash, { status: 'hash-only', candidateCount: candidates.length });
+              continue;
+            }
+            links.push({
+              keys: [makeIdentityKey('bili:dmhash', entry.hash), makeIdentityKey('bili:uid', card.uid)],
+              label: card.name,
+              note: 'B站弹幕自动规则命中；hash 唯一反查并经用户卡片正向校验 UID。代表弹幕：' + cleanDmText(entry.content).slice(0, 320),
+            });
+            dmAutoStatus.linkedUids++;
+            dmAutoUidStates.set(entry.hash, { status: 'linked', uid: card.uid });
+          } catch (e) {
+            dmAutoStatus.hashOnly++;
+            dmAutoUidStates.set(entry.hash, { status: 'hash-only', candidateCount: candidates.length });
+          }
+        }
+        if (generation === dmAutoGeneration && links.length) Store.addIdentityGroups(links);
+      })();
+      // 不让未捕获的网络/实现异常变成页面级 unhandledrejection；hash 身份已经在前一批提交。
+      Promise.resolve(run).catch(() => {});
+    }
+    function applyAutoRulesToObservedDanmaku() {
+      if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('bili')) return;
+      for (const sender of dmSenders.values()) {
+        const match = DanmakuRules.match('bili', sender.content);
+        if (match) queueAutoBiliContent(sender.content, [sender.hash], match);
+      }
+    }
+    function autoDanmakuStatus() {
+      resetDmSessionIfNeeded();
+      return {
+        enabled: Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili'),
+        ruleCount: DanmakuRules.rulesFor('bili').filter((rule) => rule.enabled).length,
+        observedSenders: dmSenders.size,
+        matchedMessages: dmAutoStatus.matchedMessages,
+        matchedHashes: dmAutoStatus.matchedHashes,
+        linkedUids: dmAutoStatus.linkedUids,
+        hashOnly: dmAutoStatus.hashOnly,
+        unidentifiable: dmAutoStatus.unidentifiable,
+        uidLimit: dmAutoStatus.uidLimit,
+      };
+    }
+    biliDanmakuAutoStatus = autoDanmakuStatus;
     function resolveFloatingDanmakuHashes(content, progress) {
       const text = cleanDmText(content);
       if (!text) return [];
@@ -6060,13 +6639,15 @@
     }
     function resetDmSessionIfNeeded() {
       const key = currentVideoKey();
-      if (!dmVideoKey) { dmVideoKey = key; return false; }
+      if (!dmVideoKey) { dmVideoKey = key; dmAutoStatus.videoKey = key; return false; }
       if (key === dmVideoKey) return false;
       dmVideoKey = key;
       dmByContent.clear(); dmByProgress.clear(); dmSenders.clear(); dmContentGroups.clear(); dmSeenElements.clear();
       dmLoadedSegments.clear(); dmSegmentPromises.clear(); dmSegmentRetryAt.clear();
       selectedDmGroups.clear(); expandedDmUidGroups.clear();
       dmSearch = ''; dmPage = 0;
+      resetDmAutoState();
+      dmAutoStatus.videoKey = key;
       resetDmBootstrap();
       if (dmManager) closeDmManager();
       return true;
@@ -6119,6 +6700,7 @@
     function filterSeg(bytes, segmentIndex) {
       const buf = new Uint8Array(bytes);
       const blocked = blockedHashes();
+      const autoEnabled = Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili');
       const out = [];
       let changed = false;
       let p = 0;
@@ -6132,8 +6714,20 @@
           const elemStart = lenInfo.next, elemEnd = lenInfo.next + lenInfo.value;
           if (elemEnd > buf.length) return buf;
           const elem = parseDanmakuElem(buf, elemStart, elemEnd);
+          const autoMatch = autoEnabled ? DanmakuRules.match('bili', elem.content) : null;
+          const autoFingerprint = (elem.hash || '') + '\x1f' + String(elem.progress) + '\x1f' + cleanDmText(elem.content);
+          const autoSeen = dmAutoSeenMessages.has(autoFingerprint);
+          if (autoMatch && !autoSeen) {
+            if (dmAutoSeenMessages.size >= 20000) dmAutoSeenMessages.delete(dmAutoSeenMessages.values().next().value);
+            dmAutoSeenMessages.add(autoFingerprint);
+            dmAutoStatus.matchedMessages++;
+            queueAutoBiliContent(elem.content, elem.hash ? [elem.hash] : [], autoMatch);
+          }
           rememberDanmaku(elem);
-          if (elem.hash && blocked.has(elem.hash)) { changed = true; p = elemEnd; continue; }
+          if ((autoMatch && autoMatch.text) || (elem.hash && (blocked.has(elem.hash)
+            || (autoEnabled && dmAutoBlockedHashes.has(elem.hash))))) {
+            changed = true; p = elemEnd; continue;
+          }
           copyRange(out, buf, start, elemEnd);
           p = elemEnd;
           continue;
@@ -6245,7 +6839,9 @@
     }
 
     function scheduleDmBootstrap(delay) {
-      if (!isVideoPage() || dmSenders.size || dmBootstrapPromise) return;
+      const autoEnabled = DanmakuRules.hasEnabled('bili');
+      if (!isVideoPage() || dmSenders.size || dmBootstrapPromise
+        || (!Store.getSetting('showQuickBlock') && !autoEnabled)) return;
       if (dmBootstrapTimer) clearTimeout(dmBootstrapTimer);
       dmBootstrapTimer = setTimeout(() => {
         dmBootstrapTimer = 0;
@@ -6255,7 +6851,8 @@
 
     function ensureDmBootstrap(force) {
       resetDmSessionIfNeeded();
-      if (!isVideoPage() || !Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      const autoEnabled = DanmakuRules.hasEnabled('bili');
+      if (!isVideoPage() || !Store.getSetting('enabled') || (!Store.getSetting('showQuickBlock') && !autoEnabled)) return;
       if (dmSenders.size) {
         dmBootstrapStatus = 'ready';
         refreshDmTool();
@@ -7089,6 +7686,22 @@
       const host = row.closest && row.closest('li.bui-long-list-item');
       return host || row;
     }
+    function scanFloatingDanmakuAutoRules() {
+      const enabled = Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili');
+      for (const node of document.querySelectorAll(FLOATING_DM_SEL)) {
+        const content = cleanDmText(textOf(node));
+        const match = enabled ? DanmakuRules.match('bili', content) : null;
+        if (match) {
+          const hashes = dmByContent.get(content);
+          if (hashes && hashes.size) queueAutoBiliContent(content, Array.from(hashes), match);
+          setInlineHidden(node, true);
+          node.setAttribute('data-ob-dm-auto-blocked', '1');
+        } else if (node.getAttribute('data-ob-dm-auto-blocked') === '1') {
+          setInlineHidden(node, false);
+          node.removeAttribute('data-ob-dm-auto-blocked');
+        }
+      }
+    }
     function addDmStatusButton(row, text, title) {
       row.setAttribute('data-ob-dm-action', '1');
       const signature = 'status:' + text;
@@ -7131,7 +7744,8 @@
     function scanDmPanels() {
       const enabled = Store.getSetting('enabled');
       const showButton = enabled && Store.getSetting('showQuickBlock');
-      const blocked = enabled ? blockedHashes() : new Set();
+      const autoEnabled = enabled && DanmakuRules.hasEnabled('bili');
+      const blocked = enabled ? new Set([...blockedHashes(), ...(autoEnabled ? dmAutoBlockedHashes : [])]) : new Set();
       for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
         for (const row of dmRowsIn(panel)) {
           const existingButton = row.querySelector && row.querySelector(':scope > .ob-dm-block');
@@ -7144,15 +7758,26 @@
             continue;
           }
           const resolved = resolveDmRow(row);
+          const rowContent = dmRowContent(row);
+          const visibleText = rowContent.title || rowContent.text || cleanDmText(textOf(row));
+          const autoMatch = autoEnabled ? DanmakuRules.match('bili', visibleText) : null;
+          if (autoMatch && resolved.hashes.length) queueAutoBiliContent(visibleText, resolved.hashes, autoMatch);
           if (!resolved.hashes.length) {
-            setInlineHidden(hideTarget, false);
-            hideTarget.removeAttribute('data-ob-dm-blocked');
-            requestDmRowSegment(row);
-            addDmStatusButton(row, resolved.reason === 'no-session' ? '读取弹幕…' : '匹配中…',
-              resolved.reason === 'no-session' ? '正在读取当前时间段的弹幕数据' : '该行尚未在已读取的弹幕段中找到');
+            if (autoMatch) {
+              setInlineHidden(hideTarget, true);
+              hideTarget.setAttribute('data-ob-dm-blocked', '1');
+              if (existingButton) existingButton.remove();
+              row.removeAttribute('data-ob-dm-action');
+            } else {
+              setInlineHidden(hideTarget, false);
+              hideTarget.removeAttribute('data-ob-dm-blocked');
+              requestDmRowSegment(row);
+              addDmStatusButton(row, resolved.reason === 'no-session' ? '读取弹幕…' : '匹配中…',
+                resolved.reason === 'no-session' ? '正在读取当前时间段的弹幕数据' : '该行尚未在已读取的弹幕段中找到');
+            }
             continue;
           }
-          if (resolved.hashes.length && resolved.hashes.every((hash) => blocked.has(hash))) {
+          if (autoMatch || (resolved.hashes.length && resolved.hashes.every((hash) => blocked.has(hash)))) {
             hideTarget.setAttribute('data-ob-dm-blocked', '1');
             setInlineHidden(hideTarget, true);
             if (existingButton) existingButton.remove();
@@ -7198,7 +7823,7 @@
               if (raw === lastRaw) return lastFiltered;
               try {
                 lastRaw = raw;
-              lastFiltered = asArrayBuffer(filterSeg(raw, segmentIndexFromUrl(xhr.__obDanmakuUrl)));
+                lastFiltered = asArrayBuffer(filterSeg(raw, segmentIndexFromUrl(xhr.__obDanmakuUrl)));
                 return lastFiltered;
               } catch (e) {
                 return raw;
@@ -7270,15 +7895,24 @@
       };
     }
     Store.onChange(() => {
+      const nextRuleSignature = DanmakuRules.signature('bili');
+      if (nextRuleSignature !== dmAutoRuleSignature || !Store.getSetting('enabled')) {
+        dmAutoRuleSignature = nextRuleSignature;
+        resetDmAutoState();
+        applyAutoRulesToObservedDanmaku();
+      }
       scanDmPanels(); refreshDmTool();
-      if (Store.getSetting('enabled') && Store.getSetting('showQuickBlock')) scheduleDmBootstrap(0);
+      scanFloatingDanmakuAutoRules();
+      if (Store.getSetting('enabled') && (Store.getSetting('showQuickBlock') || DanmakuRules.hasEnabled('bili'))) scheduleDmBootstrap(0);
     });
+    dmAutoRuleSignature = DanmakuRules.signature('bili');
     mountDmTool();
     refreshDmTool();
     setupFloatingDmPick();
-    scheduleDmBootstrap(1200);
+    if (Store.getSetting('showQuickBlock') || DanmakuRules.hasEnabled('bili')) scheduleDmBootstrap(1200);
     setInterval(() => {
       scanDmPanels();
+      scanFloatingDanmakuAutoRules();
       refreshDmTool();
       ensureDmBootstrap(false);
     }, 900);
@@ -7399,6 +8033,21 @@
           <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
         </div>
 
+        <h3>自动屏蔽弹幕</h3>
+        <p class="ob-auto-intro">规则只在本机按弹幕文字匹配；添加并启用规则后，B站和抖音会自动隐藏命中的弹幕。B站仍沿用现有 seg.so / PAKKU 兼容链：命中时保存 mid_hash，只有唯一候选且用户卡片正向校验成功时才补充 UID；不会重复实现 PAKKU 的去重。</p>
+        <div class="ob-auto-platform" data-ob-auto-platform="bili">
+          <h4>B站弹幕规则</h4>
+          <div class="ob-auto-add"><select class="ob-auto-kind" aria-label="B站规则类型"><option value="keyword">关键词</option><option value="regex">正则</option></select><input class="ob-auto-pattern" type="text" maxlength="240" placeholder="输入关键词或正则表达式"><button class="ob-auto-add-button" type="button">添加规则</button></div>
+          <div class="ob-auto-rule-list" id="ob-auto-bili-rules"></div>
+          <div class="ob-auto-status" id="ob-auto-bili-status"></div>
+        </div>
+        <div class="ob-auto-platform" data-ob-auto-platform="douyin">
+          <h4>抖音弹幕规则</h4>
+          <div class="ob-auto-add"><select class="ob-auto-kind" aria-label="抖音规则类型"><option value="keyword">关键词</option><option value="regex">正则</option></select><input class="ob-auto-pattern" type="text" maxlength="240" placeholder="输入关键词或正则表达式"><button class="ob-auto-add-button" type="button">添加规则</button></div>
+          <div class="ob-auto-rule-list" id="ob-auto-douyin-rules"></div>
+          <div class="ob-auto-status" id="ob-auto-douyin-status"></div>
+        </div>
+
         <h3>名单（点击删除）</h3>
         <div class="ob-list" id="ob-list"></div>
 
@@ -7431,6 +8080,90 @@
     }
     panel.querySelector('.ob-close').onclick = () => panel.remove();
     panel.onclick = (e) => { if (e.target === panel) panel.remove(); };
+
+    function autoStatusText(platform, rules) {
+      const enabledCount = rules.filter((rule) => rule.enabled).length;
+      let text = enabledCount + ' 条规则启用；规则命中后自动写入本地名单。';
+      try {
+        const adapter = currentAdapter;
+        if (adapter && adapter.id === platform && typeof adapter.getAutoDanmakuStatus === 'function') {
+          const status = adapter.getAutoDanmakuStatus();
+          if (platform === 'bili') {
+            text += ' 当前视频已观察 ' + status.observedSenders + ' 位发送者，已命中 ' + status.matchedMessages
+              + ' 条；hash ' + status.matchedHashes + ' 个，UID 正向关联 ' + status.linkedUids + ' 个。';
+            if (status.hashOnly || status.unidentifiable || status.uidLimit) {
+              text += ' hash-only ' + status.hashOnly + '，无可靠 hash ' + status.unidentifiable
+                + '，达到 UID 查询上限 ' + status.uidLimit + '。';
+            }
+          } else {
+            text += ' 当前视频已命中 ' + status.matchedMessages + ' 条，排队发送者 ' + status.queuedSenders
+              + ' 位，已提交 ' + status.persistedSenders + ' 位。';
+            if (status.noIdentity) text += ' 另有 ' + status.noIdentity + ' 条没有可靠发送者身份，未写入名单。';
+          }
+        }
+      } catch (e) {}
+      return text;
+    }
+
+    function refreshAutoRules() {
+      for (const platform of ['bili', 'douyin']) {
+        const rules = DanmakuRules.rulesFor(platform);
+        const list = panel.querySelector('#ob-auto-' + platform + '-rules');
+        const status = panel.querySelector('#ob-auto-' + platform + '-status');
+        if (!list || !status) continue;
+        list.textContent = '';
+        if (!rules.length) {
+          const empty = document.createElement('div');
+          empty.className = 'ob-auto-empty';
+          empty.textContent = '尚未设置规则';
+          list.appendChild(empty);
+        }
+        for (const rule of rules) {
+          const row = document.createElement('div');
+          row.className = 'ob-auto-rule';
+          const toggle = document.createElement('input');
+          toggle.type = 'checkbox'; toggle.checked = rule.enabled;
+          toggle.title = rule.enabled ? '停用规则' : '启用规则';
+          toggle.addEventListener('change', () => {
+            DanmakuRules.setEnabled(platform, rule.id, toggle.checked);
+            refreshAutoRules();
+            if (currentScanner) currentScanner.schedule();
+          });
+          const kind = document.createElement('span');
+          kind.className = 'ob-auto-rule-kind'; kind.textContent = rule.kind === 'regex' ? '正则' : '关键词';
+          const pattern = document.createElement('span');
+          pattern.className = 'ob-auto-rule-pattern'; pattern.textContent = rule.pattern;
+          pattern.title = rule.pattern;
+          const remove = document.createElement('button');
+          remove.type = 'button'; remove.className = 'ob-auto-rule-remove'; remove.textContent = '删除';
+          remove.addEventListener('click', () => {
+            DanmakuRules.remove(platform, rule.id);
+            refreshAutoRules();
+            if (currentScanner) currentScanner.schedule();
+          });
+          row.append(toggle, kind, pattern, remove);
+          list.appendChild(row);
+        }
+        status.textContent = autoStatusText(platform, rules);
+      }
+    }
+
+    panel.querySelectorAll('.ob-auto-platform').forEach((section) => {
+      const platform = section.getAttribute('data-ob-auto-platform');
+      const kind = section.querySelector('.ob-auto-kind');
+      const pattern = section.querySelector('.ob-auto-pattern');
+      const add = section.querySelector('.ob-auto-add-button');
+      const submit = () => {
+        const result = DanmakuRules.add(platform, kind.value, pattern.value);
+        if (!result.ok) { showToast(result.error); return; }
+        pattern.value = '';
+        refreshAutoRules();
+        if (currentScanner) currentScanner.schedule();
+        try { currentAdapter && currentAdapter.scanAutoDanmaku && currentAdapter.scanAutoDanmaku(); } catch (e) {}
+      };
+      add.onclick = submit;
+      pattern.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
+    });
 
     function refresh() {
       panel.querySelector('#ob-count').textContent = String(Index.size());
@@ -7493,6 +8226,7 @@
         || (backup.count ? ('已保留 ' + backup.count + '/' + backup.retention + ' 份本地快照，最新：' + new Date(backup.latestAt).toLocaleString()) : '尚无本地快照，将在下一次名单变更时建立');
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
+      refreshAutoRules();
     }
     refresh();
 
@@ -7606,6 +8340,7 @@
     Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
     openCommentManager, closeCommentManager, runThreadBlock, mergeCommentRecords,
+    danmakuRules: DanmakuRules,
     runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
     diagnostics: runtimeDiagnostics,
   };
