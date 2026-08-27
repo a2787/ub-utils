@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.41.0
+// @version       0.42.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,14 +54,50 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.41.0-weibo-feed-recycler-portal';
+  const RUNTIME_BUILD = '0.42.0-comment-manager-thread-runtime-guard';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
+  // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
+  // 运行时必须按文档幂等：第二份不能再创建扫描器、观察器、定时器和 UI。
+  // 新版本在既有页面中的生效仍以刷新/新文档为边界，符合用户脚本的正常生命周期。
+  const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
+  const activeRuntime = window[RUNTIME_GUARD_KEY];
+  if (activeRuntime && activeRuntime.active) {
+    activeRuntime.duplicateExecutions = Number(activeRuntime.duplicateExecutions || 0) + 1;
+    return;
+  }
+  window[RUNTIME_GUARD_KEY] = {
+    active: true,
+    version: RUNTIME_VERSION,
+    build: RUNTIME_BUILD,
+    duplicateExecutions: 0,
+  };
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const textOf = (el) => (el ? (el.textContent || '').trim() : '');
+  // B站评论主体在 open Shadow DOM 内，普通 textContent 不一定能穿透到正文。
+  // 这里只在单条记录上读取短文本，管理器不会对整页调用，避免把 UI/平台正文带入扫描热路径。
+  function deepTextOf(el, limit = 500) {
+    if (!el) return '';
+    const parts = [];
+    const seen = new Set();
+    const walk = (node) => {
+      if (!node || seen.has(node) || parts.join(' ').length >= limit) return;
+      seen.add(node);
+      if (node.nodeType === 3) {
+        const value = String(node.nodeValue || '').trim();
+        if (value) parts.push(value);
+        return;
+      }
+      if (node.nodeType !== 1 && node.nodeType !== 11) return;
+      if (node.shadowRoot) walk(node.shadowRoot);
+      for (const child of node.childNodes || []) walk(child);
+    };
+    walk(el);
+    return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, limit);
+  }
   const attr = (el, a) => (el ? el.getAttribute(a) : null);
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
@@ -823,6 +859,13 @@
       line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
     }
     .ob-weibo-comment-block:hover { background: #fdeceb !important; }
+    .ob-weibo-thread-block {
+      flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 22px !important;
+      border: 1px solid #e2a39c !important; border-radius: 4px !important; padding: 1px 6px !important;
+      background: transparent !important; color: #a93226 !important; font-size: 11px !important;
+      line-height: 18px !important; white-space: nowrap !important; cursor: pointer !important;
+    }
+    .ob-weibo-thread-block:hover { background: #fdeceb !important; }
     /* 微博帖子作者与 B站视频/动态作者的常驻拉黑入口。 */
     .ob-weibo-author-block, .ob-bili-author-block {
       flex: 0 0 auto !important; box-sizing: border-box !important; min-height: 20px !important;
@@ -1014,6 +1057,59 @@
     #ob-douyin-comment-manager .ob-dc-batch:hover:not(:disabled) { background: #a93226; }
     #ob-douyin-comment-manager .ob-dc-batch:disabled { background: #ccc; }
 
+    /* 三个平台统一的评论作者管理器；平台评论 DOM 不会放在这个脚本自有面板里。 */
+    #ob-comment-manager {
+      position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
+      width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-comment-manager .ob-cm-box {
+      box-sizing: border-box; width: min(760px, 94vw); max-width: 100%; min-width: 0; max-height: 86vh;
+      display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px;
+      background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-comment-manager .ob-cm-head, #ob-comment-manager .ob-cm-toolbar, #ob-comment-manager .ob-cm-footer {
+      display: flex; align-items: center; gap: 8px;
+    }
+    #ob-comment-manager .ob-cm-head { justify-content: space-between; margin-bottom: 10px; }
+    #ob-comment-manager h2 { margin: 0; font-size: 16px; }
+    #ob-comment-manager .ob-cm-close {
+      width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; color: #555;
+      cursor: pointer; font-size: 18px; line-height: 32px; padding: 0;
+    }
+    #ob-comment-manager .ob-cm-close:hover { background: #f1f1f1; }
+    #ob-comment-manager .ob-cm-toolbar { flex-wrap: wrap; margin-bottom: 10px; }
+    #ob-comment-manager .ob-cm-search {
+      flex: 1 1 260px; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid #ccc;
+      border-radius: 6px; padding: 6px 8px; color: #222; background: #fff; font-size: 13px;
+    }
+    #ob-comment-manager .ob-cm-refresh, #ob-comment-manager .ob-cm-load-all {
+      flex: 0 0 auto; min-height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px;
+      background: #fff; color: #333; cursor: pointer; font-size: 12px; white-space: nowrap;
+    }
+    #ob-comment-manager .ob-cm-refresh:hover:not(:disabled), #ob-comment-manager .ob-cm-load-all:hover:not(:disabled) { background: #f4f4f4; }
+    #ob-comment-manager button:disabled { color: #aaa; cursor: default; }
+    #ob-comment-manager .ob-cm-since-wrap { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: #666; }
+    #ob-comment-manager .ob-cm-since { height: 34px; border: 1px solid #ccc; border-radius: 6px; padding: 4px 6px; background: #fff; color: #333; font-size: 12px; }
+    #ob-comment-manager .ob-cm-checkall { display: inline-flex; align-items: center; white-space: nowrap; }
+    #ob-comment-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
+    #ob-comment-manager .ob-cm-status { width: 100%; min-height: 18px; color: #777; font-size: 12px; word-break: break-word; }
+    #ob-comment-manager .ob-cm-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+    #ob-comment-manager .ob-cm-empty { min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 20px; color: #777; text-align: center; }
+    #ob-comment-manager .ob-cm-row {
+      min-height: 58px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 8px;
+      padding: 8px 4px; border-bottom: 1px solid #f0f0f0; cursor: pointer;
+    }
+    #ob-comment-manager .ob-cm-row:last-child { border-bottom: 0; }
+    #ob-comment-manager .ob-cm-body { min-width: 0; }
+    #ob-comment-manager .ob-cm-name { min-width: 0; color: #333; font-weight: 600; overflow-wrap: anywhere; }
+    #ob-comment-manager .ob-cm-meta { margin-top: 2px; color: #888; font-size: 11px; }
+    #ob-comment-manager .ob-cm-note { min-width: 0; margin-top: 3px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ob-comment-manager .ob-cm-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
+    #ob-comment-manager .ob-cm-count { color: #777; }
+    #ob-comment-manager .ob-cm-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
+    #ob-comment-manager .ob-cm-batch:hover:not(:disabled) { background: #a93226; }
+    #ob-comment-manager .ob-cm-batch:disabled { background: #ccc; }
+
     /* 抖音视频页弹幕发送者管理工具：与 B 站右下角工具保持同样的多选交互，
        数据只来自当前视频已观察到且带可靠身份的网页弹幕节点。 */
     #ob-douyin-dm-tool {
@@ -1063,6 +1159,12 @@
     #ob-douyin-dm-manager .ob-dd-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
     #ob-douyin-dm-manager .ob-dd-batch:hover:not(:disabled) { background: #a93226; }
     #ob-douyin-dm-manager .ob-dd-batch:disabled { background: #ccc; cursor: default; }
+    @media (max-width: 520px) {
+      #ob-comment-manager { align-items: flex-end; }
+      #ob-comment-manager .ob-cm-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-comment-manager .ob-cm-footer { align-items: stretch; }
+      #ob-comment-manager .ob-cm-batch { flex: 1 1 100%; }
+    }
     @media (max-width: 520px) {
       #ob-douyin-comment-manager { align-items: flex-end; }
       #ob-douyin-comment-manager .ob-dc-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
@@ -2431,7 +2533,7 @@
     return '';
   }
 
-  function showConfirm(label, keys, anchorEl, onBlocked, commit, note) {
+  function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { showToast('无法识别可靠身份'); return; }
     let box = $('#ob-confirm');
@@ -2463,7 +2565,7 @@
       }
       box.remove();
       try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
-      showToast(`已拉黑：${label || normalizedKeys[0]}`, transaction && transaction.undo || null);
+      showToast(`已拉黑：${toastLabel || label || normalizedKeys[0]}`, transaction && transaction.undo || null);
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
     };
@@ -2586,7 +2688,7 @@
         if (!comment) continue;
         const info = extractComment(comment);
         if (info && info.keys && info.keys.length) {
-          lastCommentMenuContext = { ...info, at: Date.now() };
+          lastCommentMenuContext = { ...info, isRoot: isRootComment(comment), at: Date.now() };
           return;
         }
       }
@@ -2620,13 +2722,44 @@
       return links.find((link) => secUidFromHref(attr(link, 'href')) === sec && textOf(link)) || first;
     }
 
+    function commentThreadId(item) {
+      const root = rootCommentOf(item) || item;
+      for (const node of [root, item]) {
+        if (!node || !node.getAttribute) continue;
+        for (const name of ['data-comment-id', 'comment_id', 'data-cid', 'data-rid', 'data-root-id']) {
+          const value = normId(attr(node, name));
+          if (value) return value;
+        }
+      }
+      // 仅用于当前 DOM 节点之间的归属，不会写入身份键，也不把它当作用户 ID。
+      return root && root.id ? String(root.id) : '';
+    }
+
+    function rootCommentOf(item) {
+      let current = nearestComment(item) || item;
+      let root = current;
+      for (let guard = 0; current && guard < 24; guard++, current = composedParent(current)) {
+        if (current !== root && current.matches && current.matches(SEL.comment)) root = current;
+      }
+      return root && root.matches && root.matches(SEL.comment) ? root : null;
+    }
+
+    function isRootComment(item) {
+      const current = nearestComment(item) || item;
+      const root = rootCommentOf(current);
+      return !!current && !!root && current === root;
+    }
+
     function extractComment(item) {
       const link = findAuthorLink(item);
       const sec = secUidFromHref(attr(link, 'href'));
       const name = textOf(link) || textOf(item.querySelector(SEL.commentNickname));
       const keys = [];
       appendIdentityKey(keys, 'douyin:secuid', sec);
-      return { keys, label: name, note: noteFor('抖音评论', item), container: item };
+      return {
+        keys, label: name, note: noteFor('抖音评论', item), container: item,
+        threadId: commentThreadId(item), level: isRootComment(item) ? 'root' : 'reply', source: 'dom',
+      };
     }
 
     function extractGeneric(item) {
@@ -2677,26 +2810,32 @@
       return node.matches && node.matches('button,a,[role="button"],[role="menuitem"],[tabindex]') ? node : null;
     }
 
-    function commentExpandControls() {
+    function commentExpandControls(scope = document) {
       const out = []; const seen = new Set();
-      for (const node of querySelectorAllDeep(document, '*')) {
+      for (const node of querySelectorAllDeep(scope, '*')) {
         if (!node || node.matches(SEL.comment)) continue;
         const text = textOf(node).replace(/\s+/g, ' ').trim();
         if (!text || text.length > 60 || !COMMENT_EXPAND_TEXT.test(text)) continue;
+        if (node.getAttribute && (node.getAttribute('aria-expanded') === 'true'
+          || node.getAttribute('data-expanded') === 'true'
+          || node.hasAttribute('disabled'))) continue;
+        if (/(?:已展开|收起|没有更多|暂无更多)/.test(text)) continue;
         const comment = nearestComment(node);
         const control = comment && interactiveAncestor(node, comment);
+        if (scope !== document && comment && comment !== scope && !(scope.contains && scope.contains(comment))) continue;
         if (!comment || !control || !isVisible(control) || seen.has(control)) continue;
         seen.add(control); out.push(control);
       }
       return out;
     }
 
-    async function expandAllCommentReplies(onProgress) {
+    async function expandAllCommentReplies(scope = document, onProgress) {
+      if (typeof scope === 'function') { onProgress = scope; scope = document; }
       const clicked = new WeakSet();
       let count = 0;
       const maxClicks = 80;
       for (let round = 0; round < 16 && count < maxClicks; round++) {
-        const controls = commentExpandControls().filter((control) => !clicked.has(control));
+        const controls = commentExpandControls(scope).filter((control) => !clicked.has(control));
         if (!controls.length) break;
         for (const control of controls) {
           if (count >= maxClicks) break;
@@ -2706,7 +2845,7 @@
           await new Promise((resolve) => setTimeout(resolve, 220));
         }
       }
-      return { clicked: count, users: querySelectorAllDeep(document, SEL.comment).length };
+      return { clicked: count, users: querySelectorAllDeep(scope, SEL.comment).length, remaining: commentExpandControls(scope).length };
     }
 
     function commentScrollTargets() {
@@ -2778,6 +2917,41 @@
         }
       }
       return { supported: true, scrolls, comments: currentCount(), stablePasses };
+    }
+
+    function collectCommentRecords(root) {
+      return querySelectorAllDeep(root || document, SEL.comment).map(extractComment)
+        .filter((info) => info && info.keys && info.keys.length);
+    }
+
+    async function loadAllCommentRecords(onProgress) {
+      const expansion = await expandAllCommentReplies(document, (clicked) => {
+        if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: querySelectorAllDeep(document, SEL.comment).length, clicked });
+      });
+      const loaded = await loadMoreCommentItems((progress) => {
+        if (typeof onProgress === 'function') onProgress({ phase: 'scroll', collected: querySelectorAllDeep(document, SEL.comment).length, ...progress });
+      });
+      const records = collectCommentRecords(document);
+      const reasons = ['抖音没有稳定公开的评论全量接口，仅按当前页面的明确控件和安全滚动读取'];
+      if (!loaded.supported) reasons.push('未找到可安全滚动的评论容器');
+      if (expansion.remaining || expansion.clicked >= 80) reasons.push('仍有未展开或达到安全上限的回复入口');
+      return { records, partial: true, reason: reasons.join('；') };
+    }
+
+    async function loadThread(item, onProgress) {
+      const root = rootCommentOf(item);
+      if (!root || !isRootComment(root)) throw new Error('root comment unavailable');
+      const expansion = await expandAllCommentReplies(root, (clicked) => {
+        if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: querySelectorAllDeep(root, SEL.comment).length, clicked });
+      });
+      const records = collectCommentRecords(root);
+      const partialReasons = ['抖音没有稳定公开的楼中楼全量接口，仅按当前页面的明确展开控件读取'];
+      if (expansion.remaining || expansion.clicked >= 80) partialReasons.push('仍有未展开的回复入口');
+      return {
+        records,
+        partial: true,
+        reason: partialReasons.join('；'),
+      };
     }
 
     function isVideoPage() {
@@ -2977,7 +3151,13 @@
       videoKey,
       collectDanmaku,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
-      commentManager: { expandAll: expandAllCommentReplies, loadMore: loadMoreCommentItems },
+      commentManager: {
+        available: () => isVideoPage() && collectCommentRecords(document).length > 0,
+        collectRecords: () => collectCommentRecords(document),
+        loadAll: loadAllCommentRecords,
+        loadThread,
+        isRootComment,
+      },
       rememberMenuContext: rememberCommentMenuContext,
       menuContextInfo,
       extract(item) {
@@ -3133,7 +3313,183 @@
       const name = textOf(link) || attr(link, 'nick-name');
       const keys = [];
       appendIdentityKey(keys, 'weibo:uid', uid);
-      return { keys, label: name, container: findContainer(item) };
+      const container = findContainer(item);
+      const root = rootCommentOf(item) || item;
+      const textNode = item.querySelector && item.querySelector('.item1in > .con1 > .text, .item2in > .con2 > .text, .con2 > .text, .con1 > .text, .content > .txt, .con > .txt, .txt, .text, .content');
+      const text = textOf(textNode || item).replace(/\s+/g, ' ').trim().slice(0, 360);
+      const rootId = commentDataValue(root, ['comment_id', 'commentId', 'data-comment-id', 'data-cid']);
+      const commentId = commentDataValue(item, ['comment_id', 'commentId', 'data-comment-id', 'data-cid']);
+      return {
+        keys, label: name, note: text ? '微博评论：' + text : '', container,
+        commentId, threadId: rootId || commentId, level: isRootComment(item) ? 'root' : 'reply', source: 'dom',
+        root,
+      };
+    }
+
+    function commentDataValue(item, names) {
+      if (!item) return '';
+      for (const name of names) {
+        const value = normId(attr(item, name));
+        if (value) return value;
+      }
+      return '';
+    }
+
+    function isReplyComment(item) {
+      return !!(item && item.matches && item.matches('.item2, [node-type="reply"]'));
+    }
+
+    function rootCommentOf(item) {
+      if (!item) return null;
+      if (item.matches && item.matches('.item1, .card-review[comment_id], [node-type="comment"]')) return item;
+      let current = item.parentElement;
+      for (let guard = 0; current && guard < 24; guard++, current = current.parentElement) {
+        if (current.matches && current.matches('.item1, .card-review[comment_id], [node-type="comment"]')) return current;
+      }
+      return null;
+    }
+
+    function isRootComment(item) {
+      return !!item && !isReplyComment(item) && !!rootCommentOf(item);
+    }
+
+    function collectWeiboCommentRecordsActive(root) {
+      return collectWeiboItems(root || document, SEL.comment).map(extract)
+        .filter((info) => info && info.keys && info.keys.length);
+    }
+
+    const weiboCommentNodeIds = new WeakMap();
+    let nextWeiboCommentNodeId = 1;
+    let weiboCommentRouteKey = '';
+    const weiboCommentCache = new Map();
+    function weiboCommentCacheKey(info) {
+      const container = info && info.container;
+      let nodeId = '';
+      if (container && (typeof container === 'object' || typeof container === 'function')) {
+        nodeId = weiboCommentNodeIds.get(container);
+        if (!nodeId) { nodeId = String(nextWeiboCommentNodeId++); weiboCommentNodeIds.set(container, nodeId); }
+      }
+      const identity = info && info.keys ? info.keys.join('|') : '';
+      return (info && info.commentId ? 'id:' + info.commentId : 'node:' + nodeId) + '|' + identity + '|' + (info && info.level || 'root');
+    }
+
+    function currentWeiboCommentRouteKey() {
+      return location.pathname + location.search + location.hash;
+    }
+
+    function collectWeiboCommentRecords(root) {
+      const scope = root || document;
+      const active = collectWeiboCommentRecordsActive(scope);
+      if (scope !== document) return active;
+      const nextRoute = currentWeiboCommentRouteKey();
+      if (weiboCommentRouteKey && nextRoute !== weiboCommentRouteKey) weiboCommentCache.clear();
+      weiboCommentRouteKey = nextRoute;
+      for (const info of active) weiboCommentCache.set(weiboCommentCacheKey(info), info);
+      return Array.from(weiboCommentCache.values());
+    }
+
+    function isCommentRoute() {
+      const route = location.pathname + location.search + location.hash;
+      if (/\/hot\//i.test(location.pathname) || /\/search\//i.test(location.pathname)) return false;
+      return /#comment|comment/i.test(route)
+        || /^\/u\/\d+/i.test(location.pathname)
+        || /^\/\d+\/[A-Za-z0-9_-]+/i.test(location.pathname);
+    }
+
+    function weiboCommentScrollTargets() {
+      const targets = []; const seen = new Set();
+      const add = (node) => {
+        if (!node || node.nodeType !== 1 || seen.has(node) || (node.closest && node.closest('#ob-comment-manager'))) return;
+        let style = null;
+        try { style = getComputedStyle(node); } catch (error) {}
+        const overflow = style ? String(style.overflowY || '') + ' ' + String(style.overflow || '') : '';
+        if (node.scrollHeight > node.clientHeight + 8 && /(auto|scroll|overlay)/i.test(overflow)) {
+          seen.add(node); targets.push(node);
+        }
+      };
+      for (const item of collectWeiboItems(document, SEL.comment)) {
+        let current = item;
+        for (let guard = 0; current && guard < 20; guard++, current = current.parentElement) add(current);
+      }
+      if (!targets.length && document.scrollingElement && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 8) targets.push(document.scrollingElement);
+      return targets;
+    }
+
+    async function loadAllCommentRecords(onProgress) {
+      const targets = weiboCommentScrollTargets();
+      const original = targets.map((target) => ({ target, top: target.scrollTop, left: target.scrollLeft }));
+      let scrolls = 0;
+      try {
+        for (let pass = 0; pass < 12 && targets.length; pass++) {
+          for (const target of targets) {
+            const maxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+            for (const top of [0, Math.round(maxTop / 2), maxTop]) {
+              target.scrollTop = top;
+              try { target.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (error) {}
+              await new Promise((resolve) => setTimeout(resolve, 220));
+              scrolls++;
+              const records = collectWeiboCommentRecords(document);
+              if (typeof onProgress === 'function') onProgress({ phase: 'scroll', collected: records.length, scrolls });
+            }
+          }
+          if (targets.every((target) => target.scrollTop >= Math.max(0, target.scrollHeight - target.clientHeight - 2))) break;
+        }
+      } finally {
+        for (const state of original) { state.target.scrollTop = state.top; state.target.scrollLeft = state.left; }
+      }
+      const records = collectWeiboCommentRecords(document);
+      return {
+        records,
+        partial: true,
+        reason: targets.length ? '微博评论只按当前路由内实际观察到的 DOM 读取' : '未找到可安全滚动的评论容器，仅显示已发现评论',
+      };
+    }
+
+    function weiboReplyExpandControls(root) {
+      const out = []; const seen = new Set();
+      const textPattern = /(?:共\s*\d+\s*条回复|查看[^\n]{0,20}回复|展开[^\n]{0,20}回复)/;
+      for (const node of querySelectorAllDeep(root, 'a,button,[role="button"],div,span')) {
+        const text = textOf(node).replace(/\s+/g, ' ').trim();
+        if (!text || text.length > 80 || !textPattern.test(text)) continue;
+        if (node.getAttribute && (node.getAttribute('aria-expanded') === 'true'
+          || node.getAttribute('data-expanded') === 'true'
+          || node.hasAttribute('disabled'))) continue;
+        if (/(?:已展开|收起|没有更多|暂无更多)/.test(text)) continue;
+        let control = node;
+        if (!(node.matches && node.matches('a,button,[role="button"]'))) {
+          control = node.querySelector && node.querySelector('a,button,[role="button"]');
+        }
+        if (!control || seen.has(control) || !isVisible(control)) continue;
+        seen.add(control); out.push(control);
+      }
+      return out;
+    }
+
+    async function loadThread(item, onProgress) {
+      const root = rootCommentOf(item);
+      if (!root || !isRootComment(root)) throw new Error('root comment unavailable');
+      let records = collectWeiboCommentRecordsActive(root);
+      const controls = weiboReplyExpandControls(root);
+      let partial = true;
+      let reason = '微博没有稳定公开的楼中楼全量接口，仅按当前路由内可确认的 DOM 读取';
+      for (const control of controls.slice(0, 20)) {
+        try { control.click(); } catch (error) { reason += '；回复展开控件不可用'; }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        records = records.concat(collectWeiboCommentRecordsActive(root));
+        if (typeof onProgress === 'function') onProgress({ collected: records.length });
+      }
+      const remaining = weiboReplyExpandControls(root).length;
+      if (remaining || controls.length > 20) reason += '；仍有未展开或达到安全上限的回复入口';
+      const rootId = commentDataValue(root, ['comment_id', 'commentId', 'data-comment-id', 'data-cid']);
+      if (rootId) {
+        const cached = collectWeiboCommentRecords(document).filter((record) => record.threadId === rootId);
+        records = records.concat(cached);
+      } else {
+        reason += controls.length
+          ? '；缺少可靠楼标识，未合并无法确认归属的弹窗回复'
+          : '；缺少可靠楼标识，无法确认该楼回复是否完整';
+      }
+      return { records, partial, reason };
     }
     // 2026-08-22 真站捕获：根评论是 `.item1 > .item1in > .con1 > .info > .opt`，
     // 楼中楼是 `.item2 > .con2 > .info > .opt`（没有 `.item2in` 中间层）。
@@ -3165,7 +3521,7 @@
       return all.filter((item) => !item.matches || item.matches(selector));
     }
     function clearCommentButtons() {
-      for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) button.remove();
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block,.ob-weibo-thread-block')) button.remove();
     }
     const weiboAuthorPortalStates = new Map();
     let weiboAuthorPositionListeners = false;
@@ -3347,27 +3703,49 @@
       for (const button of querySelectorAllDeep(document, '.ob-weibo-comment-block')) {
         if (!button.closest || !button.closest(SEL.comment)) button.remove();
       }
+      for (const button of querySelectorAllDeep(document, '.ob-weibo-thread-block')) {
+        if (!button.closest || !button.closest(SEL.comment)) button.remove();
+      }
       const enabled = Store.getSetting('enabled') && Store.getSetting('showQuickBlock');
       for (const item of collectWeiboItems(document, SEL.comment)) {
         const mount = commentActionMount(item);
         if (!mount) continue;
         let button = mount.querySelector(':scope > .ob-weibo-comment-block');
+        let threadButton = mount.querySelector(':scope > .ob-weibo-thread-block');
         const info = extract(item);
+        const root = isRootComment(item);
         if (!enabled || !info.keys.length || Index.isBlocked(info.keys)) {
           if (button) button.remove();
+          if (threadButton) threadButton.remove();
           continue;
         }
-        if (button) continue;
-        button = document.createElement('button');
-        button.type = 'button'; button.className = 'ob-weibo-comment-block'; button.textContent = '本地拉黑';
-        button.title = '本地拉黑此评论作者'; button.setAttribute('aria-label', '本地拉黑此评论作者');
-        button.addEventListener('click', (event) => {
-          event.stopPropagation(); event.preventDefault();
-          const current = extract(item);
-          if (!current.keys.length) return;
-          showConfirm(current.label, current.keys, button);
-        });
-        mount.insertBefore(button, mount.firstChild);
+        if (!button) {
+          button = document.createElement('button');
+          button.type = 'button'; button.className = 'ob-weibo-comment-block'; button.textContent = '本地拉黑';
+          button.title = '本地拉黑此评论作者'; button.setAttribute('aria-label', '本地拉黑此评论作者');
+          button.addEventListener('click', (event) => {
+            event.stopPropagation(); event.preventDefault();
+            const current = extract(item);
+            if (!current.keys.length) return;
+            showConfirm(current.label, current.keys, button);
+          });
+          mount.insertBefore(button, mount.firstChild);
+        }
+        if (!root) {
+          if (threadButton) threadButton.remove();
+          continue;
+        }
+        if (!threadButton) {
+          threadButton = document.createElement('button');
+          threadButton.type = 'button'; threadButton.className = 'ob-weibo-thread-block'; threadButton.textContent = '屏蔽该楼回复';
+          threadButton.title = '本地拉黑该主评论及已加载的所有回复作者';
+          threadButton.setAttribute('aria-label', '屏蔽该楼回复');
+          threadButton.addEventListener('click', (event) => {
+            event.stopPropagation(); event.preventDefault();
+            runThreadBlock(item, Adapters.weibo, extract(item));
+          });
+          mount.insertBefore(threadButton, button.nextSibling);
+        }
       }
     }
     function collectWeiboUsers(root) {
@@ -3393,6 +3771,13 @@
       disappearSelectors: [SEL.comment],
       extract,
       collectUsers: collectWeiboUsers,
+      commentManager: {
+        available: () => isCommentRoute() && collectWeiboCommentRecords(document).length > 0,
+        collectRecords: () => collectWeiboCommentRecords(document),
+        loadAll: loadAllCommentRecords,
+        loadThread,
+        isRootComment,
+      },
       canBulkModal(modal) {
         return querySelectorAllDeep(modal || document, WB_MODAL_USER_SEL)
           .some((link) => uidFromLink(link) && isVisible(link));
@@ -3589,13 +3974,75 @@
       return el;
     }
 
+    function commentThreadOf(el) {
+      let current = el;
+      for (let guard = 0; current && guard < 24; guard++) {
+        if (current.tagName === 'BILI-COMMENT-THREAD-RENDERER') return current;
+        if (current.parentNode) current = current.parentNode;
+        else if (current.host) current = current.host;
+        else break;
+      }
+      return null;
+    }
+
+    function commentDataValue(el, names) {
+      const nodes = [el, commentThreadOf(el), deepQuery(commentThreadOf(el) || el, 'bili-comment-renderer')].filter(Boolean);
+      for (const node of nodes) {
+        const data = node.__data;
+        for (const source of [data, data && data.reply, data && data.root, data && data.data]) {
+          if (!source || typeof source !== 'object') continue;
+          for (const name of names) {
+            const value = normId(source[name]);
+            if (value) return value;
+          }
+        }
+        for (const name of names) {
+          const value = normId(attr(node, name));
+          if (value) return value;
+        }
+      }
+      return '';
+    }
+
+    function commentIdOf(el) {
+      return commentDataValue(el, ['rpid_str', 'rpid', 'comment_id', 'commentId', 'data-comment-id']);
+    }
+
+    function commentThreadIdOf(el) {
+      const explicit = commentDataValue(el, ['root', 'root_str', 'root_id', 'rootId', 'thread_id', 'threadId', 'comment_id', 'commentId', 'data-comment-id']);
+      // B站根评论的 root 常见为 0；它不是可查询的楼号，必须回退到自身 rpid。
+      if (explicit && explicit !== '0') return explicit;
+      const ownId = commentDataValue(el, ['rpid_str', 'rpid']);
+      if (ownId && ownId !== '0') return ownId;
+      const thread = commentThreadOf(el);
+      // 仅作为当前 DOM 节点的关联标识；API 调用前仍要求为纯数字的真实 root ID。
+      return thread && thread.id ? String(thread.id) : '';
+    }
+
+    function isRootComment(el) {
+      if (!el) return false;
+      if (el.tagName === 'BILI-COMMENT-THREAD-RENDERER') return !!deepQuery(el, 'bili-comment-renderer');
+      if (el.matches && el.matches('bili-comment-reply-renderer, bili-sub-comment-renderer, .reply-item')) return false;
+      return !!(el.matches && el.matches('bili-comment-renderer, .comment-item, [data-comment-id]'));
+    }
+
+    function commentNote(el) {
+      const text = deepTextOf(el, 360);
+      return text ? 'B站评论：' + text : '';
+    }
+
     function extract(el) {
       const fromData = dataIdentity(el && el.__data);
       const mid = fromData.mid || midFromEl(el);
       const name = fromData.name || textOf(deepQuery(el, '.user-name, .uname, [data-name], a[href*="space.bilibili.com/"]'));
       const keys = [];
       appendIdentityKey(keys, 'bili:uid', mid);
-      return { keys, label: name, container: commentContainer(el) };
+      const root = commentThreadOf(el) || (isRootComment(el) ? el : null);
+      return {
+        keys, label: name, note: commentNote(el), container: commentContainer(el),
+        commentId: commentIdOf(el), threadId: commentThreadIdOf(el),
+        level: isRootComment(el) ? 'root' : 'reply', source: 'dom', root,
+      };
     }
 
     function userFromSpaceLink(link) {
@@ -3606,6 +4053,11 @@
 
     function collectCommentUsers(root) {
       return querySelectorAllDeep(root, SEL.comment).map(extract);
+    }
+
+    function collectCommentRecords(root) {
+      return querySelectorAllDeep(root || document, SEL.comment).map(extract)
+        .filter((info) => info && info.keys && info.keys.length);
     }
 
     function collectModalUsers(root) {
@@ -3755,7 +4207,8 @@
     }
 
     async function fetchReplyJSON(url) {
-      const response = await fetch(url, { credentials: 'include' });
+      // 评论管理器只读公开接口；明确不把当前站点的登录 Cookie 带到接口请求中。
+      const response = await fetch(url, { credentials: 'omit' });
       if (!response || !response.ok) throw new Error('comment API HTTP ' + (response && response.status));
       const payload = await response.json();
       if (!payload || payload.code !== 0 || !payload.data) {
@@ -3764,15 +4217,20 @@
       return payload.data;
     }
 
-    function replyRecord(reply) {
+    function replyRecord(reply, threadId, level) {
       const mid = normId(reply && (reply.mid_str || reply.mid));
       if (!/^\d+$/.test(mid) || mid === '0') return null;
       const member = (reply && reply.member) || {};
       const ctime = Number(reply && reply.ctime);
+      const commentId = normId(reply && (reply.rpid_str || reply.rpid));
+      const message = reply && reply.content && (reply.content.message || reply.content.text);
       return {
         keys: [makeIdentityKey('bili:uid', mid)],
         label: normId(member.uname) || ('UID ' + mid),
+        note: message ? 'B站评论：' + String(message).replace(/\s+/g, ' ').trim().slice(0, 360) : '',
         ctime: Number.isFinite(ctime) && ctime > 0 ? ctime : 0,
+        commentId, threadId: normId(threadId) || commentId,
+        level: level === 'reply' ? 'reply' : 'root', source: 'api',
       };
     }
 
@@ -3786,9 +4244,12 @@
       const records = [];
       const subRoots = [];
       let partial = false;
+      let reason = '';
       let next = 0;
       let mainPages = 0;
       let total = 0;
+      let mainEnded = false;
+      let subRootCandidates = 0;
       const report = () => { if (typeof onProgress === 'function') onProgress({ collected: records.length, total, partial }); };
 
       while (mainPages < REPLY_MAIN_PAGE_CAP) {
@@ -3796,31 +4257,48 @@
         try {
           data = await fetchReplyJSON(REPLY_MAIN_API + '?oid=' + encodeURIComponent(aid)
             + '&type=1&mode=3&ps=' + REPLY_PAGE_SIZE + '&next=' + encodeURIComponent(next));
-        } catch (e) { partial = true; break; }
+        } catch (e) { partial = true; reason = '根评论分页读取失败'; break; }
         mainPages++;
         const replies = Array.isArray(data.replies) ? data.replies : [];
         const cursor = data.cursor || {};
         if (!total) total = Number(cursor.all_count) || 0;
         for (const reply of replies) {
-          const record = replyRecord(reply);
-          if (record) records.push(record);
           const rootId = normId(reply && (reply.rpid_str || reply.rpid));
+          const record = replyRecord(reply, rootId, 'root');
+          if (record) records.push(record);
           const loaded = Array.isArray(reply && reply.replies) ? reply.replies : [];
           for (const sub of loaded) {
-            const subRecord = replyRecord(sub);
+            const subRecord = replyRecord(sub, rootId, 'reply');
             if (subRecord) records.push(subRecord);
           }
           // 楼中楼只在接口里预置少量几条；rcount 更大说明还有未展开的子回复。
           const rcount = Number(reply && reply.rcount) || 0;
-          if (rootId && rcount > loaded.length && subRoots.length < REPLY_SUB_ROOT_CAP) subRoots.push(rootId);
+          if (rcount > loaded.length) {
+            subRootCandidates++;
+            if (!rootId) {
+              partial = true;
+              reason = reason || '有子回复的根评论缺少可靠 root ID';
+            } else if (subRoots.length < REPLY_SUB_ROOT_CAP) {
+              subRoots.push(rootId);
+            } else {
+              partial = true;
+              reason = reason || '有子回复的根评论达到安全读取上限';
+            }
+          }
         }
         report();
-        if (cursor.is_end || !replies.length) break;
+        if (cursor.is_end || !replies.length) { mainEnded = true; break; }
         const nextCursor = Number(cursor.next);
-        if (!Number.isFinite(nextCursor) || nextCursor <= next) break;
+        if (!Number.isFinite(nextCursor) || nextCursor <= next) {
+          partial = true;
+          reason = reason || '根评论分页缺少连续 cursor';
+          break;
+        }
         next = nextCursor;
       }
-      if (mainPages >= REPLY_MAIN_PAGE_CAP) partial = true;
+      if (!mainEnded && mainPages >= REPLY_MAIN_PAGE_CAP) { partial = true; reason = reason || '根评论达到安全分页上限'; }
+      if (!mainEnded && mainPages === 0) { partial = true; reason = reason || '根评论分页没有返回结束状态'; }
+      if (subRootCandidates > REPLY_SUB_ROOT_CAP) { partial = true; reason = reason || '有子回复的根评论达到安全读取上限'; }
 
       for (const rootId of subRoots) {
         for (let page = 1; page <= REPLY_SUB_PAGE_CAP; page++) {
@@ -3828,20 +4306,62 @@
           try {
             data = await fetchReplyJSON(REPLY_SUB_API + '?oid=' + encodeURIComponent(aid)
               + '&type=1&root=' + encodeURIComponent(rootId) + '&ps=' + REPLY_PAGE_SIZE + '&pn=' + page);
-          } catch (e) { partial = true; break; }
+          } catch (e) { partial = true; reason = reason || '子回复分页读取失败'; break; }
           const replies = Array.isArray(data.replies) ? data.replies : [];
           for (const sub of replies) {
-            const record = replyRecord(sub);
+            const record = replyRecord(sub, rootId, 'reply');
             if (record) records.push(record);
           }
           report();
-          const count = Number(data.page && data.page.count) || 0;
-          if (replies.length < REPLY_PAGE_SIZE || page * REPLY_PAGE_SIZE >= count) break;
-          if (page === REPLY_SUB_PAGE_CAP) partial = true;
+          const rawCount = data.page && data.page.count;
+          const count = Number(rawCount);
+          const hasCount = rawCount != null && Number.isFinite(count) && count >= 0;
+          if (!replies.length || replies.length < REPLY_PAGE_SIZE || (hasCount && page * REPLY_PAGE_SIZE >= count)) break;
+          if (page === REPLY_SUB_PAGE_CAP) { partial = true; reason = reason || '子回复达到安全分页上限'; }
         }
       }
       report();
-      return { records, partial, total };
+      return { records, partial, total, reason };
+    }
+
+    async function loadThread(item, onProgress) {
+      const container = commentThreadOf(item) || item;
+      if (!container || !isRootComment(container)) throw new Error('root comment unavailable');
+      const rootRenderer = deepQuery(container, 'bili-comment-renderer') || container;
+      const rootId = commentThreadIdOf(rootRenderer);
+      const records = collectCommentRecords(container);
+      if (!/^\d+$/.test(rootId)) {
+        return {
+          records,
+          partial: true,
+          reason: '当前评论没有可用于只读接口的可靠 root ID',
+        };
+      }
+      const aid = videoAidFromPage();
+      if (!aid) return { records, partial: true, reason: '当前页面没有可靠视频 ID' };
+      let partial = false;
+      let reason = '';
+      for (let page = 1; page <= REPLY_SUB_PAGE_CAP; page++) {
+        let data;
+        try {
+          data = await fetchReplyJSON(REPLY_SUB_API + '?oid=' + encodeURIComponent(aid)
+            + '&type=1&root=' + encodeURIComponent(rootId) + '&ps=' + REPLY_PAGE_SIZE + '&pn=' + page);
+        } catch (error) {
+          partial = true; reason = String(error && error.message || error).slice(0, 120); break;
+        }
+        const replies = Array.isArray(data.replies) ? data.replies : [];
+        for (const reply of replies) {
+          const record = replyRecord(reply, rootId, 'reply');
+          if (record) records.push(record);
+        }
+        if (typeof onProgress === 'function') onProgress({ collected: records.length, page });
+        const rawCount = data.page && data.page.count;
+        const count = Number(rawCount);
+        const hasCount = rawCount != null && Number.isFinite(count) && count >= 0;
+        if (!replies.length || replies.length < REPLY_PAGE_SIZE || (hasCount && page * REPLY_PAGE_SIZE >= count)) break;
+        if (page === REPLY_SUB_PAGE_CAP) { partial = true; reason = '单楼回复达到安全分页上限'; }
+      }
+      return { records, partial, reason };
     }
 
     return {
@@ -3860,6 +4380,13 @@
       bulkFabLabel: (n) => '🚫 拉黑已加载评论作者(' + n + ')',
       // 批量精细化只在视频评论区可用；动态页/空间页没有这套接口契约。
       bulkScope: { available: isVideoCommentPage, fetchAll: fetchAllCommentAuthors, unit: '评论作者' },
+      commentManager: {
+        available: () => isVideoCommentPage() && collectCommentRecords(document).length > 0,
+        collectRecords: () => collectCommentRecords(document),
+        loadAll: fetchAllCommentAuthors,
+        loadThread,
+        isRootComment,
+      },
       containerOf: commentContainer,
       onScan: syncBiliAuthorButtons,
       onDisabled: clearBiliAuthorButtons,
@@ -3963,6 +4490,24 @@
     return btn;
   }
 
+  function makeThreadBtn(anchorEl, cfg, key, adapter) {
+    const listItem = anchorEl && anchorEl.tagName === 'LI';
+    const btn = document.createElement(listItem ? 'li' : 'button');
+    btn.className = 'ob-quick ob-thread-quick' + (listItem ? ' operation-option' : '');
+    if (listItem) { btn.setAttribute('role', 'menuitem'); btn.tabIndex = 0; }
+    else btn.type = 'button';
+    btn.setAttribute('data-thread-key', key);
+    btn.textContent = '🧵 屏蔽该楼回复';
+    const activate = (event) => {
+      event.stopPropagation(); event.preventDefault();
+      if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
+      runThreadBlock(anchorEl, adapter);
+    };
+    btn.addEventListener('click', activate);
+    if (listItem) btn.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') activate(event); });
+    return btn;
+  }
+
   // 各平台"原生锚点文本"：评论/用户页用拉黑类，弹幕/举报页用举报类
   const QB = {
     bilibili: { label: '本地拉黑', anchorTexts: ['加入黑名单', '拉黑', '举报'] },
@@ -4011,11 +4556,6 @@
       const inDouyinPortal = a.id === 'douyin' && el.closest
         && el.closest('[role="tooltip"],.semi-tooltip-wrapper');
       if (inDouyinPortal && !(el.matches && el.matches('[data-e2e="video-comment-more-report"]'))) return;
-      // Lit/Vue 菜单重绘可能删掉我们的兄弟节点但保留原生 li；此时允许下一轮补回。
-      if (el.hasAttribute('data-ob-qb')) {
-        if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
-        el.removeAttribute('data-ob-qb');
-      }
       if (!Store.getSetting('showQuickBlock')) return;
       const t = textOf(el);
       if (!t) return;
@@ -4036,10 +4576,23 @@
           // 不向稿件举报等没有发送者上下文的菜单注入无效按钮。
           const info = cfg.identify ? cfg.identify(el) : identifyFromAnchor(el);
           if (!info || !info.keys || !info.keys.length) return;
-          // 该菜单已有快速按钮则跳过（避免评论菜单里"加入黑名单"和"举报"各插一个）
-          if (el.parentNode && el.parentNode.querySelector(':scope > .ob-quick')) return;
-          const btn = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
-          el.parentNode.insertBefore(btn, el.nextSibling);
+          const parent = el.parentNode;
+          if (!parent) return;
+          // 该菜单已有本地按钮则复用；楼操作是独立入口，不能用同一个 class
+          // 去重，否则会在重绘/周期扫描时丢失其中一个功能。
+          let localButton = parent.querySelector(':scope > .ob-quick:not(.ob-thread-quick)');
+          if (!localButton) {
+            localButton = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
+            parent.insertBefore(localButton, el.nextSibling);
+          }
+          let rootComment = false;
+          if (a.commentManager && typeof a.commentManager.isRootComment === 'function') {
+            rootComment = !!(info.container && a.commentManager.isRootComment(info.container));
+          }
+          if (rootComment && !parent.querySelector(':scope > .ob-thread-quick')) {
+            const threadButton = makeThreadBtn(el, cfg, txt, a);
+            parent.insertBefore(threadButton, localButton.nextSibling);
+          }
           el.setAttribute('data-ob-qb', '1');
           return;
         }
@@ -4058,11 +4611,10 @@
         if (a.id === 'douyin' && tooltipRoot) {
           const portalRoot = (root.closest && root.closest('.semi-portal')) || root;
           const reports = querySelectorAllDeep(portalRoot, '[data-e2e="video-comment-more-report"]');
-          const directButton = reports
-            .map((report) => report.parentElement && report.parentElement.querySelector(':scope > .ob-quick'))
-            .find(Boolean);
+          const directButtons = reports.flatMap((report) => report.parentElement
+            ? Array.from(report.parentElement.querySelectorAll(':scope > .ob-quick')) : []);
           const quicks = querySelectorAllDeep(portalRoot, '.ob-quick');
-          for (const button of quicks) if (button !== directButton) button.remove();
+          for (const button of quicks) if (!directButtons.includes(button)) button.remove();
           for (const marked of querySelectorAllDeep(portalRoot, '[data-ob-qb]')) {
             if (!reports.includes(marked)) marked.removeAttribute('data-ob-qb');
           }
@@ -4139,7 +4691,7 @@
     return !el.getClientRects || el.getClientRects().length > 0;
   }
 
-  function blockMany(list, anchorEl, confirmLabel, onBlocked) {
+  function blockMany(list, anchorEl, confirmLabel, onBlocked, toastLabel) {
     if (!list.length) { showToast('没有可拉黑的用户'); return; }
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
@@ -4153,7 +4705,124 @@
         result: { added: addedKeys.length, addedKeys },
         undo: addedKeys.length ? () => Store.removeIdentities(addedKeys) : null,
       };
-    });
+    }, '', toastLabel);
+  }
+
+  // 评论管理器内部的统一记录。记录只在本机内存中用于当前页面的选择与说明，
+  // 真正写入名单时仍只提交规范化身份键和现有的 label/note 字段。
+  function normalizeCommentRecord(info, fallbackSource = 'dom') {
+    if (!info || !info.keys) return null;
+    const keys = normalizeIdentityKeys(info.keys);
+    if (!keys.length) return null;
+    const level = info.level === 'reply' ? 'reply' : 'root';
+    return {
+      ...info,
+      keys,
+      label: String(info.label || '').trim(),
+      note: String(info.note || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+      ctime: Number(info.ctime) > 0 ? Number(info.ctime) : 0,
+      threadId: info.threadId == null ? '' : String(info.threadId),
+      level,
+      source: info.source === 'api' ? 'api' : fallbackSource,
+    };
+  }
+
+  const commentRecordObjectIds = new WeakMap();
+  let nextCommentRecordObjectId = 1;
+  function commentRecordInstanceKey(info) {
+    if (!info) return '';
+    if (info.commentId != null && String(info.commentId)) {
+      return 'id:' + String(info.commentId) + '|' + (info.threadId || '') + '|' + (info.level || 'root');
+    }
+    if (info.container && (typeof info.container === 'object' || typeof info.container === 'function')) {
+      let id = commentRecordObjectIds.get(info.container);
+      if (!id) { id = String(nextCommentRecordObjectId++); commentRecordObjectIds.set(info.container, id); }
+      return 'node:' + id;
+    }
+    return [info.keys && info.keys.join('|'), info.threadId || '', info.level || 'root', info.note || ''].join('|');
+  }
+
+  function mergeCommentRecords(items) {
+    const entries = [];
+    const keyEntries = new Map();
+    const recordEntries = new Map();
+      const mergeEntry = (target, source) => {
+        if (target === source) return target;
+        for (const key of source.keys) {
+          if (!target.keys.includes(key)) target.keys.push(key);
+          keyEntries.set(key, target);
+        }
+      target.count += source.count;
+      for (const level of source.levels) target.levels.add(level);
+        if (!target.label && source.label) target.label = source.label;
+        if (source.note && (!target.note || source.ctime > target.ctime)) target.note = source.note;
+        if (source.ctime > target.ctime) target.ctime = source.ctime;
+        if (source.threadIds) for (const id of source.threadIds) if (id) target.threadIds.add(id);
+        if (source.sources) for (const sourceName of source.sources) target.sources.add(sourceName);
+        const at = entries.indexOf(source);
+        if (at >= 0) entries.splice(at, 1);
+        for (const ref of recordEntries.values()) if (ref.entry === source) ref.entry = target;
+        return target;
+    };
+    for (const raw of items || []) {
+      const info = normalizeCommentRecord(raw, raw && raw.source || 'dom');
+      if (!info) continue;
+      const instanceKey = commentRecordInstanceKey(info);
+      const seenRecord = recordEntries.get(instanceKey);
+      if (seenRecord) {
+        // DOM 记录和 API 记录可能指向同一条评论；不重复计数，但让 API 返回的
+        // 正文/时间补充到已有行，保证管理器显示的是更有代表性的样例。
+        const entry = seenRecord.entry;
+        if (info.label && !entry.label) entry.label = info.label;
+        if (info.note && (!entry.note || info.ctime > entry.ctime)) entry.note = info.note;
+        if (info.ctime > entry.ctime) entry.ctime = info.ctime;
+        continue;
+      }
+      const matched = new Set();
+      for (const key of info.keys) {
+        const entry = keyEntries.get(key);
+        if (entry) matched.add(entry);
+      }
+      let entry = Array.from(matched)[0] || null;
+      const incoming = {
+        keys: info.keys.slice(), label: info.label, note: info.note, ctime: info.ctime,
+        count: 1, levels: new Set([info.level]), threadIds: new Set(info.threadId ? [info.threadId] : []),
+        sources: new Set([info.source]),
+      };
+      if (!entry) {
+        entry = incoming;
+        entries.push(entry);
+        for (const key of entry.keys) keyEntries.set(key, entry);
+      } else {
+        entry.count += incoming.count;
+        for (const key of incoming.keys) {
+          if (!entry.keys.includes(key)) entry.keys.push(key);
+          keyEntries.set(key, entry);
+        }
+        for (const level of incoming.levels) entry.levels.add(level);
+        for (const sourceName of incoming.sources) entry.sources.add(sourceName);
+        if (!entry.label && incoming.label) entry.label = incoming.label;
+        if (incoming.note && (!entry.note || incoming.ctime > entry.ctime)) entry.note = incoming.note;
+        if (incoming.ctime > entry.ctime) entry.ctime = incoming.ctime;
+        for (const id of incoming.threadIds) if (id) entry.threadIds.add(id);
+      }
+      recordEntries.set(instanceKey, { entry });
+      for (const other of Array.from(matched)) if (other !== entry) entry = mergeEntry(entry, other);
+    }
+    return entries.map((entry) => ({
+      ...entry,
+      levels: Array.from(entry.levels),
+      threadIds: Array.from(entry.threadIds),
+      threadId: entry.threadIds.size ? Array.from(entry.threadIds)[0] : '',
+      level: entry.levels.size === 1 ? Array.from(entry.levels)[0] : 'mixed',
+      source: entry.sources.size === 1 ? Array.from(entry.sources)[0] : 'mixed',
+    }));
+  }
+
+  function commentLevelLabel(levels) {
+    const values = new Set(Array.isArray(levels) ? levels : [levels]);
+    if (values.has('root') && values.has('reply')) return '主评论、回复';
+    return values.has('reply') ? '回复' : '主评论';
   }
 
   let douyinCommentManager = null;
@@ -4320,6 +4989,242 @@
     // 先展开当前已加载的明确回复，再做只读滚动尽量加载；用户仍可再次点击按钮重试。
     // 两步串行，避免滚动与平台回复渲染同时发生时互相覆盖状态。
     expandAll().then(() => { if (panel.isConnected) load.click(); });
+  }
+
+  // 三个平台共用的评论管理器。旧版抖音管理器保留在上方仅用于升级期间的兼容，
+  // 新入口统一走这里，避免 B站/抖音/微博各自维护一套选择、搜索和提交逻辑。
+  let commentManagerRoot = null;
+  let commentManagerKeyHandler = null;
+  function platformLabelForCommentManager(adapter) {
+    return ({ bilibili: 'B站', douyin: '抖音', weibo: '微博' }[adapter && adapter.id]) || '评论';
+  }
+  function closeCommentManager() {
+    if (commentManagerKeyHandler) document.removeEventListener('keydown', commentManagerKeyHandler);
+    commentManagerKeyHandler = null;
+    if (commentManagerRoot) commentManagerRoot.remove();
+    commentManagerRoot = null;
+  }
+
+  async function openCommentManager(adapter, anchorEl) {
+    if (commentManagerRoot) { closeCommentManager(); return; }
+    const manager = adapter && adapter.commentManager;
+    if (!document.body || !manager || typeof manager.collectRecords !== 'function') return;
+    if (typeof manager.available === 'function' && !manager.available()) {
+      showToast('当前页面没有可识别的评论');
+      return;
+    }
+    const selected = new Set();
+    const discovered = [];
+    let pageKey = '';
+    let searchText = '';
+    let loading = false;
+    let partial = false;
+    let partialReason = '';
+    const platformLabels = { bilibili: 'B站', douyin: '抖音', weibo: '微博' };
+    const platformLabel = platformLabels[adapter.id] || adapter.id || '平台';
+    const panel = document.createElement('div');
+    panel.id = 'ob-comment-manager';
+    panel.setAttribute('data-ob-ui', 'comment-manager');
+    panel.setAttribute('data-ob-platform', adapter.id || '');
+    panel.innerHTML = `
+      <div class="ob-cm-box" data-ob-ui="comment-manager" role="dialog" aria-modal="true" aria-labelledby="ob-cm-title">
+        <div class="ob-cm-head"><h2 id="ob-cm-title">${platformLabel}评论屏蔽</h2><button class="ob-cm-close" type="button" aria-label="关闭">×</button></div>
+        <div class="ob-cm-toolbar" data-ob-ui="comment-manager">
+          <input class="ob-cm-search" type="search" placeholder="搜索作者、评论或身份键" aria-label="搜索评论作者、示例评论或身份键">
+          <button class="ob-cm-refresh" type="button">刷新已识别评论</button>
+          <button class="ob-cm-load-all" type="button">加载全部评论与子回复</button>
+          <label class="ob-cm-since-wrap"><span>时间</span><select class="ob-cm-since" aria-label="评论时间筛选"></select></label>
+          <label class="ob-cm-checkall"><input type="checkbox">全选筛选结果</label>
+          <div class="ob-cm-status" aria-live="polite"></div>
+        </div>
+        <div class="ob-cm-list" data-ob-ui="comment-manager"></div>
+        <div class="ob-cm-footer" data-ob-ui="comment-manager"><span class="ob-cm-count"></span><button class="ob-cm-batch" type="button">屏蔽选中(0)</button></div>
+      </div>`;
+    document.body.appendChild(panel);
+    commentManagerRoot = panel;
+    const close = () => closeCommentManager();
+    panel.querySelector('.ob-cm-close').onclick = close;
+    panel.addEventListener('click', (event) => { if (event.target === panel) close(); });
+    commentManagerKeyHandler = (event) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', commentManagerKeyHandler);
+
+    const keyOf = (info) => (info && info.keys || []).join('|');
+    const currentPageKey = () => typeof adapter.videoKey === 'function'
+      ? adapter.videoKey() : location.pathname + location.search + location.hash;
+    const collectCurrent = () => {
+      const nextKey = currentPageKey();
+      if (pageKey && nextKey !== pageKey) { discovered.length = 0; selected.clear(); partial = false; partialReason = ''; }
+      pageKey = nextKey;
+      let records = [];
+      try { records = manager.collectRecords('manager') || []; } catch (error) { records = []; }
+      for (const record of records) discovered.push(record);
+      return mergeCommentRecords(discovered).filter((info) => !Index.isBlocked(info.keys));
+    };
+    const sinceSelect = panel.querySelector('.ob-cm-since');
+    for (const preset of (typeof BULK_SINCE_PRESETS !== 'undefined' ? BULK_SINCE_PRESETS : [{ value: '', label: '不限时间' }])) {
+      const option = document.createElement('option'); option.value = preset.value; option.textContent = preset.label; sinceSelect.appendChild(option);
+    }
+    if (adapter.id !== 'bilibili') panel.querySelector('.ob-cm-since-wrap').style.display = 'none';
+    const status = panel.querySelector('.ob-cm-status');
+    const count = panel.querySelector('.ob-cm-count');
+    const list = panel.querySelector('.ob-cm-list');
+    const checkAll = panel.querySelector('.ob-cm-checkall input');
+    const batch = panel.querySelector('.ob-cm-batch');
+    const search = panel.querySelector('.ob-cm-search');
+    const refresh = panel.querySelector('.ob-cm-refresh');
+    const loadAll = panel.querySelector('.ob-cm-load-all');
+    let customSince = 0;
+
+    function selectedSince() {
+      if (sinceSelect.value === 'custom') {
+        if (!customSince) {
+          const value = window.prompt('请输入起始时间（例如 2026-08-27 12:00）');
+          if (!value) return { error: '未填写自定义时间' };
+          const parsed = Date.parse(value.replace(/-/g, '/'));
+          if (!Number.isFinite(parsed)) return { error: '自定义时间格式无效' };
+          customSince = Math.floor(parsed / 1000);
+        }
+        return { since: customSince };
+      }
+      const seconds = Number(sinceSelect.value);
+      return { since: sinceSelect.value && Number.isFinite(seconds) && seconds > 0
+        ? Math.floor(Date.now() / 1000) - seconds : 0 };
+    }
+
+    function filterRecords(records) {
+      const since = selectedSince();
+      if (since.error) return { records: [], dropped: 0, unknown: 0, error: since.error };
+      let kept = records; let dropped = 0; let unknown = 0;
+      if (since.since) {
+        kept = [];
+        for (const record of records) {
+          const ctime = Number(record.ctime) || 0;
+          if (!ctime) { unknown++; continue; }
+          if (ctime >= since.since) kept.push(record); else dropped++;
+        }
+      }
+      const term = String(searchText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (term) kept = kept.filter((info) => [info.label, info.note, ...(info.keys || []), commentLevelLabel(info.levels)]
+        .join(' ').toLowerCase().includes(term));
+      return { records: kept, dropped, unknown, error: '' };
+    }
+
+    function render() {
+      if (!panel.isConnected) return;
+      const allRecords = collectCurrent();
+      const filtered = filterRecords(allRecords);
+      const available = new Set(allRecords.map(keyOf));
+      for (const key of Array.from(selected)) if (!available.has(key)) selected.delete(key);
+      list.textContent = '';
+      if (!filtered.records.length) {
+        const empty = document.createElement('div'); empty.className = 'ob-cm-empty';
+        empty.textContent = filtered.error || (searchText.trim() ? '没有匹配的评论作者' : '当前还没有可识别的评论作者');
+        list.appendChild(empty);
+      }
+      for (const info of filtered.records) {
+        const key = keyOf(info);
+        const row = document.createElement('label'); row.className = 'ob-cm-row'; row.setAttribute('data-key', key); row.setAttribute('data-ob-ui', 'comment-manager');
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(key);
+        checkbox.addEventListener('change', () => { if (checkbox.checked) selected.add(key); else selected.delete(key); render(); });
+        const body = document.createElement('div'); body.className = 'ob-cm-body';
+        const name = document.createElement('div'); name.className = 'ob-cm-name'; name.textContent = info.label || key;
+        const meta = document.createElement('div'); meta.className = 'ob-cm-meta';
+        meta.textContent = info.count + ' 条评论 · ' + commentLevelLabel(info.levels);
+        body.append(name, meta);
+        if (info.note) { const note = document.createElement('div'); note.className = 'ob-cm-note'; note.textContent = info.note; body.appendChild(note); }
+        row.append(checkbox, body); list.appendChild(row);
+      }
+      count.textContent = filtered.records.length === allRecords.length
+        ? allRecords.length + ' 位作者' : '匹配 ' + filtered.records.length + ' / 共 ' + allRecords.length + ' 位作者';
+      if (filtered.dropped || filtered.unknown) count.textContent += '（时间筛选排除 ' + (filtered.dropped + filtered.unknown) + '）';
+      checkAll.checked = !!filtered.records.length && filtered.records.every((info) => selected.has(keyOf(info)));
+      checkAll.indeterminate = !checkAll.checked && filtered.records.some((info) => selected.has(keyOf(info)));
+      batch.disabled = !selected.size;
+      batch.textContent = '屏蔽选中(' + selected.size + ')';
+      const notices = [];
+      if (partial) notices.push('部分加载' + (partialReason ? '：' + partialReason : ''));
+      if (loading) notices.push('正在读取…');
+      if (filtered.unknown) notices.push('时间未知 ' + filtered.unknown + ' 位已跳过');
+      status.textContent = notices.join('；') || (allRecords.length ? '已显示当前路由内已识别的评论作者' : '');
+    }
+
+    async function loadAllRecords() {
+      if (loading || typeof manager.loadAll !== 'function') return;
+      loading = true; loadAll.disabled = true; refresh.disabled = true; render();
+      try {
+        const result = await manager.loadAll((progress) => {
+          if (!panel.isConnected) return;
+          const collected = progress && (progress.collected != null ? progress.collected : progress.records);
+          status.textContent = '正在加载评论' + (collected != null ? '，已读取 ' + collected + ' 条' : '…');
+          render();
+        });
+        for (const record of (result && result.records || [])) discovered.push(record);
+        partial = !!(result && result.partial);
+        partialReason = String(result && result.reason || '').slice(0, 160);
+      } catch (error) {
+        partial = true;
+        partialReason = String(error && error.message || error).slice(0, 160);
+      }
+      loading = false; loadAll.disabled = false; refresh.disabled = false; render();
+    }
+
+    search.oninput = () => { searchText = search.value; render(); };
+    sinceSelect.onchange = () => { customSince = 0; render(); };
+    refresh.onclick = () => { partial = false; partialReason = ''; render(); status.textContent = '已刷新当前已识别评论'; };
+    checkAll.onchange = () => {
+      const records = filterRecords(collectCurrent()).records;
+      for (const info of records) { const key = keyOf(info); if (checkAll.checked) selected.add(key); else selected.delete(key); }
+      render();
+    };
+    batch.onclick = () => {
+      const records = filterRecords(collectCurrent()).records.filter((info) => selected.has(keyOf(info)));
+      if (!records.length) return;
+      const suffix = partial ? '（部分加载，可能仍有未读取评论）' : '';
+      blockMany(records, batch, '屏蔽选中的 ' + records.length + ' 位作者' + suffix,
+        () => { selected.clear(); render(); }, '选中的 ' + records.length + ' 位作者' + suffix);
+    };
+    loadAll.onclick = loadAllRecords;
+    render();
+    // B站走只读 API；抖音/微博走已确认的可见 DOM、回复展开和安全滚动。
+    // 打开面板即执行一次，失败时保留已识别记录并明确标记部分。
+    loadAllRecords();
+  }
+
+  const pendingThreadBlocks = new WeakSet();
+  async function runThreadBlock(anchorEl, adapter, providedInfo) {
+    const manager = adapter && adapter.commentManager;
+    if (!manager || typeof manager.loadThread !== 'function') { showToast('当前平台不支持楼操作'); return; }
+    const info = providedInfo || (typeof adapter.menuContextInfo === 'function'
+      ? adapter.menuContextInfo(anchorEl) : identifyFromAnchor(anchorEl));
+    const item = info && info.container;
+    if (!info || !info.keys || !info.keys.length || !item
+      || (typeof manager.isRootComment === 'function' && !manager.isRootComment(item))) {
+      showToast('只能从可确认的主评论执行“屏蔽该楼回复”');
+      return;
+    }
+    if (pendingThreadBlocks.has(item)) return;
+    pendingThreadBlocks.add(item);
+    showToast('正在读取该楼已可加载的回复…');
+    let partial = false; let reason = '';
+    const records = [normalizeCommentRecord({ ...info, level: 'root', source: 'dom' })].filter(Boolean);
+    try {
+      const result = await manager.loadThread(item, (progress) => {
+        if (progress && progress.collected != null) showToast('正在读取该楼回复：' + progress.collected + ' 条');
+      });
+      for (const record of (result && result.records || [])) records.push(record);
+      partial = !!(result && result.partial);
+      reason = String(result && result.reason || '').slice(0, 160);
+    } catch (error) {
+      partial = true;
+      reason = String(error && error.message || error).slice(0, 160);
+    } finally {
+      pendingThreadBlocks.delete(item);
+    }
+    const merged = mergeCommentRecords(records);
+    if (!merged.length) { showToast('没有读取到可靠的楼成员'); return; }
+    const suffix = partial ? '（部分：已加载 ' + merged.length + ' 位，可能仍有未加载回复' + (reason ? '；' + reason : '') + '）' : '';
+    blockMany(merged, anchorEl, '屏蔽该楼及 ' + merged.length + ' 位作者' + suffix, null,
+      '该楼及 ' + merged.length + ' 位作者' + suffix);
   }
 
   let douyinDanmakuTool = null;
@@ -4702,11 +5607,11 @@
     const setFabVisible = (visible) => {
       if (fab) fab.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
       // 入口消失（关闭功能、切换页面、原生弹窗打开）时不留悬挂面板。
-      if (!visible) { closeBulkScopePanel(); if (a.commentManager) closeDouyinCommentManager(); }
+      if (!visible) { closeBulkScopePanel(); closeCommentManager(); if (a.id === 'douyin') closeDouyinCommentManager(); }
     };
     const isOwnBulkPanel = (el) => !!el && (
       el.id === 'ob-bulk-scope'
-      || !!(el.closest && el.closest('#ob-douyin-comment-manager,#ob-douyin-dm-manager'))
+      || !!(el.closest && el.closest('#ob-comment-manager,#ob-douyin-comment-manager,#ob-douyin-dm-manager'))
     );
     function blocksPageBulkFab(el) {
       // 抖音当前视频详情侧栏使用 `#relatedVideoCard.LookModalFrameFast`，虽然类名含
@@ -4721,9 +5626,17 @@
     }
     function refreshFab() {
       if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
-      const n = collectUsers(document).length;
+      const commentMode = !!(a.commentManager
+        && (!a.commentManager.available || a.commentManager.available()));
+      const commentRecords = commentMode && typeof a.commentManager.collectRecords === 'function'
+        ? mergeCommentRecords(a.commentManager.collectRecords('manager')).filter((info) => !Index.isBlocked(info.keys)) : [];
+      const n = commentMode ? commentRecords.length : collectUsers(document).length;
       // 页面批量按钮不应遮住举报/登录等原生弹窗，更不能显示无意义的“(0)”。
-      if (!n || hasOpenModal()) { setFabVisible(false); return; }
+      // 抖音视频评论侧栏本身使用 LookModalFrameFast/Modal 类名，但它就是当前
+      // 评论管理器的承载面；评论模式下必须保留入口，否则真实评论已加载却永远
+      // 看不到“评论屏蔽”按钮。普通无评论的 Modal 仍由 hasOpenModal() 遮挡。
+      const modalBlocksFab = hasOpenModal() && !(a.id === 'douyin' && commentMode);
+      if (!n || modalBlocksFab) { setFabVisible(false); return; }
       if (!fab) {
         fab = document.createElement('button');
         fab.type = 'button'; fab.setAttribute('data-ob-kind', 'page');
@@ -4737,7 +5650,9 @@
           fab.style.left = '14px'; fab.style.right = 'auto'; fab.style.bottom = '14px';
         }
         fab.onclick = () => {
-          if (a.commentManager) { openDouyinCommentManager(a); return; }
+          if (a.commentManager && (!a.commentManager.available || a.commentManager.available())) {
+            openCommentManager(a, fab); return;
+          }
           // 支持整区抓取的平台先问范围与时间；其余平台保持原有的直接批量行为。
           if (a.bulkScope && typeof a.bulkScope.fetchAll === 'function') { openBulkScopePanel(a, fab); return; }
           const list = collectUsers(document);
@@ -4747,7 +5662,9 @@
         const mountFab = () => { if (document.body) document.body.appendChild(fab); else setTimeout(mountFab, 300); };
         mountFab();
       }
-      fab.textContent = a.bulkFabLabel ? a.bulkFabLabel(n) : '🚫 拉黑本页用户(' + n + ')';
+      fab.textContent = commentMode
+        ? '🚫 ' + platformLabelForCommentManager(a) + '评论屏蔽(' + n + ')'
+        : (a.bulkFabLabel ? a.bulkFabLabel(n) : '🚫 拉黑本页用户(' + n + ')');
       setFabVisible(true);
     }
     function tryModal(modal) {
@@ -6580,6 +7497,7 @@
   window.OB = {
     Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
+    openCommentManager, closeCommentManager, runThreadBlock, mergeCommentRecords,
     runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
     diagnostics: runtimeDiagnostics,
   };

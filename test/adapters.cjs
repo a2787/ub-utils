@@ -409,9 +409,11 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       // portal 外壳；抖音只允许真实举报叶子项注入，不能给这些父层重复注入。
       report.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, composed: true }));
       await pause(120);
-      const quick = document.querySelector('#dy-comment-menu .ob-quick');
+      const quick = document.querySelector('#dy-comment-menu .ob-quick:not(.ob-thread-quick)');
+      const threadQuick = document.querySelector('#dy-comment-menu .ob-thread-quick');
       result.menuQuickPresent = !!quick;
       result.menuQuickCount = document.querySelectorAll('#dy-comment-menu .ob-quick').length;
+      result.threadMenuCount = document.querySelectorAll('#dy-comment-menu .ob-thread-quick').length;
       if (quick) {
         quick.click();
         await pause(80);
@@ -428,36 +430,34 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       if (!fab) return result;
       fab.click();
       await pause(100);
-      result.managerPresent = !!document.querySelector('#ob-douyin-comment-manager');
+      result.managerPresent = !!document.querySelector('#ob-comment-manager');
       result.managerStaysOpen = result.managerPresent;
       if (!result.managerPresent) return result;
-      const manager = document.querySelector('#ob-douyin-comment-manager');
-      result.initialRows = manager.querySelectorAll('.ob-dc-row').length;
-      await pause(900);
-      const expandButton = manager.querySelector('.ob-dc-expand');
-      if (expandButton) expandButton.click();
-      await pause(500);
-      result.expandedRows = manager.querySelectorAll('.ob-dc-row').length;
+      const manager = document.querySelector('#ob-comment-manager');
+      result.initialRows = manager.querySelectorAll('.ob-cm-row').length;
+      // 统一管理器打开后会自动执行“明确展开 + 安全滚动”，这里不再手动点旧版展开/加载按钮。
+      await pause(2200);
+      result.expandedRows = manager.querySelectorAll('.ob-cm-row').length;
       result.expandedAuthors = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo']
-        .every((sec) => Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:' + sec));
-      const commentSearch = manager.querySelector('.ob-dc-search');
+        .every((sec) => Array.from(manager.querySelectorAll('.ob-cm-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:' + sec));
+      const commentSearch = manager.querySelector('.ob-cm-search');
       if (commentSearch) {
         commentSearch.value = '子评论作者乙';
         commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
         await pause(60);
       }
-      result.commentSearchRows = manager.querySelectorAll('.ob-dc-row').length;
-      result.commentSearchMatch = Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentTwo');
+      result.commentSearchRows = manager.querySelectorAll('.ob-cm-row').length;
+      result.commentSearchMatch = Array.from(manager.querySelectorAll('.ob-cm-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentTwo');
       if (commentSearch) {
         commentSearch.value = '';
         commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
         await pause(60);
       }
-      result.lazyCommentLoaded = Array.from(manager.querySelectorAll('.ob-dc-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentLazy');
-      const checkAll = manager.querySelector('.ob-dc-checkall input');
+      result.lazyCommentLoaded = Array.from(manager.querySelectorAll('.ob-cm-row')).some((row) => row.getAttribute('data-key') === 'douyin:secuid:MS4wLjABAACommentLazy');
+      const checkAll = manager.querySelector('.ob-cm-checkall input');
       if (checkAll) checkAll.click();
       await pause(80);
-      const batch = manager.querySelector('.ob-dc-batch');
+      const batch = manager.querySelector('.ob-cm-batch');
       result.batchSelected = !!batch && !batch.disabled && /4/.test(batch.textContent);
       if (batch) batch.click();
       await pause(80);
@@ -466,7 +466,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       await pause(180);
       result.allBlocked = ['MS4wLjABAACommentRoot', 'MS4wLjABAACommentOne', 'MS4wLjABAACommentTwo', 'MS4wLjABAACommentLazy']
         .every((sec) => window.OB.Index.isBlocked('douyin:secuid:' + sec));
-      const managerClose = manager.querySelector('.ob-dc-close');
+      const managerClose = manager.querySelector('.ob-cm-close');
       if (managerClose) managerClose.click();
       await pause(80);
       const dmTool = document.querySelector('#ob-douyin-dm-tool');
@@ -534,7 +534,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       }
       return result;
     });
-    if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 1 && dyComments.menuConfirmHasRootAuthor
+    if (dyComments.fixtureOk && dyComments.menuQuickPresent && dyComments.menuQuickCount === 2 && dyComments.threadMenuCount === 1 && dyComments.menuConfirmHasRootAuthor
       && dyComments.fabPresent && dyComments.managerPresent && dyComments.managerStaysOpen
       && dyComments.fabRightColumn && dyComments.gearRightColumn
       && dyComments.initialRows >= 1 && dyComments.expandedRows >= 3 && dyComments.expandedAuthors

@@ -142,16 +142,18 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const deepCount = (selector) => {
         let count=0; const walk=(node)=>{ if(!node)return; if(node.nodeType===1&&node.matches&&node.matches(selector))count++; if(node.shadowRoot)walk(node.shadowRoot); for(const child of node.children||[])walk(child); }; walk(document); return count;
       };
-      const initial = { quick:deepCount('.ob-quick'), bulk:deepCount('.ob-bulk') };
+      const initial = { quick:deepCount('.ob-quick:not(.ob-thread-quick)'), thread:deepCount('.ob-thread-quick'), bulk:deepCount('.ob-bulk') };
       window.OB.Store.setSetting('showQuickBlock', true); window.OB.Store.setSetting('showBulkBlock', true);
       await new Promise((resolve) => setTimeout(resolve, 120));
-      const enabled = { quick:deepCount('.ob-quick'), bulk:deepCount('.ob-bulk') };
+      const enabled = { quick:deepCount('.ob-quick:not(.ob-thread-quick)'), thread:deepCount('.ob-thread-quick'), bulk:deepCount('.ob-bulk') };
       window.OB.Store.setSetting('showQuickBlock', false); window.OB.Store.setSetting('showBulkBlock', false);
       await new Promise((resolve) => setTimeout(resolve, 120));
-      const disabled = { quick:deepCount('.ob-quick'), visibleBulk:Array.from(document.querySelectorAll('.ob-bulk')).filter((el)=>getComputedStyle(el).display!=='none').length };
+      const disabled = { quick:deepCount('.ob-quick:not(.ob-thread-quick)'), thread:deepCount('.ob-thread-quick'), visibleBulk:Array.from(document.querySelectorAll('.ob-bulk')).filter((el)=>getComputedStyle(el).display!=='none').length };
       return { initial, enabled, disabled };
     });
-    if (toggleState.initial.quick === 0 && toggleState.initial.bulk === 0 && toggleState.enabled.quick === 3 && toggleState.enabled.bulk === 1 && toggleState.disabled.quick === 0 && toggleState.disabled.visibleBulk === 0)
+    if (toggleState.initial.quick === 0 && toggleState.initial.thread === 0 && toggleState.initial.bulk === 0
+      && toggleState.enabled.quick === 3 && toggleState.enabled.thread === 3 && toggleState.enabled.bulk === 1
+      && toggleState.disabled.quick === 0 && toggleState.disabled.thread === 0 && toggleState.disabled.visibleBulk === 0)
       report.pass.push('STATE-D 快捷与批量入口即使初始关闭，也可免刷新启用并再次清理');
     else report.fail.push('STATE-D 入口开关生命周期错误：' + JSON.stringify(toggleState));
     await toggles.close();

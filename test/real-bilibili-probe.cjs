@@ -7,6 +7,7 @@ const { launchChromium, ROOT } = require('./runtime.cjs');
 const { discoverTargets, redactTarget } = require('./discover.cjs');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
 const requestedUrl = urlArg ? urlArg.slice('--url='.length) : '';
 let URL = /^https:\/\/www\.bilibili\.com\/video\/BV[0-9A-Za-z]+\/?(?:[?#].*)?$/.test(requestedUrl)
@@ -22,10 +23,12 @@ const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_C
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
+const sourceHash = crypto.createHash('sha256').update(userscript).digest('hex');
+const build = (userscript.match(/const RUNTIME_BUILD\s*=\s*'([^']+)'/) || [, ''])[1];
 const shim = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
-window.GM_setValue = (k,v) => { window.__gm[k] = v; };
+window.GM_setValue = (k,v) => { window.__gm[k] = v; if (k === 'omniblock:data:v1') window.__obProbeWrites = (window.__obProbeWrites || 0) + 1; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
@@ -90,7 +93,7 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
 }
 
 (async () => {
-  const result = { target: '', discovered: false, version, pageLoaded: false, errors: [], probe: null };
+  const result = { target: '', discovered: false, version, sourceHash, build, pageLoaded: false, errors: [], probe: null };
   let browser;
   try {
     browser = await launchChromium({
@@ -263,7 +266,7 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         ? window.OB.collectUsers(document).length
         : null;
       if (window.OB && typeof window.OB.refreshBulk === 'function') window.OB.refreshBulk();
-      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
       if (!bulk) return { found: false, text: null, visible: false, userCount, modalCandidates };
       const style = getComputedStyle(bulk);
       return {
@@ -288,55 +291,57 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
     result.bulkBeforeInteraction = bulkBeforeInteraction;
 
     if (VERIFY_BULK_SCOPE) {
-      // 真实页面上验证批量范围面板：可打开、跨过 1.2s 周期扫描不被误关、
-      // “仅当前已加载”完整事务可撤销；随后只读探测评论 API 契约。
-      result.bulkScope = await page.evaluate(async () => {
+      // 真实页面上验证统一评论管理器：打开后自动读取当前可用根评论/子回复，
+      // 跨过周期扫描仍保持打开，搜索和筛选全选可用；本段不点击平台写入控件，
+      // 也不点击脚本自己的“屏蔽选中”，因此不会污染真实名单。
+      result.commentManager = await page.evaluate(async () => {
         const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+        const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
         if (!fab) return { found: false };
-        fab.click(); await pause(120);
-        const panel = document.getElementById('ob-bulk-scope');
+        fab.click(); await pause(150);
+        const panel = document.getElementById('ob-comment-manager');
         if (!panel) return { found: true, panel: false };
-        await pause(1400);
-        const stayedOpen = document.getElementById('ob-bulk-scope') === panel;
-        const loaded = panel.querySelector('input[value="loaded"]');
-        const all = panel.querySelector('input[value="all"]');
-        const since = panel.querySelector('.ob-bs-since');
-        const state = {
-          found: true,
-          panel: true,
-          stayedOpen,
-          loaded: !!loaded && loaded.checked,
-          allEnabled: !!all && !all.disabled,
-          presets: since ? Array.from(since.options).map((o) => o.value) : [],
+        const initialRows = panel.querySelectorAll('.ob-cm-row').length;
+        await pause(2200);
+        const rows = Array.from(panel.querySelectorAll('.ob-cm-row'));
+        const stayedOpen = document.getElementById('ob-comment-manager') === panel;
+        const loadAll = panel.querySelector('.ob-cm-load-all');
+        const refresh = panel.querySelector('.ob-cm-refresh');
+        const search = panel.querySelector('.ob-cm-search');
+        let searchRows = 0;
+        let searchMatch = false;
+        if (search && rows.length) {
+          const sample = rows[0].querySelector('.ob-cm-name');
+          const term = (sample && sample.textContent || rows[0].getAttribute('data-key') || '').trim();
+          search.value = term;
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+          await pause(80);
+          searchRows = panel.querySelectorAll('.ob-cm-row').length;
+          searchMatch = searchRows > 0;
+          search.value = '';
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const checkAll = panel.querySelector('.ob-cm-checkall input');
+        if (checkAll) checkAll.click();
+        await pause(80);
+        const batch = panel.querySelector('.ob-cm-batch');
+        const allSelected = !!checkAll && checkAll.checked && !!batch && !batch.disabled;
+        const status = panel.querySelector('.ob-cm-status');
+        const managerRecords = window.OB.adapters.bilibili.commentManager.collectRecords() || [];
+        const domReplyCount = managerRecords.filter((item) => item && item.level === 'reply').length;
+        const result = {
+          found: true, panel: true, initialRows, rows: rows.length, stayedOpen,
+          loadAll: !!loadAll, refresh: !!refresh, search: !!search, searchRows, searchMatch,
+          allSelected, status: status && status.textContent || '', domReplyCount,
+          automaticRead: rows.length > 0 && stayedOpen,
         };
-        if (!stayedOpen) return state;
-        const cancel = panel.querySelector('.ob-bs-no');
-        if (cancel) cancel.click();
-        await pause(150);
-        fab.click(); await pause(120);
-        const panel2 = document.getElementById('ob-bulk-scope');
-        if (!panel2) return { ...state, secondOpen: false };
-        panel2.querySelector('.ob-bs-ok').click();
-        const deadline = Date.now() + 5000;
-        while (Date.now() < deadline && !document.getElementById('ob-confirm')) await pause(25);
-        const confirm = document.getElementById('ob-confirm');
-        if (!confirm) return { ...state, secondOpen: true, confirm: false };
-        const confirmText = confirm.textContent || '';
-        const uids = Array.from(confirmText.matchAll(/bili:uid:(\d+)/g), (m) => m[1]);
-        confirm.querySelector('.ob-ok').click(); await pause(250);
-        const blocked = uids.length > 0 && uids.every((uid) => window.OB.Index.isBlocked('bili:uid:' + uid));
-        const toast = document.getElementById('ob-toast');
-        const undo = toast && toast.querySelector('button');
-        if (undo) { undo.click(); await pause(250); }
-        const restored = uids.length > 0 && !uids.some((uid) => window.OB.Index.isBlocked('bili:uid:' + uid));
-        return { ...state, secondOpen: true, confirm: true, confirmText, uidCount: uids.length, blocked, restored };
+        const close = panel.querySelector('.ob-cm-close'); if (close) close.click();
+        return result;
       });
-      const bs = result.bulkScope || {};
-      if (!bs.found || !bs.panel || !bs.stayedOpen || !bs.loaded || !bs.allEnabled
-        || !bs.presets.includes('3600') || !bs.secondOpen || !bs.confirm
-        || !bs.uidCount || !bs.blocked || !bs.restored) {
-        result.errors.push('验证失败：真实页面的批量范围面板未提供可用的已加载批量事务，或周期扫描误关了面板');
+      const cm = result.commentManager || {};
+      if (!cm.found || !cm.panel || !cm.stayedOpen || !cm.loadAll || !cm.refresh || !cm.search
+        || !cm.rows || !cm.searchMatch || !cm.allSelected || !cm.automaticRead) {
+        result.errors.push('验证失败：真实页面的统一评论管理器未能自动读取、搜索或保持打开');
       }
 
       result.commentApiContract = await page.evaluate(async () => {
@@ -854,7 +859,12 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
           return out;
         }
         const renderers = collect(document, 'bili-comment-renderer');
-        const targetIndex = renderers.findIndex((renderer, index) => index < renderers.length - 1 && findButton(renderer));
+        const hasLoadedReply = (renderer) => {
+          const data = renderer && renderer.__data;
+          const dataCount = Number(data && (data.rcount || data.reply_control && data.reply_control.count)) || 0;
+          return dataCount > 0 || collect(renderer, 'bili-comment-reply-renderer,bili-sub-comment-renderer').length > 0;
+        };
+        const targetIndex = renderers.findIndex((renderer) => findButton(renderer) && hasLoadedReply(renderer));
         if (targetIndex < 0) return { found: false, reason: '没有同时具备本地入口和下一条评论的目标行' };
         const targetRenderer = renderers[targetIndex];
         const nextRenderer = renderers[targetIndex + 1];
@@ -900,6 +910,34 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
         result.restored = !!undo && !target.hasAttribute('data-ob-blocked') && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0;
+
+        // 同一条根评论的楼操作：只点击脚本自己的入口和确认框，存储仍是内存 stub。
+        const threadButton = collect(targetRenderer, '.ob-thread-quick')[0] || null;
+        result.thread = { found: !!threadButton, confirm: false, authorKeyCount: 0, blocked: false, partial: false, writes: 0, restored: false };
+        if (threadButton) {
+          const writesBeforeThread = window.__obProbeWrites || 0;
+          threadButton.click();
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          const threadConfirm = document.getElementById('ob-confirm');
+          const threadText = threadConfirm && threadConfirm.textContent || '';
+          const threadKeys = Array.from(new Set(threadText.match(/bili:uid:\d+/g) || []));
+          const countMatch = threadText.match(/屏蔽该楼及\s*(\d+)\s*位作者/);
+          result.thread.confirm = !!threadConfirm;
+          result.thread.authorKeyCount = threadKeys.length;
+          result.thread.partial = /部分/.test(threadText);
+          result.thread.authorCount = countMatch ? Number(countMatch[1]) : 0;
+          if (threadConfirm) threadConfirm.querySelector('.ob-ok').click();
+          await new Promise((resolve) => setTimeout(resolve, 450));
+          result.thread.blocked = threadKeys.length >= 2 && threadKeys.every((key) => window.OB.Index.isBlocked(key));
+          result.thread.writes = (window.__obProbeWrites || 0) - writesBeforeThread;
+          const threadToast = document.getElementById('ob-toast');
+          const threadUndo = threadToast && threadToast.querySelector('button');
+          if (threadUndo) {
+            threadUndo.click();
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            result.thread.restored = threadKeys.every((key) => !window.OB.Index.isBlocked(key));
+          }
+        }
         return result;
       });
     }
@@ -993,6 +1031,7 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       });
       return {
         obReady: !!window.OB,
+        runtime: window.OB && window.OB.runtime || null,
         commentsHost: !!document.querySelector('bili-comments'),
         commentRendererCount: renderers.length,
         commentTagCounts,
@@ -1031,13 +1070,21 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       const failed = [];
       if (!result.pageLoaded) failed.push('页面未成功加载');
       if (!probe.obReady) failed.push('用户脚本未就绪');
+      if (!probe.runtime || probe.runtime.version !== version || probe.runtime.build !== build) failed.push('注入源码版本/构建标识不一致');
       if (!probe.commentRendererCount) failed.push('未捕获真实评论组件');
       if (!menu.localButtonPresent || !menu.identityResolved) failed.push('真实评论菜单未注入可识别身份的本地拉黑项');
       if (!probe.commentUserCount) failed.push('未识别任何评论作者');
-      if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible || !/^🚫 拉黑已加载评论作者\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) failed.push('已加载评论作者批量入口未出现');
+      if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible
+        || !/^🚫 (?:B站评论屏蔽|拉黑已加载评论作者)\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) {
+        failed.push('已加载评论作者批量入口未出现');
+      }
       if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
       if (local.containerTag !== 'BILI-COMMENT-THREAD-RENDERER' || !local.hidden || local.barCount !== 0 || !local.layoutClosed) failed.push('真实评论未按完整线程无提示、零占位隐藏');
       if (!local.restored) failed.push('撤销本地拉黑后真实评论未恢复');
+      if (!local.thread || !local.thread.found || !local.thread.confirm || local.thread.authorCount < 2
+        || local.thread.authorKeyCount < 2 || !local.thread.blocked || local.thread.writes !== 1 || !local.thread.restored) {
+        failed.push('真实主评论“屏蔽该楼回复”未读取并撤销至少一位回复作者');
+      }
       if (!(probe.danmakuXhrTypes || []).some((item) => item.responseType === 'arraybuffer')) failed.push('未捕获 seg.so 的 ArrayBuffer XHR');
       if (failed.length) result.errors.push('验证失败：' + failed.join('；'));
     }

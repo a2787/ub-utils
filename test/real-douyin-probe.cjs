@@ -1,16 +1,23 @@
 /* 抖音登录态只读探针（需要用户调试浏览器 127.0.0.1:9222）。
  * 在用户已登录的浏览器里开一个临时标签页，注入带内存 GM 存储的 userscript，
  * 只操作脚本自身 UI；不读取/导出 Cookie，不点击平台写入控件，结束后关闭标签页。
- * 运行：node test/real-douyin-probe.cjs [--url=https://www.douyin.com/...]
+ * 运行：node test/real-douyin-probe.cjs [--url=https://www.douyin.com/...] [--duration=90]
+ *        node test/real-douyin-probe.cjs --open-entry --duration=90
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const ROOT = path.join(__dirname, '..');
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
+const sourceHash = crypto.createHash('sha256').update(userscript).digest('hex');
+const build = (userscript.match(/const RUNTIME_BUILD\s*=\s*'([^']+)'/) || [, ''])[1];
 const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
 const requestedUrl = urlArg ? urlArg.slice('--url='.length) : '';
+const durationArg = process.argv.find((arg) => arg.startsWith('--duration='));
+const durationSeconds = Math.max(5, Math.min(600, Number(durationArg ? durationArg.slice(11) : 90) || 90));
+const openEntry = process.argv.includes('--open-entry');
 
 const shim = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
@@ -87,11 +94,12 @@ async function evaluate(send, sessionId, expression) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const TEST_SCRIPT = `
-const out = { hasOB: !!window.__OB_TEST__, danmakuCount: document.querySelectorAll('[data-danmu-id]').length, errors: [] };
+const out = { hasOB: !!window.__OB_TEST__, danmakuCount: document.querySelectorAll('[data-danmu-id]').length, errors: [], runtime: null };
 if (!out.hasOB) return out;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const waitFor = async (fn, ms) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (fn()) return true; await pause(80); } return !!fn(); };
 const OB = window.__OB_TEST__;
+out.runtime = OB && OB.runtime || null;
 const adapter = OB.adapters.douyin;
 out.adapterReady = !!adapter;
 if (!adapter) return out;
@@ -99,8 +107,9 @@ const items = Array.from(document.querySelectorAll('[data-danmu-id]'));
 const withIdentity = items.filter((el) => String(el.getAttribute('data-danmaku-user-id') || el.getAttribute('data-danmu-user-id') || '').trim());
 out.withIdentity = withIdentity.length;
 out.sample = withIdentity.slice(0, 3).map((el) => ({
-  attrs: { danmuId: el.getAttribute('data-danmu-id'), uid: el.getAttribute('data-danmaku-user-id') || el.getAttribute('data-danmu-user-id'), isAuthor: el.getAttribute('data-is-danmu-author') },
-  text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40),
+  hasDanmuId: !!el.getAttribute('data-danmu-id'),
+  hasUserId: !!(el.getAttribute('data-danmaku-user-id') || el.getAttribute('data-danmu-user-id')),
+  isAuthor: el.getAttribute('data-is-danmu-author') === 'true',
 }));
 const target = withIdentity.find((el) => {
   const info = adapter.extract(el);
@@ -110,7 +119,27 @@ const target = withIdentity.find((el) => {
 if (!target) { out.noTarget = true; return out; }
 const targetInfo = adapter.extract(target);
 const uidKey = targetInfo.keys.find((key) => key.startsWith('douyin:uid:'));
-const commentFab = document.querySelector('.ob-bulk[data-ob-kind="page"][data-ob-douyin-toolbar="1"]');
+let commentFab = document.querySelector('.ob-bulk[data-ob-kind="page"][data-ob-douyin-toolbar="1"]');
+let commentEntryOpened = false;
+if (!commentFab) {
+  // 精选页的视频弹窗初始可能只展示视频和弹幕，评论列表要由用户点击真实的
+  // feed-comment-icon 后才挂载。只选择当前 DOM 中第一个可见入口，不猜测私有接口。
+  const commentEntry = Array.from(document.querySelectorAll('[data-e2e="feed-comment-icon"]'))
+    .find((el) => { const rect = el.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; });
+  if (commentEntry) {
+    commentEntry.click();
+    commentEntryOpened = true;
+    await waitFor(() => document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length > 0, 4500);
+    await waitFor(() => document.querySelector('.ob-bulk[data-ob-kind="page"][data-ob-douyin-toolbar="1"]'), 2500);
+    commentFab = document.querySelector('.ob-bulk[data-ob-kind="page"][data-ob-douyin-toolbar="1"]');
+  }
+}
+out.commentEntryOpened = commentEntryOpened;
+out.commentDomCount = document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length;
+out.commentRecordCount = adapter.commentManager && typeof adapter.commentManager.collectRecords === 'function'
+  ? adapter.commentManager.collectRecords('manager').length : null;
+out.commentManagerAvailable = adapter.commentManager && typeof adapter.commentManager.available === 'function'
+  ? adapter.commentManager.available() : null;
 const gear = document.getElementById('ob-gear');
 const toolbarPosition = (node) => node ? {
   left: getComputedStyle(node).left,
@@ -173,27 +202,38 @@ if (dmTool) {
 }
 if (commentFab) {
   commentFab.click();
-  await pause(500);
-  const commentManager = document.getElementById('ob-douyin-comment-manager');
+  // 抖音统一评论管理器打开后自动展开明确回复并安全滚动；只等待脚本自身
+  // 的加载流程，不点击平台的举报、拉黑或关注控件。
+  await pause(2600);
+  const commentManager = document.getElementById('ob-comment-manager');
   out.commentManagerPresent = !!commentManager;
-  out.commentSearchPresent = !!(commentManager && commentManager.querySelector('.ob-dc-search'));
-  out.commentLoadPresent = !!(commentManager && commentManager.querySelector('.ob-dc-load'));
-  const commentRows = commentManager && commentManager.querySelectorAll('.ob-dc-row');
+  out.commentSearchPresent = !!(commentManager && commentManager.querySelector('.ob-cm-search'));
+  out.commentLoadPresent = !!(commentManager && commentManager.querySelector('.ob-cm-load-all'));
+  const commentRows = commentManager && commentManager.querySelectorAll('.ob-cm-row');
+  out.commentManagerStaysOpen = !!commentManager && document.getElementById('ob-comment-manager') === commentManager;
   if (commentManager && commentRows && commentRows.length) {
-    const sampleName = commentManager.querySelector('.ob-dc-name');
-    const commentSearch = commentManager.querySelector('.ob-dc-search');
+    const sampleName = commentManager.querySelector('.ob-cm-name');
+    const commentSearch = commentManager.querySelector('.ob-cm-search');
     if (commentSearch) {
       commentSearch.value = ((sampleName && sampleName.textContent) || commentRows[0].textContent || '').trim();
       commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
       await pause(80);
-      out.commentSearchWorks = commentManager.querySelectorAll('.ob-dc-row').length > 0;
+      out.commentSearchWorks = commentManager.querySelectorAll('.ob-cm-row').length > 0;
       commentSearch.value = '';
       commentSearch.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    const checkAll = commentManager.querySelector('.ob-cm-checkall input');
+    if (checkAll) checkAll.click();
+    await pause(80);
+    const batch = commentManager.querySelector('.ob-cm-batch');
+    out.commentBatchEnabled = !!batch && !batch.disabled && !!commentRows.length;
+    const status = commentManager.querySelector('.ob-cm-status');
+    out.commentStatus = status && status.textContent;
   } else {
     out.commentSearchWorks = null;
+    out.commentBatchEnabled = false;
   }
-  const commentClose = commentManager && commentManager.querySelector('.ob-dc-close');
+  const commentClose = commentManager && commentManager.querySelector('.ob-cm-close');
   if (commentClose) commentClose.click();
 }
 target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
@@ -216,25 +256,63 @@ const toast = document.getElementById('ob-toast');
 const undo = toast && toast.querySelector('button');
 if (undo) { undo.click(); await pause(120); }
 out.restored = await waitFor(() => !OB.Index.isBlocked(uidKey) && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0, 2500);
-out.uid = uidKey;
 const authorDm = document.querySelector('[data-danmu-id][data-is-danmu-author="true"]');
 out.authorDanmakuCount = document.querySelectorAll('[data-danmu-id][data-is-danmu-author="true"]').length;
 if (authorDm) {
   const info = adapter.extract(authorDm);
-  out.authorKeys = info && info.keys || [];
+  out.authorIdentityResolved = !!(info && info.keys && info.keys.length);
 }
 return out;
 `;
 
+async function runStabilityCheck(send, sessionId) {
+  const result = {
+    durationSeconds,
+    samples: 0,
+    heartbeatErrors: 0,
+    maxLatencyMs: 0,
+    minDanmakuCount: null,
+    minCommentCount: null,
+    finalDanmakuCount: null,
+    finalCommentCount: null,
+  };
+  const deadline = Date.now() + durationSeconds * 1000;
+  while (Date.now() < deadline) {
+    const started = Date.now();
+    try {
+      const state = await evaluate(send, sessionId, `return {
+        ready: document.readyState,
+        hasOB: !!window.__OB_TEST__,
+        danmakuCount: document.querySelectorAll('[data-danmu-id]').length,
+        commentCount: document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length,
+      }`);
+      result.samples++;
+      result.maxLatencyMs = Math.max(result.maxLatencyMs, Date.now() - started);
+      if (result.minDanmakuCount === null || state.danmakuCount < result.minDanmakuCount) result.minDanmakuCount = state.danmakuCount;
+      if (result.minCommentCount === null || state.commentCount < result.minCommentCount) result.minCommentCount = state.commentCount;
+      result.finalDanmakuCount = state.danmakuCount;
+      result.finalCommentCount = state.commentCount;
+      if (!state.hasOB || state.ready !== 'complete' || state.danmakuCount < 1 || state.commentCount < 1) {
+        result.heartbeatErrors++;
+      }
+    } catch (error) {
+      result.heartbeatErrors++;
+      result.maxLatencyMs = Math.max(result.maxLatencyMs, Date.now() - started);
+    }
+    await sleep(500);
+  }
+  return result;
+}
+
 (async () => {
-  const report = { version, blocked: [], probe: null };
+  const report = { version, sourceHash, build, durationSeconds, blocked: [], probe: null, stability: null };
   const client = await browserClient();
   let targetId = '';
   try {
     const pages = await httpJSON('http://127.0.0.1:9222/json/list');
     const openDouyin = pages.find((page) => page.type === 'page' && /douyin\.com/.test(page.url) && /(\/video\/|modal_id=)/.test(page.url));
     const discovered = openDouyin ? openDouyin.url : '';
-    const url = requestedUrl || discovered;
+    const url = requestedUrl || discovered || (openEntry ? 'https://www.douyin.com/jingxuan' : '');
     if (!url) {
       report.blocked.push('未找到已打开的抖音视频页，也没有提供 --url=');
       console.log(JSON.stringify(report, null, 2));
@@ -250,6 +328,19 @@ return out;
     await client.send('Page.addScriptToEvaluateOnNewDocument', { source: shim + '\n' + userscript + '\nwindow.__OB_TEST__ = window.OB;\n' }, sessionId);
     await client.send('Page.navigate', { url }, sessionId);
     await sleep(4000);
+    if (openEntry) {
+      // 只点击精选页上真实可见的视频卡片，模拟用户打开视频；不调用私有接口，
+      // 不点击举报、拉黑、关注或其他平台写入控件。
+      await evaluate(client.send, sessionId, `(() => {
+        const visible = (node) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+        const cards = Array.from(document.querySelectorAll('.jingxuanVideoCard, [data-e2e="feed-active-video"]'))
+          .filter(visible);
+        const card = cards[0];
+        if (card && typeof card.click === 'function') { card.click(); return { clicked: true, candidates: cards.length }; }
+        return { clicked: false, candidates: cards.length };
+      })()`);
+      await sleep(6000);
+    }
     for (let attempt = 0; attempt < 20; attempt++) {
       const ready = await evaluate(client.send, sessionId, 'return !!window.__OB_TEST__');
       if (ready) break;
@@ -263,18 +354,25 @@ return out;
     }
     report.probe = await evaluate(client.send, sessionId, TEST_SCRIPT);
     const probe = report.probe || {};
-    if (!probe.hasOB || !probe.adapterReady || !probe.danmakuCount || !probe.withIdentity) {
+    if (!probe.hasOB || !probe.adapterReady || !probe.runtime || probe.runtime.version !== version
+      || probe.runtime.build !== build || !probe.danmakuCount || !probe.withIdentity) {
       report.blocked.push('临时标签页未渲染出带发送者身份的抖音弹幕（' + JSON.stringify({ danmakuCount: probe.danmakuCount, withIdentity: probe.withIdentity }) + '）');
     } else if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
       || !probe.commentToolPresent || !probe.commentToolRightColumn || !probe.gearRightColumn
       || !probe.managerPresent || !probe.managerRows || !probe.managerSearchPresent
       || !probe.managerScanPresent || probe.managerSearchWorks === false
       || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored
-      || !probe.commentManagerPresent || !probe.commentSearchPresent || !probe.commentLoadPresent
-      || probe.commentSearchWorks === false
+      || !probe.commentManagerPresent || !probe.commentManagerStaysOpen || !probe.commentSearchPresent || !probe.commentLoadPresent
+      || probe.commentSearchWorks === false || !probe.commentBatchEnabled
       || !probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
       || !probe.blocked || !probe.hidden || !probe.restored || probe.noTarget) {
       report.blocked.push('抖音弹幕本地拉黑闭环未完成：' + JSON.stringify(probe));
+    }
+    if (!report.blocked.length) {
+      report.stability = await runStabilityCheck(client.send, sessionId);
+      if (!report.stability.samples || report.stability.heartbeatErrors) {
+        report.blocked.push('抖音 90 秒稳定性检查出现心跳错误或页面内容消失');
+      }
     }
   } catch (error) {
     report.blocked.push(String(error && error.message || error).slice(0, 500));

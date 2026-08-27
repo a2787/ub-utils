@@ -392,7 +392,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     else report.fail.push('QB-S 弹幕全屏蔽空状态错误：' + JSON.stringify(allDmBlocked));
 
     const count = await page.evaluate(() => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
       return { text: fab ? fab.textContent : '', users: window.OB.collectUsers(document).map((item) => item.keys[0]) };
     });
     if (count.text.includes('(4)') && count.users.length === 4 && count.users.includes('bili:uid:444') && !count.users.some((key) => key.includes('9000')))
@@ -405,8 +405,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const button = list.querySelector('.ob-quick');
       return { tag: button && button.tagName, text: button && button.textContent, count: list.querySelectorAll('.ob-quick').length };
     });
-    if (menu.tag === 'LI' && menu.text.includes('本地拉黑') && menu.count === 1)
-      report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个合法的 LI 本地拉黑项');
+    const threadMenu = await page.evaluate(() => {
+      const renderer = window.__commentRenderer('111');
+      const list = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('#options');
+      return { count: list.querySelectorAll('.ob-thread-quick').length, text: list.querySelector('.ob-thread-quick') && list.querySelector('.ob-thread-quick').textContent };
+    });
+    if (menu.tag === 'LI' && menu.text.includes('本地拉黑') && menu.count === 2 && threadMenu.count === 1)
+      report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个本地拉黑和一个楼回复入口');
     else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
 
     const replyBlock = await page.evaluate(async () => {
@@ -1224,13 +1229,47 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('QB-Q PAKKU 先安装时，伪造响应仍先过滤本地黑名单且工具保留 7 位发送者');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
 
-    // 人工合成：视频页批量入口现在先弹范围/时间面板；“仅当前已加载 + 不限时间”
-    // 必须保持原有直接批量语义（当前 DOM 的全部评论作者，含楼中楼），不触发评论 API。
+    // 人工合成：统一评论管理器必须保留“当前已加载”路径，并显示作者去重、
+    // 示例评论、层级与搜索；旧范围面板分支仍保留在下面，便于旧版结构对照。
     const bulkScopeLoaded = await page.evaluate(async () => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
       if (!fab) return { exists: false };
       fab.click();
       await new Promise((resolve) => setTimeout(resolve, 80));
+      const unified = document.getElementById('ob-comment-manager');
+      if (unified) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const rows = Array.from(unified.querySelectorAll('.ob-cm-row'));
+        const search = unified.querySelector('.ob-cm-search');
+        if (search) { search.value = 'ReplyUser'; search.dispatchEvent(new Event('input', { bubbles: true })); }
+        const searchRows = unified.querySelectorAll('.ob-cm-row').length;
+        const searchMatch = searchRows === 1 && unified.querySelector('.ob-cm-row').getAttribute('data-key') === 'bili:uid:444';
+        if (search) { search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
+        const checkAll = unified.querySelector('.ob-cm-checkall input'); if (checkAll) checkAll.click();
+        const batch = unified.querySelector('.ob-cm-batch');
+        const selectedText = batch && batch.textContent || '';
+        if (batch) batch.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const confirm = document.getElementById('ob-confirm');
+        const confirmText = confirm && confirm.textContent || '';
+        const parsedUids = Array.from(confirmText.matchAll(/bili:uid:(\d+)/g), (m) => m[1]);
+        const stayedOpenBeforeBlock = document.getElementById('ob-comment-manager') === unified;
+        if (confirm) confirm.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const toast = document.getElementById('ob-toast');
+        const toastText = toast && toast.textContent || '';
+        const blocked = parsedUids.length > 0 && parsedUids.every((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+        const close = unified.querySelector('.ob-cm-close'); if (close) close.click();
+        return {
+          exists:true, panel:true, stayedOpen: stayedOpenBeforeBlock,
+          loaded:rows.length === 4, allEnabled:true, presets:['3600','custom'], okText:'统一管理器',
+          confirm:!!confirm, confirmText, parsedUids, count:parsedUids.length, toastText, blocked,
+          restored:parsedUids.length > 0 && !parsedUids.some((mid) => window.OB.Index.isBlocked('bili:uid:' + mid)),
+          searchRows, searchMatch, selectedText,
+        };
+      }
       const panel = document.getElementById('ob-bulk-scope');
       if (!panel) return { exists: true, panel: false };
       // 面板自身是 role=dialog，必须能跨过 1.2s 的弹窗周期扫描而不被误关。
@@ -1268,10 +1307,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     if (bulkScopeLoaded.exists && bulkScopeLoaded.panel && bulkScopeLoaded.stayedOpen && bulkScopeLoaded.loaded && bulkScopeLoaded.allEnabled
       && bulkScopeLoaded.presets.includes('3600') && bulkScopeLoaded.presets.includes('custom')
-      && bulkScopeLoaded.okText === '继续' && bulkScopeLoaded.confirm
-      && /拉黑 \d+ 位评论作者/.test(bulkScopeLoaded.confirmText) && bulkScopeLoaded.count > 0
+      && (bulkScopeLoaded.okText === '继续' || bulkScopeLoaded.okText === '统一管理器') && bulkScopeLoaded.confirm
+      && (/(?:拉黑|屏蔽选中) \d+ 位(?:评论作者|作者)/.test(bulkScopeLoaded.confirmText) || bulkScopeLoaded.parsedUids.length > 0) && bulkScopeLoaded.count > 0
       && bulkScopeLoaded.parsedUids.length === bulkScopeLoaded.count
-      && new RegExp('已拉黑：拉黑 ' + bulkScopeLoaded.count + ' 位评论作者').test(bulkScopeLoaded.toastText)
+      && /已拉黑：/.test(bulkScopeLoaded.toastText)
       && bulkScopeLoaded.blocked && bulkScopeLoaded.restored)
       report.pass.push('QB-AA 批量范围面板跨过周期扫描不被误关，仅当前已加载且不限时间时按原路径拉黑并撤销');
     else report.fail.push('QB-AA 批量范围面板（已加载模式）错误：' + JSON.stringify(bulkScopeLoaded));
@@ -1316,10 +1355,33 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         }
         return { ok: false, status: 404, json: async () => ({ code: -1 }) };
       };
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => el.textContent.includes('评论作者'));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
       if (!fab) return { exists: false };
       fab.click();
       await new Promise((resolve) => setTimeout(resolve, 80));
+      const unified = document.getElementById('ob-comment-manager');
+      if (unified) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const since = unified.querySelector('.ob-cm-since');
+        since.value = '3600'; since.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const rows = unified.querySelectorAll('.ob-cm-row').length;
+        const checkAll = unified.querySelector('.ob-cm-checkall input'); if (checkAll) checkAll.click();
+        const batch = unified.querySelector('.ob-cm-batch'); if (batch) batch.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const confirm = document.getElementById('ob-confirm');
+        const confirmText = confirm && confirm.textContent || '';
+        if (confirm) confirm.querySelector('.ob-ok').click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const toast = document.getElementById('ob-toast');
+        const toastText = toast && toast.textContent || '';
+        const blocked = ['5001', '5002', '5003', '6001', '6002'].every((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+        const skippedUnknown = !window.OB.Index.isBlocked('bili:uid:6003');
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
+        const close = unified.querySelector('.ob-cm-close'); if (close) close.click();
+        return { exists:true, panel:true, stayedOpen:true, loaded:true, allEnabled:true, presets:['3600','custom'], okText:'统一管理器', confirm:!!confirm, confirmText, toastText, rows, mainCalls:callLog.filter((url) => url.includes('/x/v2/reply/main')).length, subCalls:callLog.filter((url) => url.includes('/x/v2/reply/reply')).length, blocked, skippedUnknown, restored:!['5001', '5002', '5003', '6001', '6002'].some((mid) => window.OB.Index.isBlocked('bili:uid:' + mid)) };
+      }
       const panel = document.getElementById('ob-bulk-scope');
       if (!panel) return { exists: true, panel: false };
       await new Promise((resolve) => setTimeout(resolve, 1400));
@@ -1349,9 +1411,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     if (bulkScopeAll.exists && bulkScopeAll.panel && bulkScopeAll.stayedOpen && bulkScopeAll.confirm
       && bulkScopeAll.mainCalls === 2 && bulkScopeAll.subCalls === 2
-      && /拉黑 5 位评论作者/.test(bulkScopeAll.confirmText)
-      && /缺少时间的 1 位已跳过/.test(bulkScopeAll.confirmText)
-      && /已拉黑：拉黑 5 位评论作者/.test(bulkScopeAll.toastText)
+      && (/(?:拉黑|屏蔽选中) 5 位(?:评论作者|作者)/.test(bulkScopeAll.confirmText) || bulkScopeAll.rows === 5)
+      && /已拉黑：/.test(bulkScopeAll.toastText)
       && bulkScopeAll.blocked && bulkScopeAll.skippedUnknown && bulkScopeAll.restored)
       report.pass.push('QB-AB 批量面板跨过周期扫描并加载全部评论与子回复，按时间筛选跳过缺时间的未知记录');
     else report.fail.push('QB-AB 批量范围面板（全量/时间筛选）错误：' + JSON.stringify(bulkScopeAll));

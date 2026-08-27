@@ -165,6 +165,26 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ? report.pass.push('J 运行时维护标识：页面版本、源码构建与机器标记一致')
     : report.fail.push('J 运行时维护标识不一致：' + JSON.stringify({ localVersion: LOCAL_VERSION, sourceBuild: SOURCE_BUILD, diag }));
 
+  // K. 同一文档重复注入：调试重放可能再次执行源码，但只能保留一套运行时。
+  // 第二次执行用当前源码直接 eval，验证运行锁确实阻止第二套扫描器/定时器/UI。
+  await page.evaluate((source) => { (0, eval)(source); }, USERSCRIPT);
+  await sleep(120);
+  const duplicateRuntime = await page.evaluate(() => ({
+    guard: window.__OB_RUNTIME_GUARD__ ? { ...window.__OB_RUNTIME_GUARD__ } : null,
+    gearCount: document.querySelectorAll('#ob-gear').length,
+    runtime: window.OB && window.OB.runtime,
+  }));
+  const duplicateGuardWorks = !!(duplicateRuntime.guard
+    && duplicateRuntime.guard.active
+    && duplicateRuntime.guard.duplicateExecutions === 1
+    && duplicateRuntime.runtime
+    && duplicateRuntime.runtime.version === LOCAL_VERSION
+    && duplicateRuntime.runtime.build === SOURCE_BUILD
+    && duplicateRuntime.gearCount === 1);
+  duplicateGuardWorks
+    ? report.pass.push('K 同文档重复注入被运行锁忽略：仅保留一套运行时与设置入口')
+    : report.fail.push('K 同文档重复注入防护失败：' + JSON.stringify(duplicateRuntime));
+
   const hostOf = `(uid) => { const arr = Array.from(document.querySelectorAll('bili-comment-renderer')); const h = arr.find(x => x.shadowRoot && x.shadowRoot.querySelector('a[href*="space.bilibili.com/' + uid + '"]')); return h || null; }`;
 
   // A. 加载即隐藏：Bob(222) 应被标记
