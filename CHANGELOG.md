@@ -3,6 +3,55 @@
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
 [MAINTENANCE.md](MAINTENANCE.md)。
 
+## 工作区未发布候选（保留 @version 0.43.0） - 2026-08-28
+
+### 自动弹幕误命中支持恢复并加入规则例外
+
+- B站和抖音自动规则命中的发送者现在可以从弹幕管理器点「恢复并例外」：当前本地屏蔽身份会解除，
+  同时保存该平台的可靠身份键作为自动规则例外；规则仍继续处理其他发送者。
+- 例外按平台分别保存，设置面板的“自动规则例外”区域可以点「恢复规则」删除例外；删除后自动规则重新作用于该身份。
+- 手动再次执行本地拉黑时会清除对应例外，避免用户的明确手动屏蔽被 allowlist 长期覆盖。B站只使用弹幕 hash 和已确认
+  UID，不从 hash 猜测 UID；抖音没有可靠身份的弹幕仍只做节点级自动隐藏。
+
+### 验证边界
+
+- **`real-site verified`**：2026-08-28，在用户授权的专用持久 Chrome 会话中，将当前源码注入脱敏 B站视频页
+  `bilibili.com/video/...`；登录状态未读取且本次动作不依赖登录，未读取 Cookie。管理器实际保留 7 个文案组，临时关键词命中其中
+  1 组后显示灰色 `blocked` 行和「恢复并例外」；点击后该组变为 `active`、灰色消失并记录 1 条 B站规则例外。随后删除该例外，
+  同一行再次变为灰色并恢复「恢复并例外」，证明规则仍然启用。临时规则、例外和名单只存在该页面的内存 GM stub，未点击举报、
+  官方拉黑、关注或其他平台写入控件。
+- **`structure regression`**：`node test/danmaku-auto.cjs` 5/5、`node test/quickblock.cjs` 32/32、`node test/run.cjs` 14/14、
+  `node test/state.cjs` 7/7、`node test/comment-manager.cjs` 3/3、`node test/adapters.cjs` 21/21、`node test/douyin.cjs` 2/2、
+  `node test/weibo-replay.cjs` 11/11 通过；`node --check omniblock.user.js`、受影响测试脚本语法检查和 `git diff --check` 通过。
+- **`blocked`**：`node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=5` 注入新构建后仍未发现带可靠身份的弹幕节点
+  （0 个可用节点）；`node test/real-platform-probe.cjs douyin --verify-local` 的公开入口停在验证码中间页。抖音因此不能声明线上自动规则例外闭环。
+  B站公开隔离探针本轮已加载并确认新构建，但未执行自动例外交互；B站的真实闭环证据来自上面的专用页面操作。
+
+### 发布状态
+
+- 这是工作区候选，仍保留 userscript `@version 0.43.0`，构建标识为
+  `0.43.0-bili-douyin-danmaku-manager-exception`；未覆盖已发布 `v0.43.0`，未提交、未推送、未打 tag、未创建 Release。
+
+## 工作区未发布候选（保留 @version 0.43.0） - 2026-08-28
+
+### 弹幕管理器保留已屏蔽记录并支持取消屏蔽
+
+- B站和抖音弹幕管理器现在会保留当前视频已经观察到、但已经在本地名单中的发送者；这些行以灰色显示，并提供「取消屏蔽」入口。
+- 已屏蔽行不会进入全选、勾选或批量屏蔽；B站同一文案下只有部分发送者被屏蔽时，会显示部分状态，仍只对未屏蔽发送者执行批量动作。
+- 取消屏蔽按已保存的人物身份组处理，避免同一人物同时保存 UID、弹幕 hash 或抖音身份键时只删除一部分而继续保持灰态。
+- 自动弹幕规则仍然优先：规则持续启用时，受规则命中的行会标明规则状态，需先在设置中停用或删除规则。
+
+### 验证边界
+
+- **`real-site verified`**：2026-08-28，在专用 Chrome 当前会话的脱敏 B站视频页 `bilibili.com/video/...` 中注入当前工作区候选；运行时构建标识一致，管理器显示 7 个文案组，其中 1 行灰显、复选框禁用且有「取消屏蔽」，点击后恢复为 active 行并出现单条操作入口。演示名单只写入本次页面内存 stub，未触碰平台写入控件。
+- **`structure regression`**：`node test/quickblock.cjs` 32/32、`node test/danmaku-auto.cjs` 5/5；新增覆盖 B站灰显/取消屏蔽、关联身份键整体移除和抖音灰显/取消屏蔽。
+- **`blocked`**：同一专用 Chrome 的抖音精选视频页当前没有渲染带可靠身份的弹幕节点，最新构建的管理器因此为 0 行；`node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=5` 也如实报告无可靠弹幕目标。公开隔离 B站探针因页面导航销毁执行上下文，公开隔离抖音探针停在验证码中间页。
+
+### 发布状态
+
+- 这是工作区候选，仍保留 userscript `@version 0.43.0`，构建标识为 `0.43.0-bili-douyin-danmaku-manager-unblock`；未覆盖已发布 `v0.43.0`，未提交、未推送、未打 tag、未创建 Release。
+- 完整证据、命令结果和下一项验证见 `MAINTENANCE.md` 的同日交接条目。
+
 ## 0.43.0 - 2026-08-27
 
 ### 修复抖音跨视频弹幕管理器沿用旧记录

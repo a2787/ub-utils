@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.43.0-bili-douyin-auto-danmaku-rules';
+  const RUNTIME_BUILD = '0.43.0-bili-douyin-danmaku-manager-exception';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -187,6 +187,10 @@
     bili: 'biliDanmakuRules',
     douyin: 'douyinDanmakuRules',
   };
+  const DANMAKU_EXEMPTION_SETTING_KEYS = {
+    bili: 'biliDanmakuExemptions',
+    douyin: 'douyinDanmakuExemptions',
+  };
 
   function ruleText(value) {
     return String(value == null ? '' : value)
@@ -283,6 +287,11 @@
     return out;
   }
 
+  function sanitizeDanmakuExemptions(input, platform) {
+    const prefix = String(platform || '') + ':';
+    return normalizeIdentityKeys(input).filter((key) => key.startsWith(prefix));
+  }
+
   function makeIdentityKey(type, value) {
     return normalizeIdentityKey(type + ':' + normId(value));
   }
@@ -316,6 +325,8 @@
     localBackupEnabled: true,    // 自动保留最近 5 份本地快照（不上传）
     biliDanmakuRules: [],        // B站自动弹幕关键词/正则；不承担 PAKKU 去重
     douyinDanmakuRules: [],      // 抖音自动弹幕关键词/正则
+    biliDanmakuExemptions: [],   // B站自动规则例外；只跳过规则，不是新的屏蔽身份
+    douyinDanmakuExemptions: [], // 抖音自动规则例外；只跳过规则，不是新的屏蔽身份
   };
 
   const Store = (function () {
@@ -344,6 +355,10 @@
       for (const platform of Object.keys(DANMAKU_RULE_SETTING_KEYS)) {
         const key = DANMAKU_RULE_SETTING_KEYS[platform];
         out[key] = sanitizeDanmakuRules(source[key]);
+      }
+      for (const platform of Object.keys(DANMAKU_EXEMPTION_SETTING_KEYS)) {
+        const key = DANMAKU_EXEMPTION_SETTING_KEYS[platform];
+        out[key] = sanitizeDanmakuExemptions(source[key], platform);
       }
       return out;
     }
@@ -864,6 +879,60 @@
     return { settingKey, rulesFor, signature, match, hasEnabled, add, remove, setEnabled };
   })();
 
+  // 自动规则例外是独立于屏蔽名单的本地 allowlist：恢复一个误命中的发送者时，
+  // 规则仍可继续处理其他人，但不会在下一轮扫描中把这个身份重新写回名单。
+  // 例外只接受当前平台的规范化身份键，不接受文案或不可逆的猜测身份。
+  const DanmakuExemptions = (function () {
+    function settingKey(platform) { return DANMAKU_EXEMPTION_SETTING_KEYS[platform] || ''; }
+    function keysFor(platform) {
+      const key = settingKey(platform);
+      return key ? sanitizeDanmakuExemptions(Store.getSetting(key), platform) : [];
+    }
+    function normalizeFor(platform, keys) {
+      return sanitizeDanmakuExemptions(keys, platform);
+    }
+    function isExempt(platform, keys) {
+      const targets = new Set(normalizeFor(platform, keys));
+      if (!targets.size) return false;
+      return keysFor(platform).some((key) => targets.has(key));
+    }
+    function add(platform, keys) {
+      const key = settingKey(platform);
+      const normalized = normalizeFor(platform, keys);
+      if (!key || !normalized.length) return { added: [], keys: keysFor(platform) };
+      const current = keysFor(platform);
+      const next = current.slice();
+      const added = [];
+      for (const identity of normalized) {
+        if (next.includes(identity)) continue;
+        next.push(identity); added.push(identity);
+      }
+      if (added.length) Store.setSetting(key, next);
+      return { added, keys: next };
+    }
+    function remove(platform, keys) {
+      const key = settingKey(platform);
+      const targets = new Set(normalizeFor(platform, keys));
+      if (!key || !targets.size) return { removed: [], keys: keysFor(platform) };
+      const current = keysFor(platform);
+      const removed = current.filter((identity) => targets.has(identity));
+      if (removed.length) Store.setSetting(key, current.filter((identity) => !targets.has(identity)));
+      return { removed, keys: current.filter((identity) => !targets.has(identity)) };
+    }
+    return { settingKey, keysFor, isExempt, add, remove };
+  })();
+
+  function clearDanmakuExemptionsForManualBlock(keys) {
+    const byPlatform = new Map();
+    for (const key of normalizeIdentityKeys(keys)) {
+      const platform = key.split(':', 1)[0];
+      if (!DANMAKU_EXEMPTION_SETTING_KEYS[platform]) continue;
+      const list = byPlatform.get(platform) || [];
+      list.push(key); byPlatform.set(platform, list);
+    }
+    for (const [platform, identities] of byPlatform) DanmakuExemptions.remove(platform, identities);
+  }
+
   // 内存索引：身份键 → 是否屏蔽（O(1) 判定）
   const Index = (function () {
     let set = new Set();
@@ -1125,8 +1194,13 @@
       align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #f0f0f0;
     }
     #ob-dm-manager .ob-dm-sender:last-child { border-bottom: 0; }
+    #ob-dm-manager .ob-dm-sender.ob-dm-blocked { background: #f7f7f8; }
+    #ob-dm-manager .ob-dm-sender.ob-dm-partial { background: #fcfcfc; }
     #ob-dm-manager .ob-dm-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #ob-dm-manager .ob-dm-meta { color: #888; font-size: 11px; margin-top: 2px; }
+    #ob-dm-manager .ob-dm-blocked .ob-dm-content,
+    #ob-dm-manager .ob-dm-blocked .ob-dm-meta { color: #999; }
+    #ob-dm-manager .ob-dm-state { color: #999; font-size: 11px; }
     #ob-dm-manager .ob-dm-actions { display: inline-flex; align-items: center; gap: 2px; }
     #ob-dm-manager .ob-dm-uid-query {
       min-width: 42px; height: 32px; border: 0; border-radius: 4px; padding: 0 5px; background: transparent;
@@ -1139,6 +1213,12 @@
       color: #c0392b; cursor: pointer; font-size: 15px;
     }
     #ob-dm-manager .ob-dm-single:hover { background: #fdeceb; }
+    #ob-dm-manager .ob-dm-unblock {
+      min-width: 68px; height: 32px; border: 1px solid #d5d5d8; border-radius: 4px; padding: 0 7px;
+      background: #fff; color: #666; cursor: pointer; font-size: 11px; white-space: nowrap;
+    }
+    #ob-dm-manager .ob-dm-unblock:hover:not(:disabled) { background: #f1f1f1; color: #333; }
+    #ob-dm-manager .ob-dm-unblock:disabled { color: #aaa; cursor: default; }
     #ob-dm-manager .ob-dm-uid-results {
       grid-column: 2 / -1; min-width: 0; display: grid; gap: 6px; padding: 6px 0 2px;
       color: #555; font-size: 11px;
@@ -1302,10 +1382,19 @@
     #ob-douyin-dm-manager input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
     #ob-douyin-dm-manager .ob-dd-list { min-height: 120px; overflow: auto; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
     #ob-douyin-dm-manager .ob-dd-empty { min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 20px; color: #777; text-align: center; }
-    #ob-douyin-dm-manager .ob-dd-row { min-height: 52px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 8px; padding: 8px 4px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    #ob-douyin-dm-manager .ob-dd-row { min-height: 52px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: start; gap: 8px; padding: 8px 4px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
     #ob-douyin-dm-manager .ob-dd-row:last-child { border-bottom: 0; }
+    #ob-douyin-dm-manager .ob-dd-row.ob-dd-blocked { background: #f7f7f8; }
     #ob-douyin-dm-manager .ob-dd-name { min-width: 0; color: #333; font-weight: 600; overflow-wrap: anywhere; }
     #ob-douyin-dm-manager .ob-dd-note { min-width: 0; margin-top: 3px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ob-douyin-dm-manager .ob-dd-blocked .ob-dd-name,
+    #ob-douyin-dm-manager .ob-dd-blocked .ob-dd-note { color: #999; }
+    #ob-douyin-dm-manager .ob-dd-actions { display: inline-flex; align-items: center; gap: 2px; }
+    #ob-douyin-dm-manager .ob-dd-unblock {
+      min-width: 68px; min-height: 32px; border: 1px solid #d5d5d8; border-radius: 4px; padding: 0 7px;
+      background: #fff; color: #666; cursor: pointer; font-size: 11px; white-space: nowrap;
+    }
+    #ob-douyin-dm-manager .ob-dd-unblock:hover { background: #f1f1f1; color: #333; }
     #ob-douyin-dm-manager .ob-dd-footer { justify-content: space-between; flex-wrap: wrap; padding-top: 10px; }
     #ob-douyin-dm-manager .ob-dd-status { color: #777; }
     #ob-douyin-dm-manager .ob-dd-batch { min-height: 34px; border: 0; border-radius: 6px; padding: 7px 12px; background: #c0392b; color: #fff; cursor: pointer; font-size: 12px; }
@@ -1371,6 +1460,11 @@
     #ob-panel .ob-auto-rule-kind { flex: 0 0 auto; color: #777; font-size: 11px; }
     #ob-panel .ob-auto-rule-pattern { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #333; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
     #ob-panel .ob-auto-rule-remove { flex: 0 0 auto; border: 0; background: transparent; color: #c0392b; cursor: pointer; font-size: 12px; }
+    #ob-panel .ob-auto-exemption-list { display: grid; gap: 4px; margin-top: 8px; }
+    #ob-panel .ob-auto-exemption-title { margin-top: 8px; color: #777; font-size: 11px; }
+    #ob-panel .ob-auto-exemption { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 6px; background: #f5f5f6; border-radius: 5px; }
+    #ob-panel .ob-auto-exemption-key { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #666; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+    #ob-panel .ob-auto-exemption-remove { flex: 0 0 auto; border: 0; background: transparent; color: #555; cursor: pointer; font-size: 12px; }
     #ob-panel .ob-auto-empty, #ob-panel .ob-auto-status { color: #999; font-size: 11px; line-height: 1.5; }
     #ob-panel .ob-auto-empty { padding: 4px 0; }
     #ob-gear {
@@ -2728,6 +2822,7 @@
       try {
         if (commit) transaction = commit();
         else {
+          clearDanmakuExemptionsForManualBlock(normalizedKeys);
           const result = Store.addIdentities(normalizedKeys, label, note || reasonFromAnchor(anchorEl));
           transaction = {
             result,
@@ -3198,6 +3293,7 @@
     const DY_AUTO_QUEUE_LIMIT = 256;
     const dyAutoSeenMessages = new Set();
     const dyAutoQueue = new Map();
+    const dyAutoBlockedKeys = new Set();
     const dyAutoHiddenNodes = new Set();
     const dyAutoDisplayStates = new WeakMap();
     let dyAutoFlushTimer = 0;
@@ -3267,6 +3363,7 @@
       dyAutoFlushTimer = 0;
       dyAutoSeenMessages.clear();
       dyAutoQueue.clear();
+      dyAutoBlockedKeys.clear();
       dyAutoGeneration++;
       dyAutoStatus = { matchedMessages: 0, queuedSenders: 0, persistedSenders: 0, noIdentity: 0 };
       return true;
@@ -3309,6 +3406,10 @@
         if (item.getAttribute('data-ob-auto-dm-blocked') === '1') setDouyinAutoHidden(item, false);
         return false;
       }
+      if (DanmakuExemptions.isExempt('douyin', info && info.keys)) {
+        if (item.getAttribute('data-ob-auto-dm-blocked') === '1') setDouyinAutoHidden(item, false);
+        return false;
+      }
       queueDouyinAutoDanmaku(info || { keys: [] }, text);
       setDouyinAutoHidden(item, true);
       return true;
@@ -3317,6 +3418,7 @@
       dyAutoFlushTimer = 0;
       if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('douyin')) {
         dyAutoQueue.clear();
+        dyAutoBlockedKeys.clear();
         return;
       }
       if (!dyAutoQueue.size) return;
@@ -3344,6 +3446,7 @@
       const match = DanmakuRules.match('douyin', content);
       if (!match) return false;
       const keys = normalizeIdentityKeys(info && info.keys);
+      if (DanmakuExemptions.isExempt('douyin', keys)) return false;
       const text = String(content || '').replace(/\s+/g, ' ').trim();
       const fingerprint = (keys.length ? keys.join('|') : 'no-key') + '\x1f' + text;
       if (dyAutoSeenMessages.has(fingerprint)) return true;
@@ -3354,6 +3457,7 @@
         dyAutoStatus.noIdentity++;
         return true;
       }
+      for (const key of keys) dyAutoBlockedKeys.add(key);
       const key = keys.join('|');
       if (!dyAutoQueue.has(key) && dyAutoQueue.size < DY_AUTO_QUEUE_LIMIT) {
         dyAutoQueue.set(key, {
@@ -3593,6 +3697,8 @@
       danmakuRoot,
       collectDanmaku,
       scanAutoDanmaku,
+      isDanmakuAutoBlocked: (keys) => normalizeIdentityKeys(keys).some((key) => dyAutoBlockedKeys.has(key)
+        && !DanmakuExemptions.isExempt('douyin', [key])),
       getAutoDanmakuStatus: autoDanmakuStatus,
       beforeHandle,
       bulkFabLabel: (n) => '🚫 抖音评论屏蔽(' + n + ')',
@@ -5128,6 +5234,35 @@
     return out;
   }
 
+  // 管理器里的“取消屏蔽”按已保存的人物身份组处理：同一人物可能同时拥有
+  // UID、sec_uid、弹幕 hash 等键，只删当前一条键会让页面仍因关联键保持灰态。
+  // 调用方只传入当前行已经判定为屏蔽的键，未屏蔽的并列记录不会触发扩展。
+  function relatedIdentityKeys(keys) {
+    const targets = new Set(normalizeIdentityKeys(keys));
+    if (!targets.size) return [];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const person of Object.values(Store.persons())) {
+        const identities = normalizeIdentityKeys(person && person.identities);
+        if (!identities.some((key) => targets.has(key))) continue;
+        for (const key of identities) {
+          if (targets.has(key)) continue;
+          targets.add(key);
+          changed = true;
+        }
+      }
+    }
+    return Array.from(targets);
+  }
+
+  function unblockIdentityGroup(keys) {
+    const normalized = normalizeIdentityKeys(keys);
+    if (!normalized.length) return { removed: 0, keys: [] };
+    const expanded = relatedIdentityKeys(normalized);
+    return { removed: Store.removeIdentities(expanded), keys: expanded };
+  }
+
   function collectUsers(root, purpose) {
     const a = currentAdapter; if (!a || !a.selectors) return [];
     const scope = root || document;
@@ -5154,6 +5289,7 @@
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
     showConfirm(confirmLabel || ('拉黑全部 ' + list.length + ' 位用户'), keys, anchorEl, onBlocked, () => {
+      clearDanmakuExemptionsForManualBlock(keys);
       const results = Store.addIdentityGroups(list.map((info) => ({ keys: info.keys, label: info.label, note: info.note })));
       const addedKeys = [];
       for (const result of results) {
@@ -5741,7 +5877,12 @@
           if (!existing.note && info.note) existing.note = info.note;
         }
       }
-      return Array.from(records.values()).filter((info) => !Index.isBlocked(info.keys));
+      return Array.from(records.values()).map((info) => ({
+        ...info,
+        blockedKeys: (info.keys || []).filter((key) => Index.has(key)),
+        autoBlockedKeys: typeof adapter.isDanmakuAutoBlocked === 'function' && adapter.isDanmakuAutoBlocked(info.keys)
+          ? (info.keys || []).filter((key) => !DanmakuExemptions.isExempt('douyin', [key])) : [],
+      }));
     };
 
     function render() {
@@ -5752,7 +5893,8 @@
       // 不能继续向已移除的旧节点写 DOM，也不能让旧面板的事件回调复活它。
       if (douyinDanmakuManager !== panel || !panel.isConnected) return;
       const availableKeys = new Set(available.map(keyOf));
-      for (const key of Array.from(selected)) if (!availableKeys.has(key)) selected.delete(key);
+      const blockedKeys = new Set(available.filter((info) => info.blockedKeys.length).map(keyOf));
+      for (const key of Array.from(selected)) if (!availableKeys.has(key) || blockedKeys.has(key)) selected.delete(key);
       const term = String(searchText || '').replace(/\s+/g, ' ').trim().toLowerCase();
       const filtered = term
         ? available.filter((info) => [info.label, info.note, ...(info.keys || [])].join(' ').toLowerCase().includes(term))
@@ -5766,8 +5908,14 @@
       }
       for (const info of filtered) {
         const key = keyOf(info);
-        const row = document.createElement('label'); row.className = 'ob-dd-row'; row.setAttribute('data-key', key);
-        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(key);
+        const isBlocked = info.blockedKeys.length > 0;
+        const isAutoBlocked = info.autoBlockedKeys.length > 0;
+        const row = document.createElement('label');
+        row.className = 'ob-dd-row' + (isBlocked ? ' ob-dd-blocked' : '') + (isAutoBlocked ? ' ob-dd-auto' : '');
+        row.setAttribute('data-key', key);
+        row.setAttribute('data-ob-dd-state', isBlocked ? 'blocked' : 'active');
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = !isBlocked && selected.has(key);
+        checkbox.disabled = isBlocked;
         checkbox.addEventListener('change', () => {
           if (checkbox.checked) selected.add(key); else selected.delete(key);
           render();
@@ -5776,34 +5924,73 @@
         const name = document.createElement('div'); name.className = 'ob-dd-name';
         name.textContent = info.label || '抖音弹幕发送者';
         const note = document.createElement('div'); note.className = 'ob-dd-note';
-        note.textContent = (info.note || '当前视频弹幕') + ' · 观察到 ' + (Number(info.messageCount) || 1) + ' 条';
+        note.textContent = (info.note || '当前视频弹幕') + ' · 观察到 ' + (Number(info.messageCount) || 1) + ' 条'
+          + (isBlocked ? ' · 已屏蔽' : '') + (isAutoBlocked ? ' · 自动规则命中' : '');
         body.append(name, note);
-        row.append(checkbox, body); list.appendChild(row);
+        const actions = document.createElement('div'); actions.className = 'ob-dd-actions';
+        if (isBlocked) {
+          const unblock = document.createElement('button');
+          unblock.type = 'button'; unblock.className = 'ob-dd-unblock';
+          unblock.textContent = isAutoBlocked ? '恢复并例外' : '取消屏蔽';
+          unblock.title = isAutoBlocked
+            ? '恢复该发送者，并让抖音自动规则以后跳过它'
+            : '取消该发送者的本地屏蔽';
+          unblock.setAttribute('aria-label', unblock.title);
+          unblock.setAttribute('data-ob-dd-action', isAutoBlocked ? 'exception' : 'unblock');
+          unblock.addEventListener('click', (event) => {
+            event.stopPropagation(); event.preventDefault();
+            const exemption = isAutoBlocked ? DanmakuExemptions.add('douyin', info.keys) : { added: [] };
+            const result = unblockIdentityGroup(info.blockedKeys);
+            if (!result.removed) {
+              if (!exemption.added.length) {
+                showToast('未找到可取消的本地屏蔽身份');
+                return;
+              }
+              // 运行时自动隐藏节点可能尚未经过下一轮定时扫描；恢复动作必须即时可见。
+              try { adapter.scanAutoDanmaku(); } catch (e) {}
+              showToast('已恢复该发送者，并加入抖音自动规则例外；可在设置中恢复规则作用');
+              refresh();
+              render();
+              return;
+            }
+            try { adapter.scanAutoDanmaku(); } catch (e) {}
+            showToast(isAutoBlocked
+              ? '已恢复该发送者，并加入抖音自动规则例外；可在设置中恢复规则作用'
+              : '已取消屏蔽：' + (info.label || '抖音弹幕发送者'));
+            refresh();
+            render();
+          });
+          actions.appendChild(unblock);
+        }
+        row.append(checkbox, body, actions); list.appendChild(row);
       }
       const checkAll = panel.querySelector('.ob-dd-checkall input');
-      checkAll.checked = !!filtered.length && filtered.every((info) => selected.has(keyOf(info)));
-      checkAll.indeterminate = !checkAll.checked && filtered.some((info) => selected.has(keyOf(info)));
+      const selectable = filtered.filter((info) => !info.blockedKeys.length);
+      checkAll.checked = !!selectable.length && selectable.every((info) => selected.has(keyOf(info)));
+      checkAll.indeterminate = !checkAll.checked && selectable.some((info) => selected.has(keyOf(info)));
       checkAll.onchange = () => {
-        for (const info of filtered) {
+        for (const info of selectable) {
           const key = keyOf(info);
           if (checkAll.checked) selected.add(key); else selected.delete(key);
         }
         render();
       };
-      const selectedRecords = available.filter((info) => selected.has(keyOf(info)));
+      const selectedRecords = available.filter((info) => !info.blockedKeys.length && selected.has(keyOf(info)));
       const batch = panel.querySelector('.ob-dd-batch');
       batch.disabled = !selectedRecords.length;
       batch.textContent = '屏蔽选中(' + selectedRecords.length + ')';
       batch.onclick = () => {
-        const current = collectRecords().filter((info) => selected.has(keyOf(info)));
+        const current = collectRecords().filter((info) => !info.blockedKeys.length && selected.has(keyOf(info)));
         if (!current.length) return;
         blockMany(current, batch, '屏蔽选中的 ' + current.length + ' 位抖音弹幕发送者', () => {
           selected.clear(); render(); refresh();
         });
       };
       const totalMessages = filtered.reduce((sum, info) => sum + (Number(info.messageCount) || 1), 0);
+      const blockedCount = filtered.filter((info) => info.blockedKeys.length).length;
       panel.querySelector('.ob-dd-status').textContent = scanStatus
-        || (filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕');
+        || (filtered.length + ' 位发送者 · 观察到 ' + totalMessages + ' 条弹幕'
+          + (blockedCount ? ' · 已屏蔽 ' + blockedCount + ' 位' : ''));
       const scan = panel.querySelector('.ob-dd-scan');
       scan.disabled = scanRunning;
       scan.textContent = scanRunning ? '扫描中…' : '尽量加载弹幕';
@@ -5938,7 +6125,10 @@
       if (douyinDanmakuManager) render();
     }
 
-    Store.onChange(refresh);
+    Store.onChange(() => {
+      refresh();
+      if (typeof adapter.scanAutoDanmaku === 'function') adapter.scanAutoDanmaku();
+    });
     setInterval(() => {
       refresh();
       if (typeof adapter.scanAutoDanmaku === 'function') adapter.scanAutoDanmaku();
@@ -6346,6 +6536,65 @@
       return set;
     }
 
+    // 一个弹幕 hash 可能来自直接保存的 hash，也可能只是某个已保存 B站 UID 的 CRC32 映射。
+    // 取消屏蔽时优先使用直接 hash；UID 映射只有在当前 hash 恰好对应唯一已保存 UID 时才自动移除，
+    // 多 UID 碰撞必须留给设置面板逐个处理，避免“取消一行”误删另一个人的本地屏蔽。
+    function blockedIdentityKeysForHashes(hashes) {
+      const targets = new Set((hashes || []).map((hash) => normalHash(hash)).filter(Boolean));
+      const directByHash = new Map();
+      const uidByHash = new Map();
+      for (const key of Store.allIdentities()) {
+        const direct = key.match(/^bili:dmhash:([0-9a-f]{1,8})$/i);
+        if (direct) {
+          const hash = normalHash(direct[1]);
+          if (targets.has(hash)) {
+            const list = directByHash.get(hash) || [];
+            list.push(key);
+            directByHash.set(hash, list);
+          }
+          continue;
+        }
+        const uid = key.match(/^bili:uid:(\d+)$/);
+        if (!uid) continue;
+        const hash = normalHash(crc32(uid[1]).toString(16));
+        if (!targets.has(hash)) continue;
+        const list = uidByHash.get(hash) || [];
+        list.push(key);
+        uidByHash.set(hash, list);
+      }
+      const keys = [];
+      let ambiguous = false;
+      for (const hash of targets) {
+        for (const key of directByHash.get(hash) || []) keys.push(key);
+        const uids = uidByHash.get(hash) || [];
+        if (uids.length === 1) keys.push(uids[0]);
+        else if (uids.length > 1) ambiguous = true;
+      }
+      return { keys: normalizeIdentityKeys(keys), ambiguous };
+    }
+
+    function isBiliDmHashExempt(hash) {
+      const normalized = normalHash(hash);
+      if (!normalized) return false;
+      if (DanmakuExemptions.isExempt('bili', [makeIdentityKey('bili:dmhash', normalized)])) return true;
+      // 设置导入可能只保留了已确认 UID；把它映射到 hash 只用于跳过自动规则，
+      // 不会因此反向声称 hash 已经能证明 UID 身份。
+      for (const key of DanmakuExemptions.keysFor('bili')) {
+        const uid = key.match(/^bili:uid:(\d+)$/);
+        if (uid && normalHash(crc32(uid[1]).toString(16)) === normalized) return true;
+      }
+      return false;
+    }
+
+    function currentBlockedHashes() {
+      const set = blockedHashes();
+      for (const hash of Array.from(set)) if (isBiliDmHashExempt(hash)) set.delete(hash);
+      if (Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili')) {
+        for (const hash of dmAutoBlockedHashes) if (!isBiliDmHashExempt(hash)) set.add(hash);
+      }
+      return set;
+    }
+
     // 轻量 protobuf 解析：top-level repeated 消息 field1=elems；每个 elem 内
     // field2=progress, field6=midHash, field7=content。保留原字节，避免重编码。
     function readVarint(buf, pos) {
@@ -6494,7 +6743,8 @@
         if (generation !== dmAutoGeneration || !entries.length) return;
         const existing = Store.allIdentities();
         const groups = entries
-          .filter((entry) => entry && entry.hash && !existing.has(makeIdentityKey('bili:dmhash', entry.hash)))
+          .filter((entry) => entry && entry.hash && !isBiliDmHashExempt(entry.hash)
+            && !existing.has(makeIdentityKey('bili:dmhash', entry.hash)))
           .map((entry) => ({
             keys: [makeIdentityKey('bili:dmhash', entry.hash)],
             label: 'B站弹幕自动规则',
@@ -6506,7 +6756,7 @@
     }
     function queueAutoBiliHash(hash, content, match) {
       const normalized = normalHash(hash);
-      if (!normalized || !match) return false;
+      if (!normalized || !match || isBiliDmHashExempt(normalized)) return false;
       const isNew = !dmAutoBlockedHashes.has(normalized);
       dmAutoBlockedHashes.add(normalized);
       if (isNew) dmAutoStatus.matchedHashes++;
@@ -6531,7 +6781,7 @@
     }
     function queueAutoBiliUidLookup(hash, content, match) {
       const normalized = normalHash(hash);
-      if (!normalized || dmAutoUidStates.has(normalized) || dmAutoUidQueue.has(normalized)) return;
+      if (!normalized || isBiliDmHashExempt(normalized) || dmAutoUidStates.has(normalized) || dmAutoUidQueue.has(normalized)) return;
       if (dmAutoUidLookups + dmAutoUidQueue.size >= DM_AUTO_UID_LIMIT) {
         dmAutoStatus.uidLimit++;
         return;
@@ -6548,6 +6798,7 @@
         const links = [];
         for (const entry of entries) {
           if (generation !== dmAutoGeneration || !Store.getSetting('enabled') || !DanmakuRules.hasEnabled('bili')) return;
+          if (isBiliDmHashExempt(entry.hash)) continue;
           dmAutoUidLookups++;
           dmAutoUidStates.set(entry.hash, { status: 'loading' });
           let candidates = [];
@@ -6559,7 +6810,7 @@
           }
           try {
             const card = await requestDmUidCard(candidates[0]);
-            if (!card || generation !== dmAutoGeneration) {
+            if (!card || generation !== dmAutoGeneration || isBiliDmHashExempt(entry.hash)) {
               dmAutoStatus.hashOnly++;
               dmAutoUidStates.set(entry.hash, { status: 'hash-only', candidateCount: candidates.length });
               continue;
@@ -6584,6 +6835,7 @@
     function applyAutoRulesToObservedDanmaku() {
       if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('bili')) return;
       for (const sender of dmSenders.values()) {
+        if (isBiliDmHashExempt(sender.hash)) continue;
         const match = DanmakuRules.match('bili', sender.content);
         if (match) queueAutoBiliContent(sender.content, [sender.hash], match);
       }
@@ -6699,7 +6951,7 @@
     }
     function filterSeg(bytes, segmentIndex) {
       const buf = new Uint8Array(bytes);
-      const blocked = blockedHashes();
+      const blocked = currentBlockedHashes();
       const autoEnabled = Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili');
       const out = [];
       let changed = false;
@@ -6714,7 +6966,8 @@
           const elemStart = lenInfo.next, elemEnd = lenInfo.next + lenInfo.value;
           if (elemEnd > buf.length) return buf;
           const elem = parseDanmakuElem(buf, elemStart, elemEnd);
-          const autoMatch = autoEnabled ? DanmakuRules.match('bili', elem.content) : null;
+          const autoMatch = autoEnabled && !isBiliDmHashExempt(elem.hash)
+            ? DanmakuRules.match('bili', elem.content) : null;
           const autoFingerprint = (elem.hash || '') + '\x1f' + String(elem.progress) + '\x1f' + cleanDmText(elem.content);
           const autoSeen = dmAutoSeenMessages.has(autoFingerprint);
           if (autoMatch && !autoSeen) {
@@ -6725,7 +6978,7 @@
           }
           rememberDanmaku(elem);
           if ((autoMatch && autoMatch.text) || (elem.hash && (blocked.has(elem.hash)
-            || (autoEnabled && dmAutoBlockedHashes.has(elem.hash))))) {
+            || (autoEnabled && dmAutoBlockedHashes.has(elem.hash) && !isBiliDmHashExempt(elem.hash))))) {
             changed = true; p = elemEnd; continue;
           }
           copyRange(out, buf, start, elemEnd);
@@ -7046,30 +7299,50 @@
 
     function availableDmSenders() {
       resetDmSessionIfNeeded();
-      const blocked = blockedHashes();
       return Array.from(dmSenders.values())
-        .filter((sender) => !blocked.has(sender.hash))
         .sort((a, b) => (a.progress < 0 ? Number.MAX_SAFE_INTEGER : a.progress) - (b.progress < 0 ? Number.MAX_SAFE_INTEGER : b.progress));
     }
 
     function availableDmGroups() {
       resetDmSessionIfNeeded();
-      const blocked = blockedHashes();
+      const blocked = currentBlockedHashes();
+      const autoBlocked = Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili')
+        ? new Set(Array.from(dmAutoBlockedHashes).filter((hash) => !isBiliDmHashExempt(hash))) : new Set();
       return Array.from(dmContentGroups.values())
         .map((group) => ({
           content: group.content,
           progress: group.progress,
           messageCount: group.messageCount,
-          hashes: Array.from(group.hashes).filter((hash) => dmSenders.has(hash) && !blocked.has(hash)),
+          hashes: Array.from(group.hashes).filter((hash) => dmSenders.has(hash)),
         }))
         .filter((group) => group.hashes.length)
+        .map((group) => {
+          const blockedHashesForGroup = group.hashes.filter((hash) => blocked.has(hash));
+          const activeHashes = group.hashes.filter((hash) => !blocked.has(hash));
+          const autoBlockedHashes = group.hashes.filter((hash) => autoBlocked.has(hash));
+          const unblockInfo = blockedIdentityKeysForHashes(blockedHashesForGroup);
+          return {
+            ...group,
+            blockedHashes: blockedHashesForGroup,
+            activeHashes,
+            autoBlockedHashes,
+            unblockKeys: unblockInfo.keys,
+            unblockAmbiguous: unblockInfo.ambiguous,
+            ruleExceptionKeys: normalizeIdentityKeys([
+              ...autoBlockedHashes.map((hash) => makeIdentityKey('bili:dmhash', hash)),
+              ...unblockInfo.keys,
+            ]),
+            fullyBlocked: blockedHashesForGroup.length === group.hashes.length,
+          };
+        })
         .sort((a, b) => (a.progress < 0 ? Number.MAX_SAFE_INTEGER : a.progress) - (b.progress < 0 ? Number.MAX_SAFE_INTEGER : b.progress));
     }
 
     function dmIdentityRecords(groups) {
       const contentByHash = new Map();
       for (const group of groups || []) {
-        for (const hash of group.hashes || []) if (!contentByHash.has(hash)) contentByHash.set(hash, group.content);
+        const hashes = Array.isArray(group.activeHashes) ? group.activeHashes : group.hashes || [];
+        for (const hash of hashes) if (!contentByHash.has(hash)) contentByHash.set(hash, group.content);
       }
       const records = [];
       for (const [hash, content] of contentByHash) {
@@ -7080,6 +7353,43 @@
         });
       }
       return records;
+    }
+
+    function unblockBiliDmGroup(group) {
+      const keys = group && Array.isArray(group.unblockKeys) ? group.unblockKeys : [];
+      const result = unblockIdentityGroup(keys);
+      if (!result.removed) {
+        showToast(group && group.autoBlockedHashes && group.autoBlockedHashes.length
+          ? '该条仍受启用中的自动弹幕规则控制，请在设置中停用或删除规则'
+          : group && group.unblockAmbiguous
+            ? '该条关联多个可能的 UID，请在设置中逐个取消屏蔽'
+          : '未找到可取消的本地屏蔽身份');
+        return false;
+      }
+      showToast('已取消屏蔽：' + ((group && group.content) || 'B站弹幕发送者'));
+      refreshDmTool();
+      scanDmPanels();
+      if (currentScanner) currentScanner.schedule();
+      return true;
+    }
+
+    function restoreBiliDmGroup(group) {
+      const keys = group && Array.isArray(group.ruleExceptionKeys) ? group.ruleExceptionKeys : [];
+      if (!keys.length) {
+        showToast('没有可保存的可靠弹幕身份，无法建立规则例外');
+        return false;
+      }
+      const exemption = DanmakuExemptions.add('bili', keys);
+      const result = unblockIdentityGroup(keys);
+      if (!exemption.added.length && !result.removed) {
+        showToast('该发送者已经是自动规则例外');
+        return false;
+      }
+      showToast('已恢复该发送者，并加入 B站自动规则例外；可在设置中恢复规则作用');
+      refreshDmTool();
+      scanDmPanels();
+      if (currentScanner) currentScanner.schedule();
+      return true;
     }
 
     function requestDmUidCard(uid) {
@@ -7177,6 +7487,7 @@
       const keys = [makeIdentityKey('bili:dmhash', hash), makeIdentityKey('bili:uid', candidate.uid)];
       let result;
       try {
+        clearDanmakuExemptionsForManualBlock(keys);
         result = Store.confirmIdentityLink(keys, candidate.name, dmUidLinkNote(content));
       } catch (e) {
         showToast('拉黑失败：' + (e && e.message || e));
@@ -7204,6 +7515,7 @@
           scanDmPanels();
         },
         () => {
+          clearDanmakuExemptionsForManualBlock(keys);
           const result = Store.confirmIdentityLink(keys, candidate.name, note);
           return { result, undo: result.undo };
         }
@@ -7292,7 +7604,10 @@
       if (!dmManager || !dmManager.isConnected) return;
       const available = availableDmGroups();
       const availableGroupKeys = new Set(available.map((group) => group.content));
-      for (const content of Array.from(selectedDmGroups)) if (!availableGroupKeys.has(content)) selectedDmGroups.delete(content);
+      const blockedGroupKeys = new Set(available.filter((group) => group.fullyBlocked).map((group) => group.content));
+      for (const content of Array.from(selectedDmGroups)) {
+        if (!availableGroupKeys.has(content) || blockedGroupKeys.has(content)) selectedDmGroups.delete(content);
+      }
       for (const content of Array.from(expandedDmUidGroups)) if (!availableGroupKeys.has(content)) expandedDmUidGroups.delete(content);
       const term = cleanDmText(dmSearch).toLowerCase();
       const filtered = term ? available.filter((group) => group.content.toLowerCase().includes(term)) : available;
@@ -7317,14 +7632,18 @@
 
       for (const group of pageItems) {
         const row = document.createElement('div');
-        row.className = 'ob-dm-sender';
+        const partiallyBlocked = group.blockedHashes.length > 0 && !group.fullyBlocked;
+        row.className = 'ob-dm-sender' + (group.fullyBlocked ? ' ob-dm-blocked' : (partiallyBlocked ? ' ob-dm-partial' : ''));
+        row.setAttribute('data-ob-dm-state', group.fullyBlocked ? 'blocked' : (partiallyBlocked ? 'partial' : 'active'));
         row.setAttribute('data-ob-dm-content', group.content);
         row.setAttribute('data-ob-dm-hashes', group.hashes.join(','));
+        row.setAttribute('data-ob-dm-blocked-hashes', group.blockedHashes.join(','));
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox'; checkbox.className = 'ob-dm-select';
-        checkbox.checked = selectedDmGroups.has(group.content);
-        checkbox.style.display = batchEnabled ? '' : 'none';
+        checkbox.checked = !group.fullyBlocked && selectedDmGroups.has(group.content);
+        checkbox.disabled = group.fullyBlocked;
+        checkbox.style.display = batchEnabled && !group.fullyBlocked ? '' : 'none';
         checkbox.addEventListener('change', () => {
           if (checkbox.checked) selectedDmGroups.add(group.content);
           else selectedDmGroups.delete(group.content);
@@ -7334,7 +7653,11 @@
         const body = document.createElement('div');
         const content = document.createElement('div'); content.className = 'ob-dm-content'; content.textContent = group.content;
         const meta = document.createElement('div'); meta.className = 'ob-dm-meta';
-        meta.textContent = group.hashes.length + ' 位发送者 · 捕获 ' + group.messageCount + ' 条 · ' + formatDmProgress(group.progress);
+        let stateText = '';
+        if (group.fullyBlocked) stateText = ' · 已屏蔽';
+        else if (partiallyBlocked) stateText = ' · 已屏蔽 ' + group.blockedHashes.length + '/' + group.hashes.length + ' 位';
+        if (group.autoBlockedHashes.length) stateText += ' · 自动规则生效';
+        meta.textContent = group.hashes.length + ' 位发送者 · 捕获 ' + group.messageCount + ' 条 · ' + formatDmProgress(group.progress) + stateText;
         body.append(content, meta);
 
         const actions = document.createElement('div');
@@ -7356,19 +7679,41 @@
           } else void lookupDmUidGroup(group);
         });
 
-        const single = document.createElement('button');
-        single.type = 'button'; single.className = 'ob-dm-single'; single.textContent = '🚫';
-        single.title = '本地屏蔽发送此文案的全部用户'; single.setAttribute('aria-label', '本地屏蔽发送此文案的全部用户');
-        single.addEventListener('click', (event) => {
-          event.stopPropagation(); event.preventDefault();
-          blockMany(
-            dmIdentityRecords([group]),
-            single,
-            '屏蔽该文案的 ' + group.hashes.length + ' 位发送者',
-            () => { selectedDmGroups.delete(group.content); refreshDmTool(); scanDmPanels(); }
-          );
-        });
-        actions.append(uidQuery, single);
+        if (group.blockedHashes.length) {
+          const unblock = document.createElement('button');
+          const autoBlocked = group.autoBlockedHashes.length > 0;
+          unblock.type = 'button'; unblock.className = 'ob-dm-unblock';
+          unblock.textContent = autoBlocked ? '恢复并例外' : '取消屏蔽';
+          const canUnblock = autoBlocked ? group.ruleExceptionKeys.length > 0 : !group.unblockAmbiguous;
+          unblock.disabled = !canUnblock;
+          unblock.title = canUnblock
+            ? autoBlocked ? '恢复该发送者，并让 B站自动规则以后跳过它' : '取消该弹幕发送者的本地屏蔽'
+            : autoBlocked
+              ? '没有可保存的可靠身份，无法建立自动规则例外'
+              : '该条关联多个可能的 UID，请在设置中逐个取消屏蔽';
+          unblock.setAttribute('aria-label', unblock.title);
+          unblock.addEventListener('click', (event) => {
+            event.stopPropagation(); event.preventDefault();
+            if (!canUnblock) return;
+            if (autoBlocked) restoreBiliDmGroup(group);
+            else unblockBiliDmGroup(group);
+          });
+          actions.append(uidQuery, unblock);
+        } else {
+          const single = document.createElement('button');
+          single.type = 'button'; single.className = 'ob-dm-single'; single.textContent = '🚫';
+          single.title = '本地屏蔽发送此文案的全部未屏蔽用户'; single.setAttribute('aria-label', '本地屏蔽发送此文案的全部未屏蔽用户');
+          single.addEventListener('click', (event) => {
+            event.stopPropagation(); event.preventDefault();
+            blockMany(
+              dmIdentityRecords([group]),
+              single,
+              '屏蔽该文案的 ' + group.activeHashes.length + ' 位发送者',
+              () => { selectedDmGroups.delete(group.content); refreshDmTool(); scanDmPanels(); }
+            );
+          });
+          actions.append(uidQuery, single);
+        }
         row.append(checkbox, body, actions);
         if (uidExpanded) row.appendChild(buildDmUidResults(group));
         list.appendChild(row);
@@ -7377,24 +7722,25 @@
       const selectAllWrap = dmManager.querySelector('.ob-dm-checkall');
       const selectAll = selectAllWrap.querySelector('input');
       selectAllWrap.style.display = batchEnabled ? 'inline-flex' : 'none';
-      selectAll.checked = !!pageItems.length && pageItems.every((group) => selectedDmGroups.has(group.content));
-      selectAll.indeterminate = !selectAll.checked && pageItems.some((group) => selectedDmGroups.has(group.content));
+      const selectablePageItems = pageItems.filter((group) => !group.fullyBlocked);
+      selectAll.checked = !!selectablePageItems.length && selectablePageItems.every((group) => selectedDmGroups.has(group.content));
+      selectAll.indeterminate = !selectAll.checked && selectablePageItems.some((group) => selectedDmGroups.has(group.content));
       selectAll.onchange = () => {
-        for (const group of pageItems) {
+        for (const group of selectablePageItems) {
           if (selectAll.checked) selectedDmGroups.add(group.content);
           else selectedDmGroups.delete(group.content);
         }
         renderDmManager();
       };
 
-      const selected = available.filter((group) => selectedDmGroups.has(group.content));
+      const selected = available.filter((group) => !group.fullyBlocked && selectedDmGroups.has(group.content));
       const selectedRecords = dmIdentityRecords(selected);
       const batch = dmManager.querySelector('.ob-dm-batch');
       batch.style.display = batchEnabled ? '' : 'none';
       batch.disabled = !selected.length;
       batch.textContent = '屏蔽选中(' + selected.length + '组 / ' + selectedRecords.length + '人)';
       batch.onclick = () => {
-        const current = availableDmGroups().filter((group) => selectedDmGroups.has(group.content));
+        const current = availableDmGroups().filter((group) => !group.fullyBlocked && selectedDmGroups.has(group.content));
         if (!current.length) return;
         const records = dmIdentityRecords(current);
         blockMany(
@@ -7406,7 +7752,9 @@
       };
 
       const filteredSenderCount = new Set(filtered.flatMap((group) => group.hashes)).size;
-      dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 组弹幕 · ' + filteredSenderCount + ' 位发送者 · ' + (dmPage + 1) + '/' + pageCount;
+      const blockedSenderCount = new Set(filtered.flatMap((group) => group.blockedHashes)).size;
+      dmManager.querySelector('.ob-dm-status').textContent = filtered.length + ' 组弹幕 · ' + filteredSenderCount + ' 位发送者 · '
+        + (dmPage + 1) + '/' + pageCount + (blockedSenderCount ? ' · 已屏蔽 ' + blockedSenderCount + ' 位' : '');
       const retry = dmManager.querySelector('.ob-dm-retry');
       retry.style.display = !dmSenders.size && dmBootstrapStatus !== 'loading' ? '' : 'none';
       retry.disabled = dmBootstrapStatus === 'loading';
@@ -7690,10 +8038,12 @@
       const enabled = Store.getSetting('enabled') && DanmakuRules.hasEnabled('bili');
       for (const node of document.querySelectorAll(FLOATING_DM_SEL)) {
         const content = cleanDmText(textOf(node));
-        const match = enabled ? DanmakuRules.match('bili', content) : null;
+        const hashes = dmByContent.get(content);
+        const applicableHashes = hashes ? Array.from(hashes).filter((hash) => !isBiliDmHashExempt(hash)) : [];
+        const match = enabled && (!hashes || applicableHashes.length)
+          ? DanmakuRules.match('bili', content) : null;
         if (match) {
-          const hashes = dmByContent.get(content);
-          if (hashes && hashes.size) queueAutoBiliContent(content, Array.from(hashes), match);
+          if (applicableHashes.length) queueAutoBiliContent(content, applicableHashes, match);
           setInlineHidden(node, true);
           node.setAttribute('data-ob-dm-auto-blocked', '1');
         } else if (node.getAttribute('data-ob-dm-auto-blocked') === '1') {
@@ -7745,7 +8095,7 @@
       const enabled = Store.getSetting('enabled');
       const showButton = enabled && Store.getSetting('showQuickBlock');
       const autoEnabled = enabled && DanmakuRules.hasEnabled('bili');
-      const blocked = enabled ? new Set([...blockedHashes(), ...(autoEnabled ? dmAutoBlockedHashes : [])]) : new Set();
+      const blocked = enabled ? currentBlockedHashes() : new Set();
       for (const panel of querySelectorAllDeep(document, DM_PANEL_SEL)) {
         for (const row of dmRowsIn(panel)) {
           const existingButton = row.querySelector && row.querySelector(':scope > .ob-dm-block');
@@ -7760,8 +8110,10 @@
           const resolved = resolveDmRow(row);
           const rowContent = dmRowContent(row);
           const visibleText = rowContent.title || rowContent.text || cleanDmText(textOf(row));
-          const autoMatch = autoEnabled ? DanmakuRules.match('bili', visibleText) : null;
-          if (autoMatch && resolved.hashes.length) queueAutoBiliContent(visibleText, resolved.hashes, autoMatch);
+          const applicableHashes = resolved.hashes.filter((hash) => !isBiliDmHashExempt(hash));
+          const autoMatch = autoEnabled && (!resolved.hashes.length || applicableHashes.length)
+            ? DanmakuRules.match('bili', visibleText) : null;
+          if (autoMatch && applicableHashes.length) queueAutoBiliContent(visibleText, applicableHashes, autoMatch);
           if (!resolved.hashes.length) {
             if (autoMatch) {
               setInlineHidden(hideTarget, true);
@@ -7975,6 +8327,15 @@
     return value;
   }
 
+  function formatDanmakuExemptionForDisplay(key) {
+    const value = String(key || '');
+    let match = value.match(/^douyin:uid:(\d+)$/);
+    if (match) return '抖音 UID：' + match[1];
+    match = value.match(/^douyin:secuid:(.+)$/);
+    if (match) return '抖音 sec_uid：' + match[1];
+    return formatIdentityForDisplay(value);
+  }
+
   const PLATFORM_LABELS = { bili: 'B站', weibo: '微博', zhihu: '知乎', tieba: '贴吧', x: 'X', douyin: '抖音' };
   function platformGroupForPerson(person) {
     const groups = new Set((person && person.identities || []).map((key) => {
@@ -8034,17 +8395,21 @@
         </div>
 
         <h3>自动屏蔽弹幕</h3>
-        <p class="ob-auto-intro">规则只在本机按弹幕文字匹配；添加并启用规则后，B站和抖音会自动隐藏命中的弹幕。B站仍沿用现有 seg.so / PAKKU 兼容链：命中时保存 mid_hash，只有唯一候选且用户卡片正向校验成功时才补充 UID；不会重复实现 PAKKU 的去重。</p>
+        <p class="ob-auto-intro">规则只在本机按弹幕文字匹配；添加并启用规则后，B站和抖音会自动隐藏命中的弹幕。管理器中的“恢复并例外”会让当前发送者继续显示，同时让自动规则以后跳过他；删除例外后规则重新生效。B站仍沿用现有 seg.so / PAKKU 兼容链：命中时保存 mid_hash，只有唯一候选且用户卡片正向校验成功时才补充 UID；不会重复实现 PAKKU 的去重。</p>
         <div class="ob-auto-platform" data-ob-auto-platform="bili">
           <h4>B站弹幕规则</h4>
           <div class="ob-auto-add"><select class="ob-auto-kind" aria-label="B站规则类型"><option value="keyword">关键词</option><option value="regex">正则</option></select><input class="ob-auto-pattern" type="text" maxlength="240" placeholder="输入关键词或正则表达式"><button class="ob-auto-add-button" type="button">添加规则</button></div>
           <div class="ob-auto-rule-list" id="ob-auto-bili-rules"></div>
+          <div class="ob-auto-exemption-title">自动规则例外（恢复的发送者）</div>
+          <div class="ob-auto-exemption-list" id="ob-auto-bili-exemptions"></div>
           <div class="ob-auto-status" id="ob-auto-bili-status"></div>
         </div>
         <div class="ob-auto-platform" data-ob-auto-platform="douyin">
           <h4>抖音弹幕规则</h4>
           <div class="ob-auto-add"><select class="ob-auto-kind" aria-label="抖音规则类型"><option value="keyword">关键词</option><option value="regex">正则</option></select><input class="ob-auto-pattern" type="text" maxlength="240" placeholder="输入关键词或正则表达式"><button class="ob-auto-add-button" type="button">添加规则</button></div>
           <div class="ob-auto-rule-list" id="ob-auto-douyin-rules"></div>
+          <div class="ob-auto-exemption-title">自动规则例外（恢复的发送者）</div>
+          <div class="ob-auto-exemption-list" id="ob-auto-douyin-exemptions"></div>
           <div class="ob-auto-status" id="ob-auto-douyin-status"></div>
         </div>
 
@@ -8083,7 +8448,7 @@
 
     function autoStatusText(platform, rules) {
       const enabledCount = rules.filter((rule) => rule.enabled).length;
-      let text = enabledCount + ' 条规则启用；规则命中后自动写入本地名单。';
+      let text = enabledCount + ' 条规则启用；命中后自动写入本地名单（例外身份跳过）。';
       try {
         const adapter = currentAdapter;
         if (adapter && adapter.id === platform && typeof adapter.getAutoDanmakuStatus === 'function') {
@@ -8109,6 +8474,7 @@
       for (const platform of ['bili', 'douyin']) {
         const rules = DanmakuRules.rulesFor(platform);
         const list = panel.querySelector('#ob-auto-' + platform + '-rules');
+        const exemptionList = panel.querySelector('#ob-auto-' + platform + '-exemptions');
         const status = panel.querySelector('#ob-auto-' + platform + '-status');
         if (!list || !status) continue;
         list.textContent = '';
@@ -8144,7 +8510,33 @@
           row.append(toggle, kind, pattern, remove);
           list.appendChild(row);
         }
-        status.textContent = autoStatusText(platform, rules);
+        if (exemptionList) {
+          exemptionList.textContent = '';
+          const exemptions = DanmakuExemptions.keysFor(platform);
+          if (!exemptions.length) {
+            const empty = document.createElement('div');
+            empty.className = 'ob-auto-empty'; empty.textContent = '暂无例外；管理器中的“恢复并例外”会在这里出现';
+            exemptionList.appendChild(empty);
+          }
+          for (const identity of exemptions) {
+            const row = document.createElement('div'); row.className = 'ob-auto-exemption';
+            const key = document.createElement('span'); key.className = 'ob-auto-exemption-key';
+            key.textContent = formatDanmakuExemptionForDisplay(identity); key.title = identity;
+            const remove = document.createElement('button');
+            remove.type = 'button'; remove.className = 'ob-auto-exemption-remove'; remove.textContent = '恢复规则';
+            remove.title = '删除该例外；自动规则下次扫描时可重新作用于此身份';
+            remove.addEventListener('click', () => {
+              DanmakuExemptions.remove(platform, [identity]);
+              refreshAutoRules();
+              if (currentScanner) currentScanner.schedule();
+              try { currentAdapter && currentAdapter.scanAutoDanmaku && currentAdapter.scanAutoDanmaku(); } catch (e) {}
+            });
+            row.append(key, remove); exemptionList.appendChild(row);
+          }
+        }
+        const exemptionCount = DanmakuExemptions.keysFor(platform).length;
+        status.textContent = autoStatusText(platform, rules)
+          + (exemptionCount ? ' 当前有 ' + exemptionCount + ' 条自动规则例外。' : '');
       }
     }
 
@@ -8237,6 +8629,7 @@
       if (!val) return;
       const key = makeIdentityKey(MANUAL_IDENTITY_TYPE[plat], val);
       if (!key) { showToast('身份格式不正确'); return; }
+      clearDanmakuExemptionsForManualBlock([key]);
       Store.addIdentities([key], label || val);
       panel.querySelector('#ob-val').value = '';
       refresh(); if (currentScanner) currentScanner.schedule();
@@ -8341,6 +8734,7 @@
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
     openCommentManager, closeCommentManager, runThreadBlock, mergeCommentRecords,
     danmakuRules: DanmakuRules,
+    danmakuExemptions: DanmakuExemptions,
     runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
     diagnostics: runtimeDiagnostics,
   };

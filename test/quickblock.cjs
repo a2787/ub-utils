@@ -362,34 +362,70 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('QB-P PAKKU 等价包装器截走首段 XHR 后，工具仍主动读取且伪造响应先应用本地屏蔽');
     else report.fail.push('QB-P PAKKU/首段时序兼容失败：' + JSON.stringify({ pakkuIntercept, pakkuFallback }));
 
-    const allDmBlocked = await page.evaluate(() => {
+    const allDmBlocked = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const keys = [
         'bili:dmhash:678f8529', 'bili:dmhash:a9900557', 'bili:dmhash:0a6216d9',
         'bili:dmhash:11223344', 'bili:dmhash:55667788', 'bili:dmhash:fd09ed1d',
         'bili:dmhash:14e54344',
       ];
-      window.OB.Store.addIdentityGroups(keys.map((key) => ({ keys: [key], label: 'all blocked fixture' })));
+      const linkedIdentity = 'bili:uid:444';
+      const uidOnlyIdentity = 'bili:uid:33';
+      const groups = keys.map((key) => ({ keys: [key], label: 'all blocked fixture' }));
+      groups[0].keys.push(linkedIdentity);
+      groups[2].keys = [uidOnlyIdentity];
+      window.OB.Store.addIdentityGroups(groups);
       try {
         const tool = document.getElementById('ob-dm-tool');
+        if (!tool) return { tool: false };
         tool.click();
+        await pause(80);
         const panel = document.getElementById('ob-dm-manager');
-        const empty = panel && panel.querySelector('.ob-dm-empty');
-        const retry = panel && panel.querySelector('.ob-dm-retry');
+        const rows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
+        const target = rows.find((row) => row.getAttribute('data-ob-dm-content') === 'hello danmaku');
+        const unblock = target && target.querySelector('.ob-dm-unblock');
+        const allBlockedGray = rows.length === 6 && rows.every((row) => row.getAttribute('data-ob-dm-state') === 'blocked'
+          && row.classList.contains('ob-dm-blocked'));
+        if (unblock) unblock.click();
+        await pause(120);
+        const restored = !window.OB.Index.isBlocked('bili:dmhash:678f8529');
+        const restoredRow = panel && Array.from(panel.querySelectorAll('.ob-dm-sender'))
+          .find((row) => row.getAttribute('data-ob-dm-content') === 'hello danmaku');
+        const uidOnlyTarget = panel && Array.from(panel.querySelectorAll('.ob-dm-sender'))
+          .find((row) => row.getAttribute('data-ob-dm-content') === 'uid mapped danmaku');
+        const uidOnlyUnblock = uidOnlyTarget && uidOnlyTarget.querySelector('.ob-dm-unblock');
+        if (uidOnlyUnblock) uidOnlyUnblock.click();
+        await pause(120);
+        const uidOnlyRestoredRow = panel && Array.from(panel.querySelectorAll('.ob-dm-sender'))
+          .find((row) => row.getAttribute('data-ob-dm-content') === 'uid mapped danmaku');
         const result = {
           toolText: tool.textContent,
-          emptyText: empty && empty.textContent,
-          retryHidden: !!retry && getComputedStyle(retry).display === 'none',
+          rows: rows.length,
+          allBlockedGray,
+          unblock: !!unblock,
+          restored,
+          linkedRestored: !window.OB.Index.isBlocked(linkedIdentity),
+          restoredState: restoredRow && restoredRow.getAttribute('data-ob-dm-state'),
+          restoredButton: !!(restoredRow && restoredRow.querySelector('.ob-dm-single')),
+          uidOnlyUnblock: !!uidOnlyUnblock,
+          uidOnlyRestored: !window.OB.Index.isBlocked(uidOnlyIdentity)
+            && !window.OB.Index.isBlocked('bili:dmhash:0a6216d9'),
+          uidOnlyRestoredState: uidOnlyRestoredRow && uidOnlyRestoredRow.getAttribute('data-ob-dm-state'),
         };
         const close = panel && panel.querySelector('.ob-dm-close');
         if (close) close.click();
         return result;
       } finally {
-        window.OB.Store.removeIdentities(keys);
+        await pause(50);
+        window.OB.Store.removeIdentities([...keys, linkedIdentity, uidOnlyIdentity]);
       }
     });
-    if (allDmBlocked.toolText.includes('(0)') && /均已屏蔽/.test(allDmBlocked.emptyText || '') && allDmBlocked.retryHidden)
-      report.pass.push('QB-S 已加载发送者全部屏蔽后，常驻工具显示正确空状态且不提供无效重试');
-    else report.fail.push('QB-S 弹幕全屏蔽空状态错误：' + JSON.stringify(allDmBlocked));
+    if (allDmBlocked.toolText && allDmBlocked.toolText.includes('(7)') && allDmBlocked.rows === 6
+      && allDmBlocked.allBlockedGray && allDmBlocked.unblock && allDmBlocked.restored
+      && allDmBlocked.linkedRestored && allDmBlocked.restoredState === 'active' && allDmBlocked.restoredButton
+      && allDmBlocked.uidOnlyUnblock && allDmBlocked.uidOnlyRestored && allDmBlocked.uidOnlyRestoredState === 'active')
+      report.pass.push('QB-S 已屏蔽弹幕仍在管理器灰显，hash/唯一 UID 映射均可取消屏蔽并恢复可操作状态');
+    else report.fail.push('QB-S 弹幕已屏蔽展示/取消屏蔽错误：' + JSON.stringify(allDmBlocked));
 
     const count = await page.evaluate(() => {
       const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
@@ -1234,8 +1270,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await pakkuBeforePage.close();
     if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBefore.autoRuleAdded && pakkuBefore.autoRemoved
-      && pakkuBefore.autoHashStored && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(6)'))
-      report.pass.push('QB-Q PAKKU 先安装时，自动规则只过滤命中文案并保存 hash，其他 PAKKU 弹幕链保持可用');
+      && pakkuBefore.autoHashStored && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(7)'))
+      report.pass.push('QB-Q PAKKU 先安装时，自动规则只过滤命中文案并保存 hash，其他 PAKKU 弹幕链保持可用，管理器保留已屏蔽发送者');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
 
     // 人工合成：统一评论管理器必须保留“当前已加载”路径，并显示作者去重、

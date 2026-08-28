@@ -109,6 +109,18 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       const persons = Object.values(window.OB.Store.persons());
       const autoPerson = persons.find((person) => person.identities.includes('bili:dmhash:4f5344cd'));
       const statusBeforeDisable = window.OB.adapters.bilibili.getAutoDanmakuStatus();
+      const hashStoredBeforeExemption = window.OB.Index.isBlocked('bili:dmhash:4f5344cd');
+      const uidLinkedBeforeExemption = window.OB.Index.isBlocked('bili:uid:12');
+      const linkedTogetherBeforeExemption = !!autoPerson && autoPerson.identities.includes('bili:dmhash:4f5344cd')
+        && autoPerson.identities.includes('bili:uid:12');
+      const exemption = window.OB.danmakuExemptions.add('bili', ['bili:dmhash:4f5344cd']);
+      window.OB.Store.removeIdentities(['bili:dmhash:4f5344cd', 'bili:uid:12']);
+      const exemptResponse = await fetch('https://api.bilibili.com/x/v2/dm/web/seg.so?oid=1&segment_index=1');
+      const exemptText = new TextDecoder().decode(await exemptResponse.arrayBuffer());
+      const exemptKept = exemptText.includes('AUTO UID candidate') && !window.OB.Index.isBlocked('bili:dmhash:4f5344cd');
+      const removedExemption = window.OB.danmakuExemptions.remove('bili', ['bili:dmhash:4f5344cd']);
+      const reblockedResponse = await fetch('https://api.bilibili.com/x/v2/dm/web/seg.so?oid=1&segment_index=1');
+      const reblockedText = new TextDecoder().decode(await reblockedResponse.arrayBuffer());
       window.OB.Store.setSetting('enabled', false);
       const disabledText = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -127,10 +139,12 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         autoRemoved: !text.includes('AUTO UID candidate'),
         regexRemoved: !text.includes('REGEX_123'),
         keepPresent: text.includes('keep this danmaku'),
-        hashStored: window.OB.Index.isBlocked('bili:dmhash:4f5344cd'),
+        hashStored: hashStoredBeforeExemption,
         regexHashStored: window.OB.Index.isBlocked('bili:dmhash:22334455'),
-        uidLinked: window.OB.Index.isBlocked('bili:uid:12'),
-        linkedTogether: !!autoPerson && autoPerson.identities.includes('bili:dmhash:4f5344cd') && autoPerson.identities.includes('bili:uid:12'),
+        uidLinked: uidLinkedBeforeExemption,
+        linkedTogether: linkedTogetherBeforeExemption,
+        exemptionStored: exemption.added.length === 1 && exemptKept,
+        exemptionRemovedRestoresRule: removedExemption.removed.length === 1 && !reblockedText.includes('AUTO UID candidate'),
         disabledKeepsOriginal: disabledText.includes('AUTO UID candidate') && disabledText.includes('REGEX_123') && disabledText.includes('keep this danmaku'),
         statusBeforeDisable,
         status: window.OB.adapters.bilibili.getAutoDanmakuStatus(),
@@ -140,11 +154,13 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
     if (biliResult.keyword && biliResult.duplicateRejected && biliResult.regex && biliResult.regexMatches && biliResult.autoRemoved
       && biliResult.regexRemoved && biliResult.keepPresent && biliResult.hashStored && biliResult.regexHashStored
       && biliResult.uidLinked && biliResult.linkedTogether && biliResult.disabledKeepsOriginal && biliResult.quickHidden
+      && biliResult.exemptionStored && biliResult.exemptionRemovedRestoresRule
       && biliResult.statusBeforeDisable.matchedMessages === 2 && biliResult.statusBeforeDisable.matchedHashes === 2
       && biliResult.statusBeforeDisable.linkedUids === 1)
       report.pass.push('AUTO-BILI 规则命中经现有 seg.so 链过滤，hash 入库并仅将唯一正向校验 UID 关联；关闭快捷入口不影响自动屏蔽');
     else report.fail.push('AUTO-BILI 自动规则/UID/入口隔离失败：' + JSON.stringify(biliResult));
     const settingsUi = await bili.evaluate(() => {
+      window.OB.danmakuExemptions.add('bili', ['bili:dmhash:11223344']);
       window.OB.openOptions();
       const panel = document.getElementById('ob-panel');
       const boxes = panel ? Array.from(panel.querySelectorAll('.ob-auto-platform')) : [];
@@ -154,13 +170,19 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         biliKinds: panel ? panel.querySelector('[data-ob-auto-platform="bili"] .ob-auto-kind').querySelectorAll('option').length : 0,
         douyinKinds: panel ? panel.querySelector('[data-ob-auto-platform="douyin"] .ob-auto-kind').querySelectorAll('option').length : 0,
         ruleRows: panel ? panel.querySelectorAll('.ob-auto-rule').length : 0,
+        exemptionRows: panel ? panel.querySelectorAll('.ob-auto-exemption').length : 0,
+        exemptionRemove: panel ? !!panel.querySelector('.ob-auto-exemption-remove') : false,
         pakkuNote: panel ? /不会重复实现 PAKKU 的去重/.test(panel.textContent || '') : false,
       };
+      const removeExemption = panel && panel.querySelector('.ob-auto-exemption-remove');
+      if (removeExemption) removeExemption.click();
+      result.exemptionRemoved = !window.OB.danmakuExemptions.keysFor('bili').includes('bili:dmhash:11223344');
       if (panel) panel.remove();
       return result;
     });
     if (settingsUi.panel && settingsUi.platforms.join(',') === 'bili,douyin'
-      && settingsUi.biliKinds === 2 && settingsUi.douyinKinds === 2 && settingsUi.ruleRows === 2 && settingsUi.pakkuNote)
+      && settingsUi.biliKinds === 2 && settingsUi.douyinKinds === 2 && settingsUi.ruleRows === 2
+      && settingsUi.exemptionRows === 1 && settingsUi.exemptionRemove && settingsUi.exemptionRemoved && settingsUi.pakkuNote)
       report.pass.push('AUTO-UI B站/抖音规则分平台显示关键词与正则入口，并明确不复制 PAKKU 去重');
     else report.fail.push('AUTO-UI 规则面板分平台/兼容说明失败：' + JSON.stringify(settingsUi));
     await bili.close();
@@ -242,6 +264,77 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       && douyinResult.status.noIdentity === 1 && douyinResult.managerAbsent && douyinResult.ruleDisabledRestored && douyinResult.switchScoped)
       report.pass.push('AUTO-DOUYIN 仅扫描当前播放器，命中按身份合并写入；规则停用即时恢复，旧视频残留节点不串入新视频');
     else report.fail.push('AUTO-DOUYIN 自动规则/当前视频范围失败：' + JSON.stringify(douyinResult));
+
+    const douyinDanmakuManager = await douyin.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const autoIdentity = 'douyin:uid:7003';
+      const identity = 'douyin:uid:7002';
+      window.OB.Store.setSetting('showBulkBlock', true);
+      try {
+        await pause(180);
+        const tool = document.getElementById('ob-douyin-dm-tool');
+        if (!tool) return { tool: false };
+        tool.click();
+        await pause(80);
+        const panel = document.getElementById('ob-douyin-dm-manager');
+        const autoRow = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
+          .find((item) => item.textContent.includes('AUTO 新视频弹幕'));
+        const autoButton = autoRow && autoRow.querySelector('.ob-dd-unblock');
+        const autoBlockedGray = !!autoRow && autoRow.getAttribute('data-ob-dd-state') === 'blocked'
+          && !!autoButton && autoButton.textContent.includes('恢复并例外')
+          && autoButton.getAttribute('data-ob-dd-action') === 'exception';
+        if (autoButton) autoButton.click();
+        await pause(120);
+        const autoRestoredRow = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
+          .find((item) => item.textContent.includes('AUTO 新视频弹幕'));
+        const autoRestored = !window.OB.Index.isBlocked(autoIdentity)
+          && window.OB.danmakuExemptions.keysFor('douyin').includes(autoIdentity)
+          && autoRestoredRow && autoRestoredRow.getAttribute('data-ob-dd-state') === 'active'
+          && document.getElementById('auto-dm-next').getAttribute('data-ob-auto-dm-blocked') !== '1';
+        window.OB.danmakuExemptions.remove('douyin', [autoIdentity]);
+        window.OB.adapters.douyin.scanAutoDanmaku();
+        await pause(120);
+        const autoRuleReapplied = document.getElementById('auto-dm-next').getAttribute('data-ob-auto-dm-blocked') === '1'
+          && getComputedStyle(document.getElementById('auto-dm-next')).display === 'none';
+
+        window.OB.Store.addIdentities([identity], 'manual danmaku manager fixture');
+        await pause(80);
+        const row = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
+          .find((item) => item.textContent.includes('普通抖音弹幕'));
+        const unblock = row && row.querySelector('.ob-dd-unblock');
+        const blockedGray = !!row && row.getAttribute('data-ob-dd-state') === 'blocked'
+          && row.classList.contains('ob-dd-blocked') && !!unblock;
+        if (unblock) unblock.click();
+        await pause(120);
+        const restoredRow = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
+          .find((item) => item.textContent.includes('普通抖音弹幕'));
+        return {
+          tool: true,
+          toolText: tool.textContent,
+          autoBlockedGray,
+          autoRestored,
+          autoRuleReapplied,
+          blockedGray,
+          restored: !window.OB.Index.isBlocked(identity),
+          restoredState: restoredRow && restoredRow.getAttribute('data-ob-dd-state'),
+          unblockRemoved: !(restoredRow && restoredRow.querySelector('.ob-dd-unblock')),
+        };
+      } finally {
+        const panel = document.getElementById('ob-douyin-dm-manager');
+        const close = panel && panel.querySelector('.ob-dd-close');
+        if (close) close.click();
+        window.OB.Store.removeIdentity(autoIdentity);
+        window.OB.Store.removeIdentity(identity);
+        window.OB.danmakuExemptions.remove('douyin', [autoIdentity, identity]);
+        window.OB.Store.setSetting('showBulkBlock', false);
+      }
+    });
+    if (douyinDanmakuManager.tool && douyinDanmakuManager.autoBlockedGray && douyinDanmakuManager.autoRestored
+      && douyinDanmakuManager.autoRuleReapplied && douyinDanmakuManager.blockedGray && douyinDanmakuManager.restored
+      && douyinDanmakuManager.restoredState === 'active' && douyinDanmakuManager.unblockRemoved)
+      report.pass.push('AUTO-DOUYIN-MANAGER 自动命中可“恢复并例外”，删除例外后规则重新作用；手动屏蔽仍可单独取消');
+    else report.fail.push('AUTO-DOUYIN-MANAGER 已屏蔽展示/取消屏蔽错误：' + JSON.stringify(douyinDanmakuManager));
+
     const markedRootResult = await douyin.evaluate(async () => {
       const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const adapter = window.OB.adapters.douyin;

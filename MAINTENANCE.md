@@ -77,6 +77,96 @@
 
 ## 当前交接
 
+### 2026-08-28 - 0.43.0 未发布候选 - 自动规则例外与误命中恢复
+
+**范围**
+
+承接前一条弹幕管理器候选，修复“自动规则命中的发送者无法恢复”的逻辑缺口。自动规则命中的行现在提供「恢复并例外」：
+按平台保存当前可靠身份键，移除当前人物的关联屏蔽身份，并让后续自动扫描跳过该身份；规则继续对其他发送者生效。
+设置面板新增每个平台的“自动规则例外”列表，可用「恢复规则」删除例外。用户手动再次拉黑时会清掉对应例外。
+
+**改动文件**
+
+- `omniblock.user.js`：增加 B站/抖音分平台例外设置与规范化 API；自动扫描、seg.so/原生弹幕列表、浮动弹幕和抖音节点均检查例外；
+  两个弹幕管理器对自动命中显示「恢复并例外」，设置面板提供例外删除；手动拉黑会清除例外。
+- `test/danmaku-auto.cjs`：增加 B站例外跳过、删除例外后重新命中、抖音管理器恢复并例外、删除例外后节点重新隐藏和设置面板删除例外回归。
+- `README.md`、`CHANGELOG.md`：记录例外行为、身份边界和未发布候选构建标识。
+
+**证据**
+
+- **`real-site verified`**：2026-08-28，在用户授权的专用持久 Chrome 会话中，将当前源码注入脱敏 B站视频页
+  `bilibili.com/video/...`；登录状态未读取且本次动作不依赖登录，未读取 Cookie。管理器实际保留 7 个文案组，临时关键词命中其中
+  1 组后显示灰色 `blocked` 行和「恢复并例外」；点击后该组变为 `active`、灰色消失并记录 1 条 B站规则例外。随后删除该例外，
+  同一行再次变为灰色并恢复「恢复并例外」，证明规则仍然启用。临时规则/例外/名单只存在该页面的内存 GM stub，未点击举报、官方拉黑、
+  关注或其他平台写入控件。
+- **`structure regression`**：`node test/danmaku-auto.cjs` 通过 5/5；覆盖 B站例外跳过、删除例外后重新命中，抖音管理器“恢复并例外”
+  及设置面板例外删除；完整本地矩阵 `node test/run.cjs` 14/14、`node test/state.cjs` 7/7、`node test/comment-manager.cjs` 3/3、
+  `node test/adapters.cjs` 21/21、`node test/douyin.cjs` 2/2、`node test/weibo-replay.cjs` 11/11、`node test/quickblock.cjs` 32/32
+  通过；`node --check omniblock.user.js`、受影响测试语法检查和 `git diff --check` 通过。
+- **`blocked`**：`node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=5` 注入新构建后仍未发现带可靠身份的弹幕节点
+  （0 个可用节点）；`node test/real-platform-probe.cjs douyin --verify-local` 的公开入口停在验证码中间页。抖音专用页面因此只确认新构建运行和
+  管理器为空，尚不能声明线上自动规则例外闭环。B站公开隔离探针本轮已加载并确认新构建，但其场景未执行自动例外交互，自动例外的真站证据来自上面的
+  专用 B站页面操作。
+
+**限制**
+
+B站原生弹幕侧栏按文案定位；同一文案对应多个发送者且无法逐行可靠区分时，自动规则仍以“只要存在未例外候选就隐藏整行”的安全策略处理，
+自有弹幕管理器和 seg.so 单条消息链仍可按可靠 hash 区分。例外是本机设置的一部分，会随本机 JSON/快照导出；删除例外后，当前已观察消息会重新
+受规则控制，但没有可靠身份的抖音弹幕仍不会写入例外或名单。
+
+**发布**
+
+候选构建为 `0.43.0-bili-douyin-danmaku-manager-exception`，userscript `@version` 仍为 `0.43.0`；未提交、未推送、未打 tag、未创建 Release，
+已发布 `v0.43.0` 不受本轮工作区改动影响。
+
+**下一步验证**
+
+在专用 Chrome 的抖音页面出现可靠自动命中行后，补做一次「恢复并例外」和删除例外的真实页面观察；当前 B站闭环已完成，抖音仍受数据不可用阻断。
+
+### 2026-08-28 - 0.43.0 未发布候选 - 弹幕管理器保留已屏蔽记录
+
+**范围**
+
+承接当前工作区的 B站/抖音自动弹幕规则候选，本轮只调整两个弹幕管理器的可见状态：已经在本地名单中的、且属于当前视频
+本轮已观察记录的发送者不再从管理器消失，而是以灰色行保留；行内提供「取消屏蔽」，并从全选、勾选和批量屏蔽候选中排除。
+B站文案组若只有部分发送者已屏蔽，会明确显示部分状态；自动规则仍在生效时不允许通过管理器误以为已解除后继续被规则隐藏。
+
+**改动文件**
+
+- `omniblock.user.js`：增加已屏蔽弹幕记录的管理器状态、灰色样式、取消屏蔽入口和关联人物身份键整体移除；B站保留完整/部分状态，
+  抖音保留已屏蔽发送者并排除批量选择。
+- `test/quickblock.cjs`：更新“全部已屏蔽”回归，验证 B站 6 个文案组仍显示、灰显行可取消，且关联 UID/hash 一并撤销；更新 PAKKU 兼容场景的计数。
+- `test/danmaku-auto.cjs`：增加抖音已屏蔽发送者灰显、取消屏蔽和恢复 active 状态回归。
+- `README.md`、`CHANGELOG.md`：记录候选行为、自动规则限制和未发布边界。
+
+**证据**
+
+- **`real-site verified`**：2026-08-28，在专用 Chrome 当前会话的脱敏 B站视频页 `bilibili.com/video/...` 中注入当前源码；运行时
+  版本为 `0.43.0`，构建为 `0.43.0-bili-douyin-danmaku-manager-unblock`。管理器实际显示 7 个文案组，1 行为 `blocked` 灰显，
+  复选框禁用并出现「取消屏蔽」；点击后该行变为 `active`，灰色状态消失并恢复单条操作入口。演示身份只写入该页面的内存 GM stub，
+  未读取 Cookie，未点击举报、官方拉黑、关注或其他平台写入控件。
+- **`structure regression`**：`node test/quickblock.cjs` 32/32；`node test/danmaku-auto.cjs` 5/5；`node test/run.cjs` 14/14；
+  `node test/state.cjs` 7/7；`node test/comment-manager.cjs` 3/3；`node test/adapters.cjs` 21/21；`node test/douyin.cjs` 2/2；
+  `node test/weibo-replay.cjs` 11/11。`node --check omniblock.user.js`、三个受影响测试脚本的 `node --check` 和 `git diff --check` 通过。
+- **`blocked`**：`node test/real-bilibili-probe.cjs --verify-local` 发现公开目标后因页面导航销毁执行上下文而未完成探针；
+  `node test/real-platform-probe.cjs douyin --verify-local` 的公开入口停在验证码中间页；专用 Chrome 的抖音当前视频没有带可靠身份的
+  弹幕节点，`node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=5` 因此报告无可用目标。上述阻断不改写为功能失败，
+  也不替代 B站本轮已完成的真实页面灰显/取消屏蔽观察。
+
+**限制**
+
+B站管理器展示的是当前视频已经加载或观察到的文案组；未加载、未匹配或没有可靠身份的弹幕仍不会被猜测加入。B站自动规则命中的
+弹幕可能同时处于临时自动屏蔽状态，停用规则前不能承诺管理器按钮会解除后续自动隐藏。抖音当前页无可靠身份弹幕时管理器自然为空，
+这不证明平台所有弹幕都已读取。当前候选仍未改变原生 B站弹幕列表的隐藏策略。
+
+**发布**
+
+候选仍为 `@version 0.43.0`，未提交、未推送、未打 tag、未创建 Release；已发布 `v0.43.0` 不受本轮工作区改动影响。
+
+**下一步验证**
+
+用户在专用 Chrome 中查看当前 B站灰显行和抖音最新构建；若确认候选行为，再单独决定是否提升公开版本号并进入提交/发布流程。
+
 ### 2026-08-28 - 0.43.0 未发布候选 - B站与抖音关键词/正则自动屏蔽弹幕
 
 **范围**
