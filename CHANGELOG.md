@@ -38,7 +38,8 @@
 ### 发布状态
 
 - `0.44.0` 保留 userscript 的版本序列并使用构建标识
-  `0.44.0-bili-comment-thread-pagination`；当前正在执行提交、推送、tag 和 GitHub Release 收口，已发布 `v0.43.0` 保留不变。
+  `0.44.0-bili-comment-thread-pagination`；功能提交 `5d13111` 已推送到 `origin/master`，`v0.44.0` tag 已创建并推送，
+  GitHub Release：<https://github.com/a2787/ub-utils/releases/tag/v0.44.0>。已发布的 `v0.43.0` 保留不变。
 
 ## 工作区未发布候选（保留 @version 0.43.0） - 2026-08-28
 

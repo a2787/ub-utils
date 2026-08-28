@@ -116,8 +116,9 @@
 
 **发布**
 
-本次发布构建为 `0.44.0-bili-comment-thread-pagination`，userscript `@version` 为 `0.44.0`；上一项自动规则例外修复已单独提交为
-`ed121eb`，本次分页与版本收口尚待最终提交、推送、tag 和 Release。已发布 `v0.43.0` 不受本次工作区改动影响。
+本次发布构建为 `0.44.0-bili-comment-thread-pagination`，userscript `@version` 为 `0.44.0`；功能提交 `5d13111` 已推送到
+`origin/master`，`v0.44.0` tag 已创建并推送，GitHub Release：<https://github.com/a2787/ub-utils/releases/tag/v0.44.0>。
+上一项自动规则例外修复已包含在本次发布历史中，提交为 `ed121eb`；已发布的 `v0.43.0` 保留不变。
 
 **下一步验证**
 
