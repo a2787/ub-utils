@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.43.0
+// @version       0.44.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.43.0-bili-douyin-danmaku-manager-exception';
+  const RUNTIME_BUILD = '0.44.0-bili-comment-thread-pagination';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -4791,6 +4791,27 @@
       };
     }
 
+    // B站可能把请求的 ps=20 限制成更小的实际 page.size；只按 replies.length
+    // 与请求值比较会在第一页提前停止，正好漏掉界面上的第二页、第三页。优先使用
+    // 接口返回的页号/实际页大小与总数判断，只有接口没有总数时才退回请求页大小。
+    function replyPageState(data, replies, requestedPage) {
+      const page = data && data.page || {};
+      const rawCount = page.count;
+      const count = Number(rawCount);
+      const hasCount = rawCount != null && Number.isFinite(count) && count >= 0;
+      const rawNumber = page.num;
+      const number = Number(rawNumber);
+      const pageNumber = Number.isFinite(number) && number > 0 ? number : requestedPage;
+      const rawSize = page.size;
+      const size = Number(rawSize);
+      const pageSize = Number.isFinite(size) && size > 0
+        ? size : Math.max(1, replies.length || REPLY_PAGE_SIZE);
+      return {
+        hasMore: hasCount ? pageNumber * pageSize < count : replies.length >= REPLY_PAGE_SIZE,
+        emptyBeforeEnd: hasCount && pageNumber * pageSize < count && !replies.length,
+      };
+    }
+
     // 抓取当前视频的全部根评论与已公开的子回复作者。onProgress 用于 UI 反馈；
     // 任何一页失败都记为 partial，调用方必须据此提示"未取全"，不得当成完整名单。
     async function fetchAllCommentAuthors(onProgress) {
@@ -4870,11 +4891,14 @@
             if (record) records.push(record);
           }
           report();
-          const rawCount = data.page && data.page.count;
-          const count = Number(rawCount);
-          const hasCount = rawCount != null && Number.isFinite(count) && count >= 0;
-          if (!replies.length || replies.length < REPLY_PAGE_SIZE || (hasCount && page * REPLY_PAGE_SIZE >= count)) break;
-          if (page === REPLY_SUB_PAGE_CAP) { partial = true; reason = reason || '子回复达到安全分页上限'; }
+          const pageState = replyPageState(data, replies, page);
+          if (!pageState.hasMore) break;
+          if (pageState.emptyBeforeEnd) {
+            partial = true; reason = reason || '子回复分页提前返回空页'; break;
+          }
+          if (page === REPLY_SUB_PAGE_CAP) {
+            partial = true; reason = reason || '子回复达到安全分页上限'; break;
+          }
         }
       }
       report();
@@ -4912,11 +4936,12 @@
           if (record) records.push(record);
         }
         if (typeof onProgress === 'function') onProgress({ collected: records.length, page });
-        const rawCount = data.page && data.page.count;
-        const count = Number(rawCount);
-        const hasCount = rawCount != null && Number.isFinite(count) && count >= 0;
-        if (!replies.length || replies.length < REPLY_PAGE_SIZE || (hasCount && page * REPLY_PAGE_SIZE >= count)) break;
-        if (page === REPLY_SUB_PAGE_CAP) { partial = true; reason = '单楼回复达到安全分页上限'; }
+        const pageState = replyPageState(data, replies, page);
+        if (!pageState.hasMore) break;
+        if (pageState.emptyBeforeEnd) {
+          partial = true; reason = '单楼回复分页提前返回空页'; break;
+        }
+        if (page === REPLY_SUB_PAGE_CAP) { partial = true; reason = '单楼回复达到安全分页上限'; break; }
       }
       return { records, partial, reason };
     }

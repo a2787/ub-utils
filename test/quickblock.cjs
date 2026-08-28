@@ -450,6 +450,80 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个本地拉黑和一个楼回复入口');
     else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
 
+    // 人工合成：B站接口请求 ps=20，但服务端实际按 page.size=10 返回三页子回复。
+    // 旧逻辑只比较 replies.length < REPLY_PAGE_SIZE，会在第一页误认为已经结束，
+    // 因而只能屏蔽当前页；回归必须锁住按接口实际页大小继续翻页的行为。
+    const threadPaging = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const renderer = window.__commentRenderer('111');
+      if (!renderer) return { exists: false };
+      const previousState = window.__INITIAL_STATE__;
+      const originalFetch = window.fetch;
+      const pageMids = Array.from({ length: 25 }, (_, index) => String(7001 + index));
+      const calls = [];
+      window.__INITIAL_STATE__ = { aid: '12345', videoData: { aid: '12345' } };
+      renderer.__data = { rpid_str: '900001', mid: '111', member: { mid: '111', uname: 'Alice' } };
+      window.fetch = async (input) => {
+        const url = new URL(String(input), location.href);
+        if (url.pathname !== '/x/v2/reply/reply') return originalFetch(input);
+        const pn = Number(url.searchParams.get('pn') || 0);
+        calls.push({ pn, ps: Number(url.searchParams.get('ps') || 0) });
+        const slice = pageMids.slice((pn - 1) * 10, pn * 10);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ code: 0, data: {
+            replies: slice.map((mid, index) => ({
+              rpid_str: String(910000 + (pn - 1) * 10 + index + 1),
+              mid_str: mid,
+              member: { uname: 'Paged ' + mid },
+              ctime: 1700000000 + index,
+              content: { message: 'page ' + pn },
+            })),
+            page: { num: pn, size: 10, count: 25 },
+          },
+        }),
+        };
+      };
+      try {
+        const threadButton = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-thread-quick');
+        if (!threadButton) return { exists: false, reason: 'thread button missing' };
+        threadButton.click();
+        await pause(250);
+        const confirm = document.getElementById('ob-confirm');
+        if (!confirm) return { exists: true, confirm: false, calls };
+        const confirmText = confirm.textContent || '';
+        confirm.querySelector('.ob-ok').click();
+        await pause(150);
+        const allBlocked = pageMids.every((mid) => window.OB.Index.isBlocked('bili:uid:' + mid));
+        const toast = document.getElementById('ob-toast');
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await pause(150); }
+        const restored = pageMids.every((mid) => !window.OB.Index.isBlocked('bili:uid:' + mid));
+        return {
+          exists: true,
+          confirm: true,
+          confirmText,
+          calls,
+          pages: calls.map((call) => call.pn),
+          requestedPs: calls.map((call) => call.ps),
+          allBlocked,
+          restored,
+        };
+      } finally {
+        window.fetch = originalFetch;
+        window.__INITIAL_STATE__ = previousState;
+        window.OB.Store.removeIdentities(pageMids.map((mid) => 'bili:uid:' + mid));
+        const confirm = document.getElementById('ob-confirm'); if (confirm) confirm.remove();
+      }
+    });
+    if (threadPaging.exists && threadPaging.confirm
+      && JSON.stringify(threadPaging.pages) === JSON.stringify([1, 2, 3])
+      && threadPaging.requestedPs.every((ps) => ps === 20)
+      && threadPaging.allBlocked && threadPaging.restored)
+      report.pass.push('QB-L-PAGE 主评论一键屏蔽此楼会按接口实际 page.size 翻完多页子评论');
+    else report.fail.push('QB-L-PAGE 主评论分页读取失败：' + JSON.stringify(threadPaging));
+
     const replyBlock = await page.evaluate(async () => {
       const renderer = window.__replyRenderer('444');
       const button = renderer && renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
