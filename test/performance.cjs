@@ -45,6 +45,14 @@ function snapshot(page) {
       scannerFullScans: d.scannerFullScans || 0,
       scannerIncrementalScans: d.scannerIncrementalScans || 0,
       scannerItemsProcessed: d.scannerItemsProcessed || 0,
+      scannerMutationCallbacks: d.scannerMutationCallbacks || 0,
+      scannerMutationRecords: d.scannerMutationRecords || 0,
+      scannerMutationDurationMs: d.scannerMutationDurationMs || 0,
+      scannerMutationMaxDurationMs: d.scannerMutationMaxDurationMs || 0,
+      scannerScanDurationMs: d.scannerScanDurationMs || 0,
+      scannerScanMaxDurationMs: d.scannerScanMaxDurationMs || 0,
+      scannerDirtyRootDurationMs: d.scannerDirtyRootDurationMs || 0,
+      scannerDirtyRootMaxDurationMs: d.scannerDirtyRootMaxDurationMs || 0,
     };
   });
 }
@@ -56,7 +64,10 @@ function resetDiagnostics(page) {
     for (const key of [
       'activeVideoRootCalls', 'activeVideoRootComputations', 'douyinDanmakuCollections',
       'douyinDanmakuItems', 'douyinAutoScans', 'scannerFullScans',
-      'scannerIncrementalScans', 'scannerItemsProcessed',
+      'scannerIncrementalScans', 'scannerItemsProcessed', 'scannerMutationCallbacks',
+      'scannerMutationRecords', 'scannerMutationDurationMs', 'scannerMutationMaxDurationMs',
+      'scannerScanDurationMs', 'scannerScanMaxDurationMs', 'scannerDirtyRootDurationMs',
+      'scannerDirtyRootMaxDurationMs',
     ]) d[key] = 0;
     return true;
   });
@@ -92,6 +103,32 @@ function resetDiagnostics(page) {
     if (!setup.player || !setup.layer || !setup.diagnostics || !setup.rulesDisabled) {
       report.fail.push('fixture setup: ' + JSON.stringify(setup));
     } else {
+      const metricStatus = await page.evaluate(() => {
+        window.OB.Store.setSetting('skipCap', 7);
+        window.OB.Store.setSetting('skipCap', 6);
+        for (let index = 0; index < 24; index++) {
+          window.OB.logs.record('test.performance.metric', { safeCount:index }, {
+            force:true, deferFlush:true,
+          });
+        }
+        window.OB.logs.flush();
+        return {
+          storage: window.OB.Store.storageStatus(),
+          logs: window.OB.logs.status(),
+        };
+      });
+      const persist = metricStatus.storage && metricStatus.storage.persist;
+      const logMetrics = metricStatus.logs && metricStatus.logs.metrics;
+      if (persist && persist.count >= 2 && persist.lastPayloadChars > 0
+        && Number.isFinite(persist.lastDurationMs) && persist.maxDurationMs >= persist.lastDurationMs
+        && logMetrics && logMetrics.flushes >= 1 && logMetrics.storageWrites >= 2
+        && logMetrics.storageCharsWritten > 0 && Number.isFinite(logMetrics.lastFlushDurationMs)
+        && logMetrics.maxFlushDurationMs >= logMetrics.lastFlushDurationMs) {
+        report.pass.push('名单持久化与日志分片分别暴露耗时、写入次数和序列化体积指标');
+      } else {
+        report.fail.push('存储/日志性能指标不完整：' + JSON.stringify(metricStatus));
+      }
+
       const bulkCache = await page.evaluate(async () => {
         const manager = window.OB.adapters && window.OB.adapters.douyin && window.OB.adapters.douyin.commentManager;
         if (!manager || typeof manager.collectRecords !== 'function') return { supported: false };
@@ -216,7 +253,11 @@ function resetDiagnostics(page) {
         && incremental.douyinDanmakuCollections === 0 && incremental.douyinAutoScans === 0
         && incremental.douyinDanmakuItems === 0
         && incremental.scannerIncrementalScans <= 16
-        && incremental.scannerItemsProcessed >= 250) {
+        && incremental.scannerItemsProcessed >= 250
+        && incremental.scannerMutationCallbacks > 0 && incremental.scannerMutationRecords > 0
+        && incremental.scannerMutationMaxDurationMs < 100
+        && incremental.scannerDirtyRootMaxDurationMs < 100
+        && incremental.scannerScanMaxDurationMs < 250) {
         report.pass.push('弹幕增量按批处理，活动根节点计算不随弹幕条数线性放大');
       } else report.fail.push('弹幕增量调度边界异常：' + JSON.stringify(incremental));
 

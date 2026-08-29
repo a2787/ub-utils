@@ -67,6 +67,44 @@ XMLHttpRequest.prototype.send = function (...args) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+function isNavigationContextError(error) {
+  return /execution context was destroyed|cannot find context|most likely because of a navigation/i
+    .test(String(error && error.message || error));
+}
+
+async function waitForStableDocument(page) {
+  let previousUrl = '';
+  let stableTicks = 0;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+    await sleep(500);
+    const currentUrl = page.url();
+    let ready = false;
+    try {
+      ready = await page.evaluate(() => document.readyState === 'interactive' || document.readyState === 'complete');
+    } catch (error) {
+      if (!isNavigationContextError(error)) throw error;
+    }
+    stableTicks = ready && currentUrl === previousUrl ? stableTicks + 1 : 0;
+    previousUrl = currentUrl;
+    if (stableTicks >= 2) return true;
+  }
+  return false;
+}
+
+async function evaluateStable(page, pageFunction, argument) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await page.evaluate(pageFunction, argument); }
+    catch (error) {
+      lastError = error;
+      if (!isNavigationContextError(error)) throw error;
+      await waitForStableDocument(page);
+    }
+  }
+  throw lastError || new Error('page evaluation unavailable after navigation');
+}
+
 // 并非每个视频都会渲染浮动弹幕（弹幕过少或被关闭时播放器不会插入节点）。
 // 需要验证浮动弹幕入口时，先用只读预检从候选里挑一个真的会渲染的目标。
 async function pickFloatingDanmakuTarget(browser, candidates) {
@@ -93,6 +131,47 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
   return '';
 }
 
+// “本地拉黑 + 屏蔽该楼回复”的真站闭环需要至少两条根评论，并且前排根评论中
+// 至少一条确实带回复。公开入口的第一个视频经常只有零散评论；机械使用它会把
+// “本页没有可操作样本”误报成脚本回归。这里只读取公开页面已使用的评论 API，
+// 不点击平台写入控件、不保存内容或身份，并在预检失败时安全回退到原候选。
+async function pickLocalCommentTarget(candidates) {
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const bvid = (new globalThis.URL(candidate).pathname.match(/\/video\/(BV[0-9A-Za-z]+)/) || [])[1] || '';
+      if (!bvid) continue;
+      const commonHeaders = {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+        referer: 'https://www.bilibili.com/',
+      };
+      const viewResponse = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), {
+        headers: commonHeaders,
+        signal: controller.signal,
+      });
+      const view = await viewResponse.json();
+      const aid = String(view && view.code === 0 && view.data && view.data.aid || '');
+      if (!/^\d+$/.test(aid)) continue;
+      const replyResponse = await fetch('https://api.bilibili.com/x/v2/reply/main?oid=' + aid + '&type=1&mode=3&ps=20&next=0', {
+        headers: { ...commonHeaders, referer: candidate },
+        signal: controller.signal,
+      });
+      const payload = await replyResponse.json();
+      const replies = payload && payload.code === 0 && payload.data && Array.isArray(payload.data.replies)
+        ? payload.data.replies : [];
+      if (replies.length < 2) continue;
+      const visiblePrefix = replies.slice(0, Math.min(6, replies.length - 1));
+      if (visiblePrefix.some((reply) => Number(reply && reply.rcount) > 0)) return candidate;
+    } catch (error) {
+      // 单个候选的公开 API 失败时继续尝试下一项。
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return '';
+}
+
 (async () => {
   const result = { target: '', discovered: false, version, sourceHash, build, pageLoaded: false, errors: [], probe: null };
   let browser;
@@ -106,7 +185,9 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       const candidates = await discoverTargets(browser, 'bilibili', { limit: 6 });
       URL = VERIFY_FLOATING_DANMAKU
         ? (await pickFloatingDanmakuTarget(browser, candidates)) || candidates[0] || ''
-        : candidates[0] || '';
+        : VERIFY_LOCAL_BUTTON
+          ? (await pickLocalCommentTarget(candidates)) || candidates[0] || ''
+          : candidates[0] || '';
       result.discovered = !!URL;
     }
     if (!URL) {
@@ -138,18 +219,20 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
     });
     await page.addInitScript({ content: shim + '\n' + userscript + '\n' + xhrProbe });
     const response = await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    result.pageLoaded = !!response && response.ok();
+    await waitForStableDocument(page);
+    result.pageLoaded = !!response && response.ok()
+      && /^https:\/\/www\.bilibili\.com\/video\//.test(page.url());
 
     // B站评论按需加载；只滚动和等待，不点击原生菜单或写入任何站内状态。
     for (let i = 0; i < 12; i++) {
-      await page.evaluate((step) => {
+      await evaluateStable(page, (step) => {
         const comments = document.querySelector('bili-comments');
         if (comments && step === 0) comments.scrollIntoView({ block: 'start' });
         else if (comments) window.scrollBy(0, 850);
         else window.scrollBy(0, 900);
       }, i);
       await sleep(1200);
-      const found = await page.evaluate(() => {
+      const found = await evaluateStable(page, () => {
         function count(root, selector) {
           let total = 0;
           const walk = (node) => {
@@ -895,19 +978,21 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
           return dataCount > 0 || collect(renderer, 'bili-comment-reply-renderer,bili-sub-comment-renderer').length > 0;
         };
         const targetIndex = renderers.findIndex((renderer) => findButton(renderer) && hasLoadedReply(renderer));
-        if (targetIndex < 0) return { found: false, reason: '没有同时具备本地入口和下一条评论的目标行' };
+        if (targetIndex < 0) return { found: false, reason: '没有同时具备本地入口和楼中楼数据的目标行' };
         const targetRenderer = renderers[targetIndex];
-        const nextRenderer = renderers[targetIndex + 1];
+        const nextRenderer = renderers[targetIndex + 1] || null;
         const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
         const target = adapter && adapter.containerOf ? adapter.containerOf(targetRenderer) : targetRenderer;
-        const next = adapter && adapter.containerOf ? adapter.containerOf(nextRenderer) : nextRenderer;
+        const next = nextRenderer
+          ? (adapter && adapter.containerOf ? adapter.containerOf(nextRenderer) : nextRenderer)
+          : null;
         const button = findButton(targetRenderer);
         const targetElements = composedElements(target);
-        const nextElements = composedElements(next);
-        const common = targetElements.find((element) => nextElements.includes(element));
+        const nextElements = next ? composedElements(next) : [];
+        const common = next ? targetElements.find((element) => nextElements.includes(element)) : null;
         const commonBefore = common && common.getBoundingClientRect();
         const before = target.getBoundingClientRect();
-        const nextBefore = next.getBoundingClientRect();
+        const nextBefore = next && next.getBoundingClientRect();
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         const confirm = document.getElementById('ob-confirm');
@@ -922,16 +1007,18 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         confirm.querySelector('.ob-ok').click();
         await new Promise((resolve) => setTimeout(resolve, 300));
         const after = target.getBoundingClientRect();
-        const nextAfter = next.getBoundingClientRect();
+        const nextAfter = next && next.getBoundingClientRect();
         const commonAfter = common && common.getBoundingClientRect();
         const root = target.getRootNode();
         result.hidden = target.classList.contains('ob-hidden') && getComputedStyle(target).display === 'none' && after.height === 0;
         result.barCount = root.querySelectorAll ? root.querySelectorAll('.ob-bar').length : -1;
-        result.nextShift = Math.round(nextBefore.top - nextAfter.top);
-        result.relativeNextShift = commonBefore && commonAfter
+        result.nextShift = nextBefore && nextAfter ? Math.round(nextBefore.top - nextAfter.top) : null;
+        result.relativeNextShift = nextBefore && nextAfter && commonBefore && commonAfter
           ? Math.round((nextBefore.top - commonBefore.top) - (nextAfter.top - commonAfter.top))
-          : 0;
-        result.layoutClosed = result.relativeNextShift >= Math.max(1, Math.floor(before.height) - 1);
+          : null;
+        result.layoutWitness = next ? 'next-row-shift' : 'target-zero-height';
+        result.layoutClosed = result.hidden && (!next
+          || result.relativeNextShift >= Math.max(1, Math.floor(before.height) - 1));
 
         const toast = document.getElementById('ob-toast');
         const undo = toast && toast.querySelector('button');
@@ -1181,6 +1268,14 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         player: video ? { present: true, readyState: video.readyState, durationFinite: Number.isFinite(video.duration) } : { present: false },
       };
     });
+    // B站偶尔让初始导航响应返回非 2xx，随后仍由客户端正常渲染视频、评论和
+    // 注入运行时。真实可用文档比首个响应状态更强；只有最终仍在视频路径、
+    // OmniBlock 已就绪且确实读到评论组件时，才把这种情况提升为已加载。
+    if (!result.pageLoaded && /^https:\/\/www\.bilibili\.com\/video\//.test(page.url())
+      && result.probe && result.probe.obReady && result.probe.commentsHost
+      && result.probe.commentRendererCount > 0) {
+      result.pageLoaded = true;
+    }
     if (VERIFY_LOCAL_BUTTON) {
       const probe = result.probe || {};
       const menu = probe.firstMenu || {};

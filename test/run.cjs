@@ -19,6 +19,7 @@ let updateVersion = '9.9.9';
 
 // 1) GM_* 桩 + 预置被拉黑用户（Bob=222 验证加载即隐藏；Frank=666 验证嵌套影子穿透）
 const SHIM = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled:true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({
   version: 1,
   persons: {
@@ -185,6 +186,51 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ? report.pass.push('K 同文档重复注入被运行锁忽略：仅保留一套运行时与设置入口')
     : report.fail.push('K 同文档重复注入防护失败：' + JSON.stringify(duplicateRuntime));
 
+  // P. 突发 DOM 更新不能在 MutationObserver 回调内同步深扫。人工追加 40 棵
+  // 相互独立的 Shadow DOM 评论树，扫描器应分帧处理，并至少触发一次预算让步。
+  const scannerBefore = await page.evaluate(() => ({ ...(window.OB && window.OB.diagnostics || {}) }));
+  await page.evaluate(() => {
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < 40; index++) {
+      const section = document.createElement('section');
+      section.className = 'artificial-ob-burst-root';
+      const host = document.createElement('bili-comment-renderer');
+      const shadow = host.attachShadow({ mode:'open' });
+      const author = document.createElement('a');
+      author.className = 'user-name';
+      author.href = 'https://space.bilibili.com/' + String(880000001 + index);
+      author.textContent = '人工突发作者' + index;
+      shadow.appendChild(author);
+      for (let depth = 0; depth < 12; depth++) {
+        const node = document.createElement('span');
+        node.textContent = '人工结构节点' + depth;
+        shadow.appendChild(node);
+      }
+      section.appendChild(host);
+      fragment.appendChild(section);
+    }
+    document.body.appendChild(fragment);
+  });
+  await page.waitForFunction((before) => {
+    const current = window.OB && window.OB.diagnostics;
+    return !!current && current.scannerDirtyRootsProcessed - (before.scannerDirtyRootsProcessed || 0) >= 40
+      && window.OB.lifecycle.scannerStatus().dirtySubtrees === 0;
+  }, scannerBefore, { timeout: 5000 }).catch(() => {});
+  const scannerBurst = await page.evaluate((before) => {
+    const current = window.OB && window.OB.diagnostics || {};
+    return {
+      queued: (current.scannerDirtyRootsQueued || 0) - (before.scannerDirtyRootsQueued || 0),
+      processed: (current.scannerDirtyRootsProcessed || 0) - (before.scannerDirtyRootsProcessed || 0),
+      yields: (current.scannerDirtyRootBudgetYields || 0) - (before.scannerDirtyRootBudgetYields || 0),
+      overflows: (current.scannerDirtyRootOverflows || 0) - (before.scannerDirtyRootOverflows || 0),
+      status: window.OB.lifecycle.scannerStatus(),
+    };
+  }, scannerBefore);
+  (scannerBurst.queued >= 40 && scannerBurst.processed >= 40 && scannerBurst.yields >= 1
+    && scannerBurst.overflows === 0 && scannerBurst.status && scannerBurst.status.dirtySubtrees === 0)
+    ? report.pass.push('P 突发 DOM 深树按 8ms/32 根预算分帧处理，队列最终清空')
+    : report.fail.push('P 扫描器突发队列/预算失败：' + JSON.stringify(scannerBurst));
+
   const hostOf = `(uid) => { const arr = Array.from(document.querySelectorAll('bili-comment-renderer')); const h = arr.find(x => x.shadowRoot && x.shadowRoot.querySelector('a[href*="space.bilibili.com/' + uid + '"]')); return h || null; }`;
 
   // A. 加载即隐藏：Bob(222) 应被标记
@@ -298,6 +344,25 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ? report.pass.push('E2 设置名单：按平台分列、各列独立滚动，行内备注并可通过鼠标悬停查看屏蔽依据')
     : report.fail.push('E2 设置名单分组/屏蔽依据失败：' + JSON.stringify(e2));
 
+  const e5 = await page.evaluate(() => {
+    const status = window.OB && window.OB.Store.storageStatus();
+    const line = document.querySelector('#ob-storage-status');
+    return {
+      status,
+      line: line && line.textContent,
+      level: line && line.dataset.level,
+      color: line && getComputedStyle(line).color,
+    };
+  });
+  (e5.status && e5.status.persons >= 30 && e5.status.identities >= e5.status.persons
+    && e5.status.chars > 0 && e5.status.warningChars < e5.status.criticalChars
+    && e5.status.criticalChars < e5.status.devBridgeMaxChars
+    && e5.status.persist && e5.status.persist.count > 0
+    && e5.status.persist.lastPayloadChars > 0
+    && e5.line && e5.line.includes(String(e5.status.persons)) && e5.level === e5.status.level)
+    ? report.pass.push('E5 名单容量状态：设置页显示人数、身份数、序列化体积和分级预警边界')
+    : report.fail.push('E5 名单容量状态失败：' + JSON.stringify(e5));
+
   // E3 详细日志：记录运行事件，导出再次脱敏，不出现人为注入的正文/身份值。
   const e3 = await page.evaluate(() => {
     const logs = window.OB && window.OB.logs;
@@ -344,7 +409,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   });
   (e3.logs && e3.hasProbe && e3.hasMutation && e3.hasScan && e3.hasUserAction && e3.hasPersistence && e3.redacted && e3.exportClean
     && e3.mutationAggregated && e3.passiveAggregation
-    && e3.selectorCountsVisible && e3.status.events > 0)
+    && e3.selectorCountsVisible && e3.status.events > 0 && e3.status.metrics
+    && e3.status.metrics.flushes > 0 && e3.status.metrics.cachedShards > 0)
     ? report.pass.push('E3 详细运行日志：高频 DOM/扫描事件窗口聚合，导出二次脱敏并保留安全计数')
     : report.fail.push('E3 详细运行日志失败：' + JSON.stringify(e3));
 
@@ -502,6 +568,58 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ? report.pass.push('K 移动视口：设置面板完整落在视口内且无横向溢出')
     : report.fail.push('K 移动视口布局错误：' + JSON.stringify(mobile));
   await page.screenshot({ path: path.join(ROOT, 'test', '_shot_4_mobile_settings.png'), fullPage: false });
+
+  // L. frozen/BFCache/销毁边界：freeze 只暂停，persisted pagehide 不清理；普通
+  // pagehide 必须统一停止扫描器、循环、订阅和观察器，且重复事件保持幂等。
+  const lifecycle = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const before = {
+      page: window.OB.lifecycle.pageStatus(),
+      resources: window.OB.lifecycle.resourceStatus(),
+      scanner: window.OB.lifecycle.scannerStatus(),
+    };
+    history.pushState({}, '', '/test-spa-resource-boundary');
+    await wait(1150);
+    const afterRoute = {
+      resources: window.OB.lifecycle.resourceStatus(),
+      scanner: window.OB.lifecycle.scannerStatus(),
+    };
+    document.dispatchEvent(new Event('freeze'));
+    await wait(30);
+    const frozen = {
+      page: window.OB.lifecycle.pageStatus(),
+      scanner: window.OB.lifecycle.scannerStatus(),
+    };
+    document.dispatchEvent(new Event('resume'));
+    await wait(80);
+    const resumed = {
+      page: window.OB.lifecycle.pageStatus(),
+      scanner: window.OB.lifecycle.scannerStatus(),
+    };
+    const cachedHide = new Event('pagehide');
+    Object.defineProperty(cachedHide, 'persisted', { value:true });
+    window.dispatchEvent(cachedHide);
+    const afterCachedHide = window.OB.lifecycle.resourceStatus();
+    const finalHide = new Event('pagehide');
+    Object.defineProperty(finalHide, 'persisted', { value:false });
+    window.dispatchEvent(finalHide);
+    window.dispatchEvent(finalHide);
+    const disposed = {
+      resources: window.OB.lifecycle.resourceStatus(),
+      scanner: window.OB.lifecycle.scannerStatus(),
+    };
+    return { before, afterRoute, frozen, resumed, afterCachedHide, disposed };
+  });
+  (lifecycle.before.resources.resources > 0 && lifecycle.before.scanner && !lifecycle.before.scanner.stopped
+    && lifecycle.afterRoute.resources.resources <= lifecycle.before.resources.resources
+    && lifecycle.afterRoute.scanner && !lifecycle.afterRoute.scanner.stopped
+    && lifecycle.frozen.page.frozen && !lifecycle.frozen.page.visible && !lifecycle.frozen.scanner.scheduled
+    && !lifecycle.resumed.page.frozen && lifecycle.resumed.page.visible && !lifecycle.resumed.scanner.stopped
+    && !lifecycle.afterCachedHide.disposed
+    && lifecycle.disposed.resources.disposed && lifecycle.disposed.resources.reason === 'pagehide'
+    && lifecycle.disposed.resources.resources === 0 && lifecycle.disposed.scanner.stopped)
+    ? report.pass.push('L 生命周期边界：SPA 不增殖资源，freeze/BFCache 可恢复，普通 pagehide 幂等回收')
+    : report.fail.push('L 生命周期回收失败：' + JSON.stringify(lifecycle));
 
   const ok = report.fail.length === 0;
   // 同步落盘报告（务必在 browser.close 之前，避免其偶发挂起导致进程卡死、结果丢失）

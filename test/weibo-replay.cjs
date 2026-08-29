@@ -495,13 +495,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         nextContentTransform: next && next.firstElementChild ? next.firstElementChild.style.getPropertyValue('transform') : '',
         wrapperHeight: wrapper ? wrapper.getBoundingClientRect().height : 0,
         virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+        virtualSyncDurationMs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncDurationMs : 0,
+        virtualSyncMaxDurationMs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncMaxDurationMs : 0,
         nestedIgnored: window.OB.diagnostics ? window.OB.diagnostics.weiboNestedVirtualRowsIgnored : 0,
       };
     });
     const detailPass = detail.rowCount === 3 && detail.targetBlocked && detail.targetHeight === 0
       && Math.abs(detail.nextContentTop - detail.targetOuterTop) <= 1
       && /translateY\(-?72px\)/.test(detail.nextContentTransform)
-      && detail.wrapperHeight === 144 && detail.virtualSyncs > 0;
+      && detail.wrapperHeight === 144 && detail.virtualSyncs > 0
+      && detail.virtualSyncDurationMs >= detail.virtualSyncMaxDurationMs
+      && detail.virtualSyncMaxDurationMs > 0;
     if (detailPass) {
       report.pass.push('详情页 wbpro-list 顶层评论回放：隐藏行补位到后续内容层，用户主页嵌套保护仍独立');
     } else report.fail.push('详情页 wbpro-list 顶层评论补位失败：' + JSON.stringify(detail));

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.45.0
+// @version       0.46.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -62,7 +62,7 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.45.0-persistent-runtime-floating-dock-log-aggregation-performance-resource-bounds';
+  const RUNTIME_BUILD = '0.46.0-signed-bridge-lifecycle-budgeted-scanner-storage-metrics';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
@@ -180,13 +180,69 @@
     return buckets;
   }
 
-  // 页面级生命周期：后台标签页不需要继续处理动态 DOM。各功能模块共享这一个
-  // visibilitychange 监听，避免每个模块分别建立自己的生命周期监听器。
+  // 运行时资源注册表：长寿命页面会建立循环、订阅和观察器；每一项都登记唯一
+  // 清理函数。普通 pagehide 代表文档即将销毁，统一停止资源；BFCache 页面只暂停，
+  // 仍由 PageLifecycle 在 pageshow/resume 后恢复，避免返回页面时运行时永久失效。
+  const RuntimeResources = (() => {
+    const disposers = new Set();
+    let disposed = false;
+    let reason = '';
+    function add(disposer) {
+      if (typeof disposer !== 'function') return () => {};
+      if (disposed) {
+        try { disposer(); } catch (e) {}
+        return () => {};
+      }
+      disposers.add(disposer);
+      return () => disposers.delete(disposer);
+    }
+    function dispose(nextReason) {
+      if (disposed) return;
+      disposed = true;
+      reason = String(nextReason || 'runtime-dispose');
+      const pending = Array.from(disposers);
+      disposers.clear();
+      for (const disposer of pending) {
+        try { disposer(); } catch (e) {}
+      }
+    }
+    function status() {
+      return { disposed, reason, resources: disposers.size };
+    }
+    function timeout(callback, delay) {
+      let timer = 0;
+      let unregister = () => {};
+      const cancel = () => {
+        if (timer) { clearTimeout(timer); timer = 0; }
+        unregister();
+      };
+      timer = setTimeout(() => {
+        timer = 0;
+        unregister();
+        if (!disposed) {
+          try { callback(); } catch (e) {}
+        }
+      }, Math.max(0, Number(delay) || 0));
+      unregister = add(cancel);
+      return cancel;
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('pagehide', (event) => {
+        if (!event || !event.persisted) dispose('pagehide');
+      }, { capture: true });
+    }
+    return { add, dispose, status, timeout };
+  })();
+
+  // 页面级生命周期：后台或 frozen 标签页不需要继续处理动态 DOM。各功能模块共享
+  // 这一组监听，避免各自建立 visibility/freeze/resume 事件和相互冲突的状态。
   const PageLifecycle = (() => {
     const listeners = new Set();
     let bound = false;
+    let frozen = false;
     const isVisible = () => {
       if (typeof document === 'undefined') return true;
+      if (frozen) return false;
       if (typeof document.visibilityState === 'string') return document.visibilityState !== 'hidden';
       return !document.hidden;
     };
@@ -201,11 +257,17 @@
       listeners.add(listener);
       if (!bound && typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('visibilitychange', notify, { passive: true });
+        document.addEventListener('freeze', () => { frozen = true; notify(); }, { passive: true });
+        document.addEventListener('resume', () => { frozen = false; notify(); }, { passive: true });
+        if (typeof window !== 'undefined' && window.addEventListener) {
+          window.addEventListener('pageshow', () => { frozen = false; notify(); }, { passive: true });
+        }
         bound = true;
       }
-      return () => listeners.delete(listener);
+      const unregisterRuntime = RuntimeResources.add(() => listeners.delete(listener));
+      return () => { listeners.delete(listener); unregisterRuntime(); };
     };
-    return { isVisible, subscribe };
+    return { isVisible, subscribe, status: () => ({ visible: isVisible(), frozen, listeners: listeners.size }) };
   })();
 
   // 共享 DOM 活动信号：主扫描器已经承担 MutationObserver 的监听和 Shadow DOM
@@ -216,11 +278,30 @@
     const subscribe = (listener) => {
       if (typeof listener !== 'function') return () => {};
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      const unregisterRuntime = RuntimeResources.add(() => listeners.delete(listener));
+      return () => { listeners.delete(listener); unregisterRuntime(); };
     };
     const notify = (records, adapterId) => {
       for (const listener of Array.from(listeners)) {
         try { listener(records, adapterId); } catch (e) {}
+      }
+    };
+    return { subscribe, notify };
+  })();
+
+  // SPA 路由只由主扫描器轮询一次，其他模块订阅这个共享信号；禁止每个入口再
+  // 建立自己的 location.href 定时器。
+  const PageRouteSignals = (() => {
+    const listeners = new Set();
+    const subscribe = (listener) => {
+      if (typeof listener !== 'function') return () => {};
+      listeners.add(listener);
+      const unregisterRuntime = RuntimeResources.add(() => listeners.delete(listener));
+      return () => { listeners.delete(listener); unregisterRuntime(); };
+    };
+    const notify = (nextUrl, previousUrl) => {
+      for (const listener of Array.from(listeners)) {
+        try { listener(nextUrl, previousUrl); } catch (e) {}
       }
     };
     return { subscribe, notify };
@@ -252,19 +333,24 @@
       if (!visible) { clear(); return; }
       schedule(0);
     });
+    let unregisterRuntime = () => {};
     const api = {
-      wake() {
-        if (stopped || !PageLifecycle.isVisible() || !isActive()) return;
+      wake(nextDelay = 0) {
+        if (stopped) return;
         clear();
-        schedule(0);
+        if (!PageLifecycle.isVisible() || !isActive()) return;
+        schedule(nextDelay);
       },
       stop() {
         if (stopped) return;
         stopped = true;
         clear();
         unsubscribe();
+        unregisterRuntime();
       },
+      status() { return { stopped, scheduled: !!timer, active: !stopped && !!isActive() }; },
     };
+    unregisterRuntime = RuntimeResources.add(api.stop);
     schedule(delay);
     return api;
   }
@@ -463,6 +549,9 @@
   const BACKUP_RETENTION = 5;
   const BACKUP_RECORD_MAX_BYTES = 2 * 1024 * 1024;
   const BACKUP_TOTAL_MAX_BYTES = 4 * 1024 * 1024;
+  const MAIN_STORAGE_WARNING_CHARS = 2 * 1024 * 1024;
+  const MAIN_STORAGE_CRITICAL_CHARS = 3 * 1024 * 1024;
+  const DEV_BRIDGE_VALUE_MAX_CHARS = 4 * 1024 * 1024;
 
   const DEFAULT_SETTINGS = {
     enabled: true,
@@ -487,6 +576,13 @@
     const backupSinks = new Map();
     let backupLastRevision = 0;
     let backupError = '';
+    const persistMetrics = {
+      count: 0,
+      failures: 0,
+      lastDurationMs: 0,
+      maxDurationMs: 0,
+      lastPayloadChars: 0,
+    };
 
     function cleanText(value, fallback, maxLength) {
       if (value == null) return fallback;
@@ -665,16 +761,48 @@
     }
 
     function persist(reason) {
-      try { GM_setValue(STORAGE_KEY, JSON.stringify(data)); } catch (e) { /* 配额/隐私模式 */ }
+      const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+      let payload = '';
+      try {
+        payload = JSON.stringify(data);
+        GM_setValue(STORAGE_KEY, payload);
+      } catch (e) { persistMetrics.failures++; }
       const snapshot = snapshotObject(reason || 'change');
       captureBackup(snapshot, reason || 'change');
       notifyBackupSinks(snapshot);
       listeners.forEach((fn) => { try { fn(); } catch (e) {} });
       persistListeners.forEach((fn) => { try { fn(snapshot); } catch (e) {} });
+      const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt);
+      persistMetrics.count++;
+      persistMetrics.lastDurationMs = duration;
+      persistMetrics.maxDurationMs = Math.max(persistMetrics.maxDurationMs, duration);
+      persistMetrics.lastPayloadChars = payload.length;
     }
 
     function persons() { return load().persons; }
     function settings() { return load().settings; }
+    function storageStatus() {
+      const state = load();
+      const personList = Object.values(state.persons || {});
+      const identities = personList.reduce((total, person) => (
+        total + (person && Array.isArray(person.identities) ? person.identities.length : 0)
+      ), 0);
+      let chars = 0;
+      try { chars = JSON.stringify(state).length; } catch (e) { chars = MAIN_STORAGE_CRITICAL_CHARS; }
+      const level = chars >= MAIN_STORAGE_CRITICAL_CHARS
+        ? 'critical'
+        : (chars >= MAIN_STORAGE_WARNING_CHARS ? 'warning' : 'normal');
+      return {
+        persons: personList.length,
+        identities,
+        chars,
+        level,
+        warningChars: MAIN_STORAGE_WARNING_CHARS,
+        criticalChars: MAIN_STORAGE_CRITICAL_CHARS,
+        devBridgeMaxChars: DEV_BRIDGE_VALUE_MAX_CHARS,
+        persist: { ...persistMetrics },
+      };
+    }
     function setSetting(k, v) {
       if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k)) return false;
       const next = sanitizeSettings({ ...load().settings, [k]: v });
@@ -924,11 +1052,14 @@
     }
 
     function onPersist(fn) {
-      if (typeof fn === 'function') persistListeners.push(fn);
-      return () => {
+      if (typeof fn !== 'function') return () => {};
+      persistListeners.push(fn);
+      const dispose = () => {
         const index = persistListeners.indexOf(fn);
         if (index >= 0) persistListeners.splice(index, 1);
       };
+      const unregisterRuntime = RuntimeResources.add(dispose);
+      return () => { dispose(); unregisterRuntime(); };
     }
 
     // 跨标签页/设置变更的监听
@@ -944,10 +1075,19 @@
       });
     } catch (e) { /* 不支持则忽略 */ }
 
-    function onChange(fn) { listeners.push(fn); }
+    function onChange(fn) {
+      if (typeof fn !== 'function') return () => {};
+      listeners.push(fn);
+      const dispose = () => {
+        const index = listeners.indexOf(fn);
+        if (index >= 0) listeners.splice(index, 1);
+      };
+      const unregisterRuntime = RuntimeResources.add(dispose);
+      return () => { dispose(); unregisterRuntime(); };
+    }
 
     return {
-      persons, settings, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
+      persons, settings, storageStatus, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
       confirmIdentityLink, removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
       onPersist, registerBackupSink, listBackups, backupStatus, ensureLocalBackup, restoreBackup, restorePreviousBackup,
       backupFormat: BACKUP_FORMAT, backupSchema: BACKUP_SCHEMA,
@@ -995,6 +1135,7 @@
     }
     const listeners = [];
     const shardCache = new Map();
+    const shardCharCache = new Map();
     let indexCache = null;
     let pending = [];
     let flushTimer = 0;
@@ -1002,13 +1143,21 @@
     let passiveFlushTimer = 0;
     let sequence = 0;
     let writeErrors = 0;
+    const metrics = {
+      flushes: 0,
+      failedFlushes: 0,
+      lastFlushDurationMs: 0,
+      maxFlushDurationMs: 0,
+      storageWrites: 0,
+      storageCharsWritten: 0,
+    };
     let context = { platform: 'unknown', route: 'unknown' };
     let loggingEnabled = Store.getSetting('logEnabled') !== false;
     const sessionId = 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
     // 被动事件可能来自每一批 MutationObserver 记录；读取已缓存的开关，避免在
     // 每个热路径事件上再次进入设置层。设置变更仍通过 Store 的一次通知同步。
-    Store.onChange(() => {
+    const unsubscribeLogSetting = Store.onChange(() => {
       const next = Store.getSetting('logEnabled') !== false;
       if (!next && loggingEnabled) {
         passiveBuckets.clear();
@@ -1091,15 +1240,22 @@
       } catch (error) { return fallback; }
     }
 
-    function writeValue(key, value) {
+    function writeSerializedValue(key, serialized) {
       try {
         if (typeof GM_setValue !== 'function') return false;
-        GM_setValue(key, JSON.stringify(value));
+        GM_setValue(key, serialized);
+        metrics.storageWrites++;
+        metrics.storageCharsWritten += String(serialized || '').length;
         return true;
       } catch (error) {
         writeErrors++;
         return false;
       }
+    }
+
+    function writeValue(key, value) {
+      try { return writeSerializedValue(key, JSON.stringify(value)); }
+      catch (error) { writeErrors++; return false; }
     }
 
     function deleteValue(key) {
@@ -1124,7 +1280,25 @@
       const events = raw && Array.isArray(raw.events) ? raw.events : (Array.isArray(raw) ? raw : []);
       const shard = { format: FORMAT, schema: SCHEMA, day, events: events.filter((event) => event && typeof event === 'object') };
       shardCache.set(day, shard);
+      try { shardCharCache.set(day, JSON.stringify(shard).length); } catch (error) { shardCharCache.set(day, 0); }
       return shard;
+    }
+
+    function shardChars(day, shard) {
+      if (shardCharCache.has(day)) return shardCharCache.get(day);
+      let chars = 0;
+      try { chars = JSON.stringify(shard || ensureShard(day)).length; } catch (error) {}
+      shardCharCache.set(day, chars);
+      return chars;
+    }
+
+    function writeShard(day, shard) {
+      let serialized;
+      try { serialized = JSON.stringify(shard); }
+      catch (error) { writeErrors++; return false; }
+      if (!writeSerializedValue(DAY_KEY_PREFIX + day, serialized)) return false;
+      shardCharCache.set(day, serialized.length);
+      return true;
     }
 
     function notify() {
@@ -1180,6 +1354,8 @@
         addMaximum(target, 'maxDurationMs', source.durationMs);
         target.lastBlockedContainers = Number(source.blockedContainers) || 0;
         target.lastObservedRoots = Number(source.observedRoots) || 0;
+        target.lastQueuedSubtrees = Number(source.queuedSubtrees) || 0;
+        addMaximum(target, 'maxQueuedSubtrees', source.queuedSubtrees);
         if (source.selectorCounts && typeof source.selectorCounts === 'object') target.selectorCounts = scrub(source.selectorCounts, 'selectorCounts', 0);
         return;
       }
@@ -1257,21 +1433,22 @@
 
     function trimAndWriteShard(day, shard) {
       while (shard.events.length > MAX_EVENTS_PER_DAY) shard.events.shift();
-      if (!writeValue(DAY_KEY_PREFIX + day, shard)) throw new Error('event log storage unavailable');
+      if (!writeShard(day, shard)) throw new Error('event log storage unavailable');
     }
 
     function rotate() {
       const index = readIndex();
       index.days = Array.from(new Set(index.days.filter(validDay))).sort().reverse();
       let total = 0;
-      for (const day of index.days) total += JSON.stringify(ensureShard(day)).length;
+      for (const day of index.days) total += shardChars(day, ensureShard(day));
       while (index.days.length > RETENTION_DAYS) {
         const oldest = index.days.pop();
         if (!oldest) break;
         const shard = shardCache.get(oldest);
-        total -= shard ? JSON.stringify(shard).length : 0;
+        total -= shard ? shardChars(oldest, shard) : 0;
         deleteValue(DAY_KEY_PREFIX + oldest);
         shardCache.delete(oldest);
+        shardCharCache.delete(oldest);
       }
       // 超过总容量时优先从最旧日期的开头裁剪，保留该日最近事件；只有连一条
       // 事件都放不下时才删除整日。这样“事无巨细”不会因为某天事件较多而把
@@ -1279,8 +1456,8 @@
       while (total > MAX_TOTAL_CHARS && index.days.length) {
         const oldest = index.days[index.days.length - 1];
         const shard = ensureShard(oldest);
-        const shardChars = JSON.stringify(shard).length;
-        const otherChars = total - shardChars;
+        const currentShardChars = shardChars(oldest, shard);
+        const otherChars = total - currentShardChars;
         const budget = Math.max(0, MAX_TOTAL_CHARS - otherChars);
         const emptyChars = JSON.stringify({ format: FORMAT, schema: SCHEMA, day: oldest, events: [] }).length;
         let keep = 0;
@@ -1297,12 +1474,13 @@
           index.days.pop();
           deleteValue(DAY_KEY_PREFIX + oldest);
           shardCache.delete(oldest);
+          shardCharCache.delete(oldest);
           total = otherChars;
           continue;
         }
         shard.events = shard.events.slice(-keep);
-        if (!writeValue(DAY_KEY_PREFIX + oldest, shard)) throw new Error('event log rotation unavailable');
-        total = otherChars + JSON.stringify(shard).length;
+        if (!writeShard(oldest, shard)) throw new Error('event log rotation unavailable');
+        total = otherChars + shardChars(oldest, shard);
       }
       if (!writeValue(INDEX_KEY, index)) throw new Error('event log index unavailable');
     }
@@ -1312,6 +1490,14 @@
       flushPassive(true);
       if (!pending.length) return true;
       const batch = pending.splice(0, pending.length);
+      const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+      const finish = (failed) => {
+        const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt);
+        metrics.flushes++;
+        if (failed) metrics.failedFlushes++;
+        metrics.lastFlushDurationMs = duration;
+        metrics.maxFlushDurationMs = Math.max(metrics.maxFlushDurationMs, duration);
+      };
       try {
         const index = readIndex();
         const grouped = new Map();
@@ -1333,10 +1519,12 @@
         }
         rotate();
         notify();
+        finish(false);
         return true;
       } catch (error) {
         writeErrors++;
         pending = batch.concat(pending).slice(-MAX_EVENTS_PER_DAY);
+        finish(true);
         return false;
       }
     }
@@ -1423,9 +1611,13 @@
       for (const day of allDays) {
         const shard = ensureShard(day);
         events += shard.events.length;
-        chars += JSON.stringify(shard).length;
+        chars += shardChars(day, shard);
       }
-      return { days: allDays.length, events, chars, pending: pending.length, writeErrors, retentionDays: RETENTION_DAYS, maxEventsPerDay: MAX_EVENTS_PER_DAY, maxTotalChars: MAX_TOTAL_CHARS };
+      return {
+        days: allDays.length, events, chars, pending: pending.length, writeErrors,
+        retentionDays: RETENTION_DAYS, maxEventsPerDay: MAX_EVENTS_PER_DAY, maxTotalChars: MAX_TOTAL_CHARS,
+        metrics: { ...metrics, cachedShards: shardCache.size },
+      };
     }
 
     function exportJSON(dayList) {
@@ -1477,6 +1669,7 @@
       for (const target of targets) {
         deleteValue(DAY_KEY_PREFIX + target);
         shardCache.delete(target);
+        shardCharCache.delete(target);
       }
       const index = readIndex();
       index.days = index.days.filter((item) => !targets.includes(item));
@@ -1492,6 +1685,17 @@
     }
 
     setContext();
+    RuntimeResources.add(() => {
+      try {
+        record('lifecycle.stop', { reason: RuntimeResources.status().reason || 'pagehide' }, { force: true, immediate: true });
+      } catch (error) {}
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
+      if (passiveFlushTimer) { clearTimeout(passiveFlushTimer); passiveFlushTimer = 0; }
+      passiveBuckets.clear();
+      pending = [];
+      listeners.length = 0;
+      unsubscribeLogSetting();
+    });
     return {
       setContext, record, recordPassive, recordError, flush, days, eventsForDay, summary, status,
       exportJSON, diagnosticText, clear, onChange, isEnabled: () => loggingEnabled,
@@ -2471,6 +2675,20 @@
       scannerFullScans: 0,
       scannerIncrementalScans: 0,
       scannerItemsProcessed: 0,
+      scannerDirtyRootsQueued: 0,
+      scannerDirtyRootsProcessed: 0,
+      scannerDirtyRootBudgetYields: 0,
+      scannerDirtyRootOverflows: 0,
+      scannerMutationCallbacks: 0,
+      scannerMutationRecords: 0,
+      scannerMutationDurationMs: 0,
+      scannerMutationMaxDurationMs: 0,
+      scannerScanDurationMs: 0,
+      scannerScanMaxDurationMs: 0,
+      scannerDirtyRootDurationMs: 0,
+      scannerDirtyRootMaxDurationMs: 0,
+      virtualSyncDurationMs: 0,
+      virtualSyncMaxDurationMs: 0,
       biliDmPanelScans: 0,
       biliDmFloatingScans: 0,
       biliDmToolRefreshes: 0,
@@ -2543,6 +2761,11 @@
 
   function runtimeDiagnostic(key, amount = 1) {
     if (runtimeDiagnostics) runtimeDiagnostics[key] = (runtimeDiagnostics[key] || 0) + amount;
+  }
+
+  function runtimeDiagnosticMax(key, value) {
+    if (!runtimeDiagnostics || !Number.isFinite(Number(value))) return;
+    runtimeDiagnostics[key] = Math.max(Number(runtimeDiagnostics[key]) || 0, Number(value));
   }
 
   // 微博回收器会给活动行和列表 spacer 回写 style。只在存在本地屏蔽行时
@@ -3279,6 +3502,9 @@
     const rows = Array.from(list.children || [])
       .filter((candidate) => candidate.matches && candidate.matches(VIRTUAL_ROW_SELECTOR));
     if (!rows.length) return;
+    const syncStartedAt = runtimeDiagnostics
+      ? (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
+      : 0;
     virtualDiagnostic('virtualSyncs');
     virtualDiagnostic('virtualSyncRowsVisited', rows.length);
     if (runtimeDiagnostics) {
@@ -3427,6 +3653,11 @@
       if (Number.isFinite(baseY)) previousActive = { baseY, height: entry.height };
     }
     if (!virtualListHasBlockedWork(list)) detachVirtualListObserver(list);
+    if (runtimeDiagnostics) {
+      const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - syncStartedAt);
+      runtimeDiagnostic('virtualSyncDurationMs', duration);
+      runtimeDiagnosticMax('virtualSyncMaxDurationMs', duration);
+    }
   }
 
   function needsInlineHide(container) {
@@ -3634,12 +3865,23 @@
   // ====================================================================
   function createScanner(adapter) {
     let scheduled = false;
+    let frame = 0;
+    let stopped = false;
     const observedRoots = new Set();
     const selectorList = Array.isArray(adapter.selectors) ? adapter.selectors.slice() : [];
     let fullScanRequested = true;
     let shadowDiscoveryRequested = false;
     let observerPaused = false;
     const dirtyItems = new Set();
+    const dirtySubtrees = new Set();
+    const MAX_DIRTY_SUBTREES = 128;
+    const DIRTY_SUBTREE_ROOT_BUDGET = 32;
+    const DIRTY_SUBTREE_TIME_BUDGET_MS = 8;
+    let routeLoop = null;
+    let rootReadyHandler = null;
+    let unsubscribeStore = () => {};
+    let unsubscribeLifecycle = () => {};
+    let unregisterRuntime = () => {};
     const observerOptions = { childList: true, attributes: true, attributeFilter: [
       'href', 'data-e2e', 'data-e2e-vid', 'data-mid', 'data-uid', 'uid',
       'data-user-id', 'data-user-card', 'data-usercard', 'data-usercard-mid', 'usercard', 'nick-name',
@@ -3687,7 +3929,58 @@
       const buckets = querySelectorAllDeepMany(root, selectorList, (shadowRoot) => observeRoot(shadowRoot, false));
       for (const bucket of buckets) for (const item of bucket) dirtyItems.add(item);
     }
+    function queueDirtySubtree(root) {
+      let candidate = root;
+      if (candidate && candidate.nodeType !== 1 && candidate.nodeType !== 11) {
+        candidate = candidate.parentElement || candidate.host || null;
+      }
+      if (!candidate || isOwnUiNode(candidate)) return;
+      // 同一批次常同时上报父节点和多个子节点。保留最外层根即可，避免下一帧
+      // 对同一棵抖音播放器/评论树重复深遍历。
+      if (dirtySubtrees.has(candidate)) return;
+      let ancestor = composedParent(candidate);
+      for (let guard = 0; ancestor && guard < 32; guard++, ancestor = composedParent(ancestor)) {
+        if (dirtySubtrees.has(ancestor)) return;
+      }
+      dirtySubtrees.add(candidate);
+      runtimeDiagnostic('scannerDirtyRootsQueued');
+      if (dirtySubtrees.size > MAX_DIRTY_SUBTREES) {
+        dirtySubtrees.clear();
+        fullScanRequested = true;
+        runtimeDiagnostic('scannerDirtyRootOverflows');
+      }
+    }
+    function processDirtySubtrees() {
+      const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+      const started = now();
+      let processed = 0;
+      while (dirtySubtrees.size && processed < DIRTY_SUBTREE_ROOT_BUDGET
+        && now() - started < DIRTY_SUBTREE_TIME_BUDGET_MS) {
+        const root = dirtySubtrees.values().next().value;
+        dirtySubtrees.delete(root);
+        if (!root || (root.nodeType === 1 && !root.isConnected)) continue;
+        addDirtySubtree(root);
+        processed++;
+      }
+      runtimeDiagnostic('scannerDirtyRootsProcessed', processed);
+      const duration = Math.max(0, now() - started);
+      runtimeDiagnostic('scannerDirtyRootDurationMs', duration);
+      runtimeDiagnosticMax('scannerDirtyRootMaxDurationMs', duration);
+      if (dirtySubtrees.size) runtimeDiagnostic('scannerDirtyRootBudgetYields');
+      return dirtySubtrees.size;
+    }
+    function noteMutationDuration(startedAt, recordCount) {
+      if (!runtimeDiagnostics) return;
+      const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt);
+      runtimeDiagnostic('scannerMutationCallbacks');
+      runtimeDiagnostic('scannerMutationRecords', recordCount);
+      runtimeDiagnostic('scannerMutationDurationMs', duration);
+      runtimeDiagnosticMax('scannerMutationMaxDurationMs', duration);
+    }
     const mo = new MutationObserver((records) => {
+      const mutationStartedAt = runtimeDiagnostics
+        ? (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
+        : 0;
       // 后台标签页不需要消费平台的高频 DOM 变化。保留一次全量扫描请求，
       // 页面恢复时再发现新增 ShadowRoot 并按正常入口同步，避免后台继续做
       // 深树遍历和向各模块广播。
@@ -3695,26 +3988,30 @@
         fullScanRequested = true;
         shadowDiscoveryRequested = true;
         dirtyItems.clear();
+        dirtySubtrees.clear();
+        noteMutationDuration(mutationStartedAt, records.length);
         return;
       }
-      if (EventLog.isEnabled()) {
-        const mutationSummary = {
-          recordCount: records.length,
-          addedNodes: 0,
-          removedNodes: 0,
-          ownUiOnlyBatches: 0,
-          typeCounts: {},
-          targetTags: {},
-          attributes: {},
-          samples: [],
-        };
-        for (const record of records) {
+      PageMutationSignals.notify(records, adapter.id);
+      const mutationSummary = EventLog.isEnabled() ? {
+        recordCount: records.length,
+        addedNodes: 0,
+        removedNodes: 0,
+        ownUiOnlyBatches: 0,
+        typeCounts: {},
+        targetTags: {},
+        attributes: {},
+        samples: [],
+      } : null;
+      let shouldSchedule = false;
+      for (const record of records) {
+        const ownUiOnly = isOwnUiOnlyChildList(record);
+        if (mutationSummary) {
           const type = String(record.type || 'unknown');
           const targetTag = record.target && record.target.tagName
             || (record.target && record.target.nodeType === 11 ? 'shadow-root' : 'unknown');
           const added = record.addedNodes ? record.addedNodes.length : 0;
           const removed = record.removedNodes ? record.removedNodes.length : 0;
-          const ownUiOnly = isOwnUiOnlyChildList(record);
           mutationSummary.typeCounts[type] = (mutationSummary.typeCounts[type] || 0) + 1;
           mutationSummary.targetTags[targetTag] = (mutationSummary.targetTags[targetTag] || 0) + 1;
           mutationSummary.addedNodes += added;
@@ -3725,18 +4022,13 @@
             type, targetTag, attribute: record.attributeName || '', added, removed, ownUiOnly,
           });
         }
-        EventLog.recordPassive('dom.mutation.batch', mutationSummary);
-      }
-      PageMutationSignals.notify(records, adapter.id);
-      let shouldSchedule = false;
-      for (const record of records) {
-        if (isOwnUiOnlyChildList(record)) {
+        if (ownUiOnly) {
           virtualDiagnostic('scannerOwnUiIgnored');
           continue;
         }
         if (record.type === 'childList') {
           addDirtyAncestors(record.target);
-          for (const node of record.addedNodes || []) addDirtySubtree(node);
+          for (const node of record.addedNodes || []) queueDirtySubtree(node);
           shouldSchedule = true;
         } else if (record.type === 'attributes' && record.attributeName !== 'style') {
           // 属性常写在作者链接或评论内部节点上；向 composed ancestor 追溯即可
@@ -3758,8 +4050,10 @@
             queueVirtualRowSync(row, true, 'structure');
           }
         }
-        }
+      }
+      if (mutationSummary) EventLog.recordPassive('dom.mutation.batch', mutationSummary);
       if (shouldSchedule) schedule();
+      noteMutationDuration(mutationStartedAt, records.length);
     });
 
     function observeRoot(root, discover = true) {
@@ -3816,15 +4110,24 @@
     }
 
     function scanOnce() {
+      if (stopped) return;
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
       if (!PageLifecycle.isVisible()) {
         scheduled = false;
         fullScanRequested = true;
         shadowDiscoveryRequested = true;
         dirtyItems.clear();
+        dirtySubtrees.clear();
         return;
       }
       scheduled = false;
-      const startedAt = Date.now();
+      const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+      const finishScanDuration = () => {
+        const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt);
+        runtimeDiagnostic('scannerScanDurationMs', duration);
+        runtimeDiagnosticMax('scannerScanMaxDurationMs', duration);
+        return duration;
+      };
       if (shadowDiscoveryRequested) {
         shadowDiscoveryRequested = false;
         discoverShadowRoots(document.documentElement);
@@ -3833,19 +4136,23 @@
       pruneObservedRoots();
       const fullScan = fullScanRequested;
       fullScanRequested = false;
-      const pendingItems = Array.from(dirtyItems);
-      dirtyItems.clear();
       if (!Store.getSetting('enabled')) {
+        dirtyItems.clear();
+        dirtySubtrees.clear();
         clearBlockedContent();
         try { adapter.onDisabled && adapter.onDisabled(); }
         catch (e) { EventLog.recordError('scanner.disabled-hook', e, { adapter: adapter.id }); }
         EventLog.recordPassive('scanner.scan', {
           adapter: adapter.id, enabled: false, matchedItems: 0,
           blockedContainers: blockedContainers.size, observedRoots: observedRoots.size,
-          durationMs: Date.now() - startedAt,
+          durationMs: finishScanDuration(),
         });
         return;
       }
+      if (fullScan) dirtySubtrees.clear();
+      else if (processDirtySubtrees()) schedule();
+      const pendingItems = Array.from(dirtyItems);
+      dirtyItems.clear();
       let matchedItems = 0;
       const selectorCounts = {};
       if (fullScan) {
@@ -3889,13 +4196,16 @@
         });
       }
       catch (e) { EventLog.recordError('scanner.scan-hook', e, { adapter: adapter.id }); }
-    EventLog.recordPassive('scanner.scan', {
-      adapter: adapter.id, enabled: true, matchedItems, selectorCounts,
-      blockedContainers: blockedContainers.size, observedRoots: observedRoots.size,
-      durationMs: Date.now() - startedAt,
+      const durationMs = finishScanDuration();
+      EventLog.recordPassive('scanner.scan', {
+        adapter: adapter.id, enabled: true, matchedItems, selectorCounts,
+        blockedContainers: blockedContainers.size, observedRoots: observedRoots.size,
+        queuedSubtrees: dirtySubtrees.size,
+        durationMs,
       });
     }
     function schedule(forceFull = false) {
+      if (stopped) return;
       if (forceFull) fullScanRequested = true;
       if (!PageLifecycle.isVisible()) {
         fullScanRequested = true;
@@ -3904,17 +4214,55 @@
       }
       if (scheduled) return;
       scheduled = true;
-      requestAnimationFrame(scanOnce);
+      frame = requestAnimationFrame(scanOnce);
+    }
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      scheduled = false;
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
+      mo.disconnect();
+      observedRoots.clear();
+      dirtyItems.clear();
+      dirtySubtrees.clear();
+      if (rootReadyHandler) {
+        document.removeEventListener('DOMContentLoaded', rootReadyHandler);
+        rootReadyHandler = null;
+      }
+      if (routeLoop) routeLoop.stop();
+      unsubscribeStore();
+      unsubscribeLifecycle();
+      unregisterRuntime();
+      try { if (adapter && typeof adapter.dispose === 'function') adapter.dispose(); } catch (e) {}
+    }
+    function status() {
+      return {
+        stopped,
+        scheduled,
+        observedRoots: observedRoots.size,
+        dirtyItems: dirtyItems.size,
+        dirtySubtrees: dirtySubtrees.size,
+      };
     }
     // 初始扫描 + 监听
     schedule();
     if (document.documentElement) observeRoot(document.documentElement);
-    else document.addEventListener('DOMContentLoaded', () => observeRoot(document.documentElement), { once: true });
-    Store.onChange(() => { fullScanRequested = true; schedule(); });
-    PageLifecycle.subscribe((visible) => {
+    else {
+      rootReadyHandler = () => {
+        rootReadyHandler = null;
+        if (!stopped) observeRoot(document.documentElement);
+      };
+      document.addEventListener('DOMContentLoaded', rootReadyHandler, { once: true });
+    }
+    unsubscribeStore = Store.onChange(() => { fullScanRequested = true; schedule(); });
+    unsubscribeLifecycle = PageLifecycle.subscribe((visible) => {
       if (!visible) {
         fullScanRequested = true;
         shadowDiscoveryRequested = true;
+        dirtyItems.clear();
+        dirtySubtrees.clear();
+        scheduled = false;
+        if (frame) { cancelAnimationFrame(frame); frame = 0; }
         pauseObserver();
         return;
       }
@@ -3924,16 +4272,19 @@
     });
     // SPA 路由切换：重新全扫
     let lastUrl = location.href;
-    const routeLoop = createPageLoop(() => {
+    routeLoop = createPageLoop(() => {
       if (location.href !== lastUrl) {
+        const previousUrl = lastUrl;
         lastUrl = location.href;
         EventLog.setContext();
         EventLog.record('navigation.change', { source: 'spa' }, { immediate: true });
+        PageRouteSignals.notify(lastUrl, previousUrl);
         schedule(true);
       }
     }, 1000);
+    unregisterRuntime = RuntimeResources.add(stop);
     routeLoop.wake();
-    return { schedule, scanOnce };
+    return { schedule, scanOnce, stop, status };
   }
 
   // ====================================================================
@@ -4104,6 +4455,7 @@
 
   // ---------- 抖音 ----------
   Adapters.douyin = (function () {
+    const douyinHost = /(^|\.)douyin\.com$/.test(location.hostname);
     const SEL = {
       comment: '[data-e2e="comment-item"], .comment-item',
       commentNickname: '[data-e2e="comment-username"], [data-e2e*="nickname"], [data-e2e*="user-name"], [class*="nickname"], [class*="user-name"], [class*="username"]',
@@ -4610,19 +4962,25 @@
     const watchKnownActivePlayerRoots = () => {
       for (const root of querySelectorAllDeep(document, activePlayerSelector)) watchActivePlayerIdentity(root);
     };
-    PageMutationSignals.subscribe((records, adapterId) => {
-      if (adapterId !== 'douyin') return;
-      if ((records || []).some(mutationChangesActivePlayerIdentity)) activeVideoIdentityGeneration++;
-      if (mutationTouchesActivePlayer(records)) invalidateActiveVideoRoot();
-    });
-    if (document.addEventListener) {
+    let activePlayerRootTimer = 0;
+    let unsubscribeActivePlayerSignals = () => {};
+    const handleActiveMediaEvent = (event) => {
+      if (event && event.type === 'loadedmetadata') activeVideoIdentityGeneration++;
+      invalidateActiveVideoRoot();
+    };
+    if (douyinHost) {
+      unsubscribeActivePlayerSignals = PageMutationSignals.subscribe((records, adapterId) => {
+        if (adapterId !== 'douyin') return;
+        if ((records || []).some(mutationChangesActivePlayerIdentity)) activeVideoIdentityGeneration++;
+        if (mutationTouchesActivePlayer(records)) invalidateActiveVideoRoot();
+      });
       document.addEventListener('DOMContentLoaded', watchKnownActivePlayerRoots, { once: true });
-      if (document.readyState !== 'loading') setTimeout(watchKnownActivePlayerRoots, 0);
+      if (document.readyState !== 'loading') activePlayerRootTimer = setTimeout(() => {
+        activePlayerRootTimer = 0;
+        watchKnownActivePlayerRoots();
+      }, 0);
       for (const type of ['play', 'pause', 'ended', 'loadedmetadata']) {
-        document.addEventListener(type, () => {
-          if (type === 'loadedmetadata') activeVideoIdentityGeneration++;
-          invalidateActiveVideoRoot();
-        }, true);
+        document.addEventListener(type, handleActiveMediaEvent, true);
       }
     }
 
@@ -5110,6 +5468,28 @@
 
     function disableFeed() { cancelPendingSkip(); clearCover(); consecutive = 0; clearDouyinAutoHidden(); }
 
+    let douyinDisposed = false;
+    function disposeDouyinAdapter() {
+      if (douyinDisposed) return;
+      douyinDisposed = true;
+      disableFeed();
+      if (activePlayerRootTimer) { clearTimeout(activePlayerRootTimer); activePlayerRootTimer = 0; }
+      document.removeEventListener('DOMContentLoaded', watchKnownActivePlayerRoots);
+      for (const type of ['play', 'pause', 'ended', 'loadedmetadata']) {
+        document.removeEventListener(type, handleActiveMediaEvent, true);
+      }
+      unsubscribeActivePlayerSignals();
+      if (activePlayerIdentityObserver) activePlayerIdentityObserver.disconnect();
+      observedActivePlayerRoots.clear();
+      if (dyAutoFlushTimer) { clearTimeout(dyAutoFlushTimer); dyAutoFlushTimer = 0; }
+      dyAutoQueue.clear();
+      dyAutoSeenMessages.clear();
+      dyAutoBlockedKeys.clear();
+      dyObservedDanmakuNodes.clear();
+      dyObservedSenders.clear();
+      lastCommentMenuContext = null;
+    }
+
     function workCandidates() {
       if (!isVideoPage()) return [];
       const author = currentVideoAuthorInfo();
@@ -5186,11 +5566,13 @@
       containerOf: (item) => item,
       onScan: feedTick,
       onDisabled: disableFeed,
+      dispose: disposeDouyinAdapter,
     };
   })();
 
   // ---------- 微博 ----------
   Adapters.weibo = (function () {
+    const weiboHost = /(^|\.)weibo\.(com|cn)$/.test(location.hostname);
     // 点赞/转发/粉丝弹窗里的用户锚点；只有能解析出 UID 的链接才进入批量名单。
     const WB_MODAL_USER_SEL = [
       'a[href*="/u/"]', 'a[href*="/n/"]', '[data-user-card]', '[data-usercard]',
@@ -5864,20 +6246,20 @@
       }
     }
     // 评论和帖子作者入口都需要一次全局清理来处理微博虚拟列表的节点回收；
-    // 这类清理不能跟着每个增量 DOM 批次同步执行。用脏标记合并连续变化，
-    // 只在低频循环里做一次完整同步，用户设置变更仍通过 wake 立即响应。
+    // 这类清理不能跟着每个增量 DOM 批次同步执行。用脏标记和 120ms 一次性
+    // 合并窗口处理连续变化，空闲时不保留周期唤醒。
     let weiboUiSyncRequested = true;
     let weiboUiSyncLoop = null;
     const requestWeiboUiSync = (immediate = false) => {
       weiboUiSyncRequested = true;
-      if (immediate && weiboUiSyncLoop) weiboUiSyncLoop.wake();
+      if (weiboUiSyncLoop) weiboUiSyncLoop.wake(immediate ? 0 : 120);
     };
     weiboUiSyncLoop = createPageLoop(() => {
       if (!weiboUiSyncRequested) return;
       weiboUiSyncRequested = false;
       syncCommentButtons();
       syncAuthorButtons();
-    }, 1200, () => PageLifecycle.isVisible());
+    }, 1200, () => weiboHost && weiboUiSyncRequested && PageLifecycle.isVisible());
     const refreshWeiboUiAfterDomReady = () => requestWeiboUiSync(true);
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', refreshWeiboUiAfterDomReady, { once: true });
@@ -6377,19 +6759,20 @@
       for (const button of querySelectorAllDeep(document, '.ob-bili-author-block')) button.remove();
     }
 
-    // B站作者入口只需要在作者节点出现、路由变化或名单变化时更新。把全局
-    // Shadow DOM 清理从每个评论增量批次中移出，避免评论区高频更新时反复深扫。
+    // B站作者入口只需要在作者节点出现、路由变化或名单变化时更新。请求通过
+    // 120ms 的一次性合并窗口处理；空闲时不保留每 1.2 秒唤醒一次的空循环。
+    const bilibiliHost = /(^|\.)bilibili\.com$/.test(location.hostname);
     let biliAuthorSyncRequested = true;
     let biliAuthorSyncLoop = null;
     const requestBiliAuthorSync = (immediate = false) => {
       biliAuthorSyncRequested = true;
-      if (immediate && biliAuthorSyncLoop) biliAuthorSyncLoop.wake();
+      if (biliAuthorSyncLoop) biliAuthorSyncLoop.wake(immediate ? 0 : 120);
     };
     biliAuthorSyncLoop = createPageLoop(() => {
       if (!biliAuthorSyncRequested) return;
       biliAuthorSyncRequested = false;
       syncBiliAuthorButtons();
-    }, 1200, () => PageLifecycle.isVisible());
+    }, 1200, () => bilibiliHost && biliAuthorSyncRequested && PageLifecycle.isVisible());
     const refreshBiliAuthorAfterDomReady = () => requestBiliAuthorSync(true);
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', refreshBiliAuthorAfterDomReady, { once: true });
@@ -6980,14 +7363,14 @@
       const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
       if (path.some(isMenuTrigger)) requestMenuScan();
     }, true);
-    // 周期扫描只作为极低频兜底；普通页面没有菜单时不再每 900ms 穿透整棵
-    // DOM。菜单打开、键盘聚焦或 Shadow DOM 发生相关变化时才立即唤醒。
+    // 菜单打开、键盘聚焦或相关 Shadow DOM 变化时才执行一次扫描；请求处理完
+    // 即停止计时，普通页面空闲时不保留周期唤醒。
     menuLoop = createPageLoop(() => {
       if (!menuScanRequested) return;
       menuScanRequested = false;
       scanAll();
     }, 3000,
-      () => Store.getSetting('enabled') && Store.getSetting('showQuickBlock'));
+      () => menuScanRequested && Store.getSetting('enabled') && Store.getSetting('showQuickBlock'));
     scanAll();
     menuScanRequested = false;
     menuLoop.wake();
@@ -7349,7 +7732,7 @@
     const clear = () => { for (const key of Array.from(states.keys())) removeState(key); };
     const requestRefresh = (immediate = false) => {
       refreshRequested = true;
-      if (immediate && workLoop) workLoop.wake();
+      if (workLoop) workLoop.wake(immediate ? 0 : 180);
     };
     const refresh = () => {
       // 用户脚本可能早于 body 执行；此时不能消费掉脏标记，否则后续没有
@@ -7420,16 +7803,16 @@
       if (adapterId !== adapter.id || !Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
       if ((records || []).some(workMutationRelevant)) requestRefresh(false);
     });
+    PageRouteSignals.subscribe((nextUrl) => {
+      lastWorkUrl = nextUrl || location.href;
+      requestRefresh(true);
+    });
     workLoop = createPageLoop(() => {
-      if (location.href !== lastWorkUrl) {
-        lastWorkUrl = location.href;
-        requestRefresh(false);
-      }
       if (!refreshRequested) return;
       refreshRequested = false;
       refresh();
     }, 1800,
-      () => Store.getSetting('enabled') && Store.getSetting('showQuickBlock'));
+      () => refreshRequested && Store.getSetting('enabled') && Store.getSetting('showQuickBlock'));
     workLoop.wake();
     const refreshAfterDomReady = () => requestRefresh(true);
     if (document.readyState === 'loading') {
@@ -8765,7 +9148,7 @@
     let commentRecordsCacheDirty = true;
     const requestRefresh = (immediate = false) => {
       refreshRequested = true;
-      if (immediate && bulkLoop) bulkLoop.wake();
+      if (bulkLoop) bulkLoop.wake(immediate ? 0 : 180);
     };
     const trackModalButton = (button) => { if (button) modalButtons.add(button); return button; };
     const forgetModalButton = (button) => { if (button) modalButtons.delete(button); };
@@ -9024,21 +9407,21 @@
         || Array.from(record && record.addedNodes || []).some(isModalActivity)
         || Array.from(record && record.removedNodes || []).some(isModalActivity));
       // 首批评论刚出现时入口尚未创建，必须立即补一次；入口已经存在时，评论
-      // 虚拟化变化交给 1.8 秒的合并周期，避免每条评论重绘都触发整页深扫。
+      // 虚拟化变化用 180ms 防抖合并，避免每条评论重绘都触发整页深扫。
       requestRefresh(modalChanged || !fab);
     });
     document.addEventListener('click', (event) => {
       const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
       if (path.some(isBulkActivity)) requestRefresh(true);
     }, true);
-    // 弹窗/评论内容变化时按需刷新；没有相关 DOM 活动时不再每 1.2 秒对整页
-    // 做一次深扫描。低频兜底仍保留，用于平台没有可观察 DOM 信号的复用场景。
+    // 弹窗/评论内容变化时按需刷新；请求处理完即停止计时，空闲页面不再周期
+    // 唤醒，也不再重复收集同一份评论元数据。
     bulkLoop = createPageLoop(() => {
       if (!refreshRequested) return;
       refreshRequested = false;
       refreshAll();
     }, 1800,
-      () => Store.getSetting('enabled') && Store.getSetting('showBulkBlock'));
+      () => refreshRequested && Store.getSetting('enabled') && Store.getSetting('showBulkBlock'));
     // 用户脚本可能在 document.body/Shadow DOM 建立之前执行；主扫描器会负责
     // 后续动态变化，但解析期的首批评论/弹窗不应依赖某个观察器恰好先挂上。
     // DOMContentLoaded 是一次性的页面就绪信号，只唤醒已有低频循环，不新增观察器。
@@ -9068,6 +9451,15 @@
         return;
       }
       requestRefresh(true);
+    });
+    RuntimeResources.add(() => {
+      if (modalAttributeObserver) modalAttributeObserver.disconnect();
+      watchedModalNodes.clear();
+      if (bulkLoop) bulkLoop.stop();
+      clearModalControls();
+      if (fab && fab.parentNode) fab.parentNode.removeChild(fab);
+      fab = null;
+      commentRecordsCache = [];
     });
   }
 
@@ -11300,6 +11692,7 @@
         </div>
         <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-local-backup" checked> 自动保留本地快照（最近 5 份）</label>
         <div id="ob-backup-status" style="color:#999;font-size:12px;margin-top:5px"></div>
+        <div id="ob-storage-status" style="color:#999;font-size:12px;margin-top:5px"></div>
 
         <h3>更新</h3>
         <div style="display:flex;gap:8px;align-items:center">
@@ -11596,10 +11989,19 @@
       const backupToggle = panel.querySelector('#ob-local-backup');
       const restoreBackup = panel.querySelector('#ob-restore-backup');
       const backupStatus = panel.querySelector('#ob-backup-status');
+      const storage = Store.storageStatus();
+      const storageStatus = panel.querySelector('#ob-storage-status');
       backupToggle.checked = s.localBackupEnabled;
       restoreBackup.disabled = backup.count < 2;
       backupStatus.textContent = backup.error
         || (backup.count ? ('已保留 ' + backup.count + '/' + backup.retention + ' 份本地快照，最新：' + new Date(backup.latestAt).toLocaleString()) : '尚无本地快照，将在下一次名单变更时建立');
+      storageStatus.dataset.level = storage.level;
+      storageStatus.style.color = storage.level === 'critical' ? '#c62828' : (storage.level === 'warning' ? '#b26a00' : '#999');
+      storageStatus.textContent = '主名单：' + storage.persons + ' 人、' + storage.identities + ' 个身份，序列化约 '
+        + (storage.chars / (1024 * 1024)).toFixed(2) + ' MiB。'
+        + (storage.level === 'critical'
+          ? ' 已接近专用开发扩展的单值上限，请先导出备份并清理不再需要的记录。'
+          : (storage.level === 'warning' ? ' 名单体积较大，建议定期导出并检查重复身份。' : ' 当前体积正常。'));
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
       refreshAutoRules();
@@ -11704,11 +12106,6 @@
     setupBulkBlock();
     setupWorkBlock();
     if (currentAdapter.id === 'douyin') setupDouyinDanmakuManager();
-    // 首屏延迟补扫（应对 SPA 晚加载）
-    setTimeout(() => currentScanner && currentScanner.schedule(), 800);
-    setTimeout(() => currentScanner && currentScanner.schedule(), 2500);
-    setTimeout(() => currentScanner && currentScanner.schedule(), 6000);
-
     // 常驻设置入口（⚙ 按钮）：让设置页不再藏在 Tampermonkey 菜单里
     function mountGear() {
       if (!document.body || document.getElementById('ob-gear')) return;
@@ -11741,6 +12138,11 @@
     danmakuRules: DanmakuRules,
     danmakuExemptions: DanmakuExemptions,
     runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
+    lifecycle: {
+      pageStatus: () => PageLifecycle.status(),
+      resourceStatus: () => RuntimeResources.status(),
+      scannerStatus: () => currentScanner && currentScanner.status ? currentScanner.status() : null,
+    },
     diagnostics: runtimeDiagnostics,
   };
 })();
