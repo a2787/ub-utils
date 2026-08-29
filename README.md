@@ -435,4 +435,6 @@ Tampermonkey 候选。同一文档内若因调试重放再次执行源码，当�
 
 ## 维护与交接
 
-项目维护者和自动化代理必须遵守 [AGENTS.md](AGENTS.md) 的变更、验证、文档与发布门禁；当前验证证据、已知限制和下一步交接事项记录在 [MAINTENANCE.md](MAINTENANCE.md)。
+项目维护者和自动化代理必须遵守 [AGENTS.md](AGENTS.md) 的变更、验证、文档与发布门禁；维护文档的阅读入口是
+[知识树](docs/KNOWLEDGE_TREE.md) 和 [标准维护流程](docs/MAINTENANCE_WORKFLOW.md)，当前验证证据、已知限制和下一步交接事项记录在
+[当前维护状态](docs/maintenance/CURRENT.md)，根目录的 [MAINTENANCE.md](MAINTENANCE.md) 仅作入口索引。

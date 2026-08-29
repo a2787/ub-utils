@@ -11,7 +11,17 @@ const { ROOT } = require('./runtime.cjs');
 
 const trackedFiles = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
   .split(/\r?\n/).filter(Boolean);
-const privacyFiles = trackedFiles.filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
+function collectMarkdownFiles(relativeDir) {
+  const absoluteDir = path.join(ROOT, relativeDir);
+  if (!fs.existsSync(absoluteDir)) return [];
+  return fs.readdirSync(absoluteDir, { withFileTypes: true }).flatMap((entry) => {
+    const child = path.join(relativeDir, entry.name);
+    if (entry.isDirectory()) return collectMarkdownFiles(child);
+    return entry.isFile() && /\.md$/i.test(entry.name) ? [child.replace(/\\/g, '/')] : [];
+  });
+}
+const privacyFiles = [...new Set([...trackedFiles, ...collectMarkdownFiles('docs')])]
+  .filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|docs\/.*\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
 for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
   'test/performance.cjs']) {
@@ -32,6 +42,7 @@ for (const relative of privacyFiles) {
 
 const checks = [
   { label: 'userscript syntax', command: process.execPath, args: ['--check', 'omniblock.user.js'] },
+  { label: 'documentation governance', command: process.execPath, args: ['test/docs-check.cjs'] },
   { label: 'comment manager syntax', command: process.execPath, args: ['--check', 'test/comment-manager.cjs'] },
   { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
   { label: 'work block syntax', command: process.execPath, args: ['--check', 'test/work-block.cjs'] },

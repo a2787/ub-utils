@@ -5,8 +5,11 @@
 
 ## 动手前必读
 
-改代码前必须阅读 `README.md` 和 `MAINTENANCE.md`，运行 `git status --short`
-确认工作区状态，并判断本次工作对应的验证等级。不得覆盖、暂存或回退与当前
+任何代码、测试或维护文档工作，都必须先运行 `git status --short`，并阅读
+`docs/KNOWLEDGE_TREE.md`、`docs/MAINTENANCE_WORKFLOW.md` 和
+`docs/maintenance/CURRENT.md`，确认阅读路径、当前事实和工作区状态；涉及用户可见行为时再读
+`README.md`，涉及某个历史版本时按知识树按需读取对应历史。根目录 `MAINTENANCE.md` 与
+`CHANGELOG.md` 是入口索引，不要求每轮加载完整历史归档。不得覆盖、暂存或回退与当前
 任务无关的脏文件。
 
 ## 验证证据也是功能的一部分
@@ -45,8 +48,9 @@
    `mid_hash`）伪装成已知 UID。
 4. DOM 适配优先使用当前捕获结构和安全兜底，禁止猜测选择器。身份未可靠解析时，
    不得注入可执行的拉黑入口。
-5. 用户可见行为变化时必须同步更新 `README.md`；验证状态、限制和交接事实变化
-   时必须同步更新 `MAINTENANCE.md`。
+5. 用户可见行为变化时必须同步更新 `README.md` 和当前版本 changelog；验证状态、限制和
+   交接事实变化时必须同步更新 `docs/maintenance/CURRENT.md`。只有入口或历史路由变化时
+   才更新根 `MAINTENANCE.md`、知识树或历史索引。
 6. 改动必须限于任务范围。修复平台适配时不得顺手进行无关重构。
 7. 多平台只对齐用户能力，不对齐实现细节。每个平台的 DOM、数据源、身份归属和入口
    位置都必须用该平台当前捕获结构或安全兜底独立验证；禁止把另一平台的选择器、组件
@@ -58,13 +62,30 @@
 发现冲突时必须先向用户说明具体矛盾、风险和拟议修订，并在同一工作中更新本文件后再
 按新规则执行；不得静默绕过，也不得借“灵活”降低身份、测试或证据标准。
 
+## 文档与知识树治理（强制）
+
+- `AGENTS.md` 是强制规则正文；`docs/KNOWLEDGE_TREE.md` 是阅读路由；
+  `docs/MAINTENANCE_WORKFLOW.md` 是详细维护流程；`docs/maintenance/CURRENT.md` 是当前事实唯一正文。
+  其他入口只做摘要或链接，不复制另一份会过期的规则。
+- 必须时刻注意更新：每次代码、测试、真实站点验证、性能结论、发布或文档结构变化完成后，
+  立即判断哪些文档受影响，并在同一轮同步更新；不得把“以后再补文档”当成完成条件。
+  文件移动、拆分、合并时必须同步修正知识树、索引、相对链接和阅读顺序。
+- 所有供 AI 日常读写的活动文档都受 UTF-8 字节预算约束。接近预算时先拆分职责、去除重复、
+  建立知识树，再继续追加；超过预算不得以追加内容硬撑。历史台账和法律/第三方原文只能作为
+  明确标注的只读归档，不得当作活动文档，也不得在归档中继续追加当前事实。
+- 每次文档或知识树变更至少运行 `node test/docs-check.cjs` 与 `git diff --check`；该检查负责
+  发现大小超限、断链、版本不同步以及关键维护入口缺失。检查本身变化时也要同步维护本节和
+  `docs/MAINTENANCE_WORKFLOW.md`。
+
 ## 最低验证矩阵
 
 每次代码改动都必须运行 `node --check omniblock.user.js` 和 `git diff --check`，
+每次文档/规则/知识树改动都必须运行 `node test/docs-check.cjs` 和 `git diff --check`，
 再按下表运行受影响的检查。
 
 | 改动范围 | 必跑检查 |
 |---|---|
+| 文档、规则、知识树或版本说明 | `node test/docs-check.cjs` |
 | 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
 | B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
 | 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
@@ -93,10 +114,12 @@
 
 - `README.md` 只描述已安装用户实际会看到的行为，不得承诺不存在的 UI、未经验证的
   平台能力或选择器。
-- `CHANGELOG.md` 按版本记录面向用户的新增、修复和限制；发布说明必须与其中当前版本
-  一致，不得把未验证能力写成已完成。
-- `MAINTENANCE.md` 是验证证据、已知限制、命令和下一位维护者起点的事实源。重大
-  工作必须追加有日期的交接条目，不得重写旧事实来把结果写得更强。
+- 根 `CHANGELOG.md` 只保留当前版本摘要和历史入口；每个版本的详细新增、修复、限制和
+  证据放在 `docs/changelog/vX.Y.Z.md`，发布说明必须与当前版本一致，不得把未验证能力写成已完成。
+- 根 `MAINTENANCE.md` 只做维护入口索引；验证证据、已知限制、命令和下一位维护者起点以
+  `docs/maintenance/CURRENT.md` 为准。重大工作必须追加有日期的事实条目，不得重写旧事实来把结果写得更强。
+- `docs/KNOWLEDGE_TREE.md` 和 `docs/MAINTENANCE_WORKFLOW.md` 共同规定文档路由、更新和大小治理；
+  发生规则或目录结构变化时必须同时更新它们。
 - 测试夹具必须标明其来自真实 DOM 捕获还是人工合成。生成的探针输出、截图、临时
   脚本和浏览器产物默认保持忽略，除非用户明确要求版本化。
 - 源码、测试、日志、提交和文档中不得写入 Cookie、凭证、私密用户数据或原始个人
@@ -110,7 +133,8 @@
 
 ## 发布与 Git 规则
 
-1. 已发布的用户可见行为改动必须提高 `omniblock.user.js` 的 `@version`，并让发布
+1. 已发布的用户可见行为改动必须提高 `omniblock.user.js` 的 `@version`，同步维护
+   `docs/changelog/vX.Y.Z.md`、根 `CHANGELOG.md` 和 `docs/maintenance/CURRENT.md`，并让发布
    说明与实际行为一致。
 2. 暂存前必须检查 `git status --short`，并且只暂存明确路径；脏工作区中禁止使用
    `git add .`。
@@ -131,7 +155,7 @@
 每次暂存前运行：
 
 ```powershell
-rg -n "BV[0-9A-Za-z]{8,}|weibo\.com/[0-9]{5,}/|space\.bilibili\.com/[0-9]{5,}" README.md CHANGELOG.md MAINTENANCE.md AGENTS.md omniblock.user.js test
+rg -n "BV[0-9A-Za-z]{8,}|weibo\.com/[0-9]{5,}/|space\.bilibili\.com/[0-9]{5,}" README.md CHANGELOG.md MAINTENANCE.md AGENTS.md docs omniblock.user.js test
 ```
 
 命中具体页面或账号标识时必须改为泛化占位符；确属代码夹具的合成标识需在测试内
