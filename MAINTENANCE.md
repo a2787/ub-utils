@@ -83,6 +83,29 @@
 
 ## 当前交接
 
+### 2026-08-29 - 0.45.0 已发布 - 发布证据回写
+
+**发布结果**
+
+- 功能发布提交为 `17c6c45fe169da3943bd64544155eb5e6056514d`，已推送到 `origin/master`。
+- 注释 tag `v0.45.0` 已推送；tag 解引用后的提交与功能发布提交一致。
+- GitHub Release 已创建且不是草稿：[OmniBlock 0.45.0](https://github.com/a2787/ub-utils/releases/tag/v0.45.0)。
+- 只读核对 GitHub raw master 已返回 `@version 0.45.0` 和
+  `0.45.0-persistent-runtime-floating-dock-log-aggregation-performance-resource-bounds`，Tampermonkey 更新出口已移动到本版本。
+
+**证据与限制**
+
+- **`real-site verified`**：发布前的当前 0.45.0 源码在专用 Chrome 隔离、只读真实 `bilibili.com/video/...` 页完成评论、楼操作、
+  评论管理器、弹幕管理器、浮动弹幕以及屏蔽/恢复闭环；专用持久扩展的跨平台新页面自动加载链路也已在版本提升前用直接页面级 CDP 核对。
+- **`structure regression`**：本地完整矩阵和持久扩展隔离回归均通过，详见本条目下方的 0.45.0 发布收口记录。
+- **`blocked`**：源码提升后专用 Chrome 的开发扩展仍需在 `chrome://extensions` 手动刷新才能核对 0.45.0 无注入标记；抖音公开视频入口验证码、
+  微博详情页 spacer 条件和一次 B 站导航竞态仍未被改写成通过。
+
+**下一步验证**
+
+用户在 Tampermonkey 中更新到 0.45.0 后，刷新目标平台页面并查看齿轮上的版本/构建标识；维护者继续开发时先运行
+`node test/dev-browser.cjs build`，再在专用扩展页手动刷新 `test/_dev-extension`。
+
 ### 2026-08-29 - 0.45.0 - 全插件性能与资源效率发布收口
 
 **范围**
