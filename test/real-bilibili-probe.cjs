@@ -233,6 +233,10 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
     // 才读取它，正好会撞上“弹窗打开时隐藏 FAB”的正常逻辑，无法验证入口本身。
     // FAB 在“已识别作者数为 0”时按设计隐藏，所以快照必须等到评论作者真的解析出来，
     // 否则读到的只是评论尚未渲染完的中间状态。
+    const dockInitial = await page.evaluate(() => ({
+      state: document.documentElement.getAttribute('data-ob-dock') || '',
+      gearState: document.getElementById('ob-gear')?.getAttribute('data-ob-dock-state') || '',
+    }));
     let bulkBeforeInteraction;
     for (let attempt = 0; attempt < 16; attempt++) {
       bulkBeforeInteraction = await page.evaluate(() => {
@@ -279,6 +283,23 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       };
       });
       if (bulkBeforeInteraction.found && bulkBeforeInteraction.visible) break;
+      if (bulkBeforeInteraction.found && !bulkBeforeInteraction.visible) {
+        // 当前候选默认收起控制坞；真实验收要走用户可见的悬停路径展开，不能
+        // 直接改 data-ob-dock 冒充点击。齿轮固定在视口右下角，鼠标移动本身
+        // 不触碰平台控件。
+        const gearPoint = await page.evaluate(() => {
+          const gear = document.getElementById('ob-gear');
+          if (!gear) return null;
+          const rect = gear.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0
+            ? { x: Math.max(1, rect.left + rect.width / 2), y: Math.max(1, rect.top + rect.height / 2) }
+            : null;
+        });
+        if (gearPoint) {
+          await page.mouse.move(gearPoint.x, gearPoint.y);
+          await sleep(320);
+        }
+      }
       // 作者还没解析出来时继续滚动评论区，让 B站按需加载更多评论。
       if (!bulkBeforeInteraction.userCount) {
         await page.evaluate(() => {
@@ -289,7 +310,15 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       }
       await sleep(900);
     }
+    bulkBeforeInteraction = { ...bulkBeforeInteraction, dockInitial };
     result.bulkBeforeInteraction = bulkBeforeInteraction;
+    result.floatingDock = {
+      initial: dockInitial,
+      afterHover: await page.evaluate(() => ({
+        state: document.documentElement.getAttribute('data-ob-dock') || '',
+        gearState: document.getElementById('ob-gear')?.getAttribute('data-ob-dock-state') || '',
+      })),
+    };
 
     if (VERIFY_BULK_SCOPE) {
       // 真实页面上验证统一评论管理器：打开后自动读取当前可用根评论/子回复，
@@ -1126,6 +1155,20 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
         bulkLabel: bulk ? bulk.textContent : null,
         quickButtonCount: collect(document, '.ob-quick').length,
         modalCandidateCount: collect(document, '[role="dialog"],.modal,.dialog,.Dialog,[class*="Modal"],.bili-modal').length,
+        work: (() => {
+          const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+          const api = adapter && adapter.workScope;
+          let candidates = [];
+          let error = '';
+          try { if (api && typeof api.list === 'function') candidates = api.list() || []; }
+          catch (e) { error = String(e && e.message || e).slice(0, 120); }
+          return {
+            api: !!api,
+            candidateCount: candidates.length,
+            buttonCount: collect(document, '.ob-work-block').length,
+            error,
+          };
+        })(),
         danmakuResources: performance.getEntriesByType('resource')
           .filter((entry) => /\/dm\/(?:wbi\/)?web\/seg\.so|\/dm\/list\.so/.test(entry.name))
           .map((entry) => ({ initiatorType: entry.initiatorType, endpoint: entry.name.replace(/[?].*$/, '') })),
@@ -1149,7 +1192,12 @@ async function pickFloatingDanmakuTarget(browser, candidates) {
       if (!probe.commentRendererCount) failed.push('未捕获真实评论组件');
       if (!menu.localButtonPresent || !menu.identityResolved) failed.push('真实评论菜单未注入可识别身份的本地拉黑项');
       if (!probe.commentUserCount) failed.push('未识别任何评论作者');
-      if (!result.bulkBeforeInteraction || !result.bulkBeforeInteraction.visible
+      if (!result.bulkBeforeInteraction || !result.floatingDock
+        || result.bulkBeforeInteraction.dockInitial.state !== 'collapsed'
+        || result.bulkBeforeInteraction.dockInitial.gearState !== 'collapsed'
+        || result.floatingDock.afterHover.state !== 'expanded'
+        || result.floatingDock.afterHover.gearState !== 'expanded'
+        || !result.bulkBeforeInteraction.visible
         || !/^🚫 (?:B站评论屏蔽|拉黑已加载评论作者)\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) {
         failed.push('已加载评论作者批量入口未出现');
       }

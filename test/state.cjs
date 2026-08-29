@@ -147,7 +147,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await new Promise((resolve) => setTimeout(resolve, 120));
       const enabled = { quick:deepCount('.ob-quick:not(.ob-thread-quick)'), thread:deepCount('.ob-thread-quick'), bulk:deepCount('.ob-bulk') };
       window.OB.Store.setSetting('showQuickBlock', false); window.OB.Store.setSetting('showBulkBlock', false);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      // 关闭设置走同步清理；额外留出一小段时间确认没有后续队列把入口重建。
+      await new Promise((resolve) => setTimeout(resolve, 180));
       const disabled = { quick:deepCount('.ob-quick:not(.ob-thread-quick)'), thread:deepCount('.ob-thread-quick'), visibleBulk:Array.from(document.querySelectorAll('.ob-bulk')).filter((el)=>getComputedStyle(el).display!=='none').length };
       return { initial, enabled, disabled };
     });

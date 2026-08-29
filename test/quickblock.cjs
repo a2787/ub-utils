@@ -1152,7 +1152,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const row = document.querySelector('#dm-panel .dm-info-row');
       const own = row && row.querySelector('.ob-dm-block');
       const native = row && row.querySelector('.dm-info-block-btn');
-      if (!row || !own || !native) return { exists: false };
+      if (!row || !own || !native) return {
+        exists: false,
+        row: !!row,
+        own: !!own,
+        native: !!native,
+        rowText: row && row.textContent,
+        rowHtml: row && row.innerHTML,
+        probe: window.__omniblockDmRowProbe ? window.__omniblockDmRowProbe(row) : null,
+      };
       const a = own.getBoundingClientRect();
       const b = native.getBoundingClientRect();
       const overlap = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;

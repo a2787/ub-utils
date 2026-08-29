@@ -520,7 +520,9 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const scanVideo = document.querySelector('#dy-video');
       if (scanVideo) scanVideo.currentTime = 9;
       if (dmScan) dmScan.click();
-      await pause(1500);
+      // 时间轴扫描需要逐点等待播放器重新渲染；按完成状态等待，而不是把
+      // 1.5 秒当作固定实现细节，避免高负载机器在扫描中途被测试强行切视频。
+      for (let waitCount = 0; waitCount < 40 && dmScan && dmScan.disabled; waitCount++) await pause(150);
       result.dmTimelineLoaded = !!dmManager && Array.from(dmManager.querySelectorAll('.ob-dd-row')).some((row) => row.getAttribute('data-key') === 'douyin:uid:900003');
       result.dmTimelineRestored = !!scanVideo && Math.abs(Number(scanVideo.currentTime) - 9) < 0.1;
       if (dmManager) {

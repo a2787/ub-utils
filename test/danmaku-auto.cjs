@@ -58,6 +58,7 @@ window.GM_info = { script:{ version:'${VERSION}' } };
 `;
 
 const DOUYIN_SHIM = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled:true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:false, showBulkBlock:false } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
@@ -215,6 +216,32 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         status: adapter.getAutoDanmakuStatus(),
         managerAbsent: !document.getElementById('ob-douyin-dm-manager'),
       };
+      const diagnostics = window.OB.diagnostics;
+      const resetTraversalDiagnostics = () => {
+        if (!diagnostics) return;
+        diagnostics.activeVideoRootCalls = 0;
+        diagnostics.activeVideoRootComputations = 0;
+        diagnostics.douyinDanmakuCollections = 0;
+        diagnostics.douyinDanmakuItems = 0;
+      };
+      const readTraversalDiagnostics = () => diagnostics ? {
+        activeVideoRootCalls: diagnostics.activeVideoRootCalls,
+        activeVideoRootComputations: diagnostics.activeVideoRootComputations,
+        douyinDanmakuCollections: diagnostics.douyinDanmakuCollections,
+        douyinDanmakuItems: diagnostics.douyinDanmakuItems,
+      } : null;
+      window.OB.Store.setSetting('douyinDanmakuRules', []);
+      resetTraversalDiagnostics();
+      const noRuleRoot = adapter.danmakuRoot();
+      adapter.collectDanmaku(noRuleRoot);
+      const noRuleTraversal = readTraversalDiagnostics();
+      window.OB.Store.setSetting('douyinDanmakuRules', [
+        { kind:'keyword', pattern:'AUTO', enabled:true },
+        { kind:'regex', pattern:'^REGEX_[0-9]+$', enabled:true },
+      ]);
+      resetTraversalDiagnostics();
+      adapter.scanAutoDanmaku();
+      const enabledTraversal = readTraversalDiagnostics();
       window.OB.Store.setSetting('douyinDanmakuRules', []);
       adapter.scanAutoDanmaku();
       await pause(100);
@@ -257,6 +284,8 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
           nextStatus,
           nextBlocked: window.OB.Index.isBlocked('douyin:uid:7003'),
         },
+        noRuleTraversal,
+        enabledTraversal,
       };
     });
     if (douyinResult.blocked && douyinResult.keepUnblocked && douyinResult.autoHidden && douyinResult.keepVisible
@@ -264,6 +293,14 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       && douyinResult.status.noIdentity === 1 && douyinResult.managerAbsent && douyinResult.ruleDisabledRestored && douyinResult.switchScoped)
       report.pass.push('AUTO-DOUYIN 仅扫描当前播放器，命中按身份合并写入；规则停用即时恢复，旧视频残留节点不串入新视频');
     else report.fail.push('AUTO-DOUYIN 自动规则/当前视频范围失败：' + JSON.stringify(douyinResult));
+    const noRuleTraversal = douyinResult.noRuleTraversal || {};
+    const enabledTraversal = douyinResult.enabledTraversal || {};
+    if (noRuleTraversal.activeVideoRootCalls <= 3 && noRuleTraversal.activeVideoRootComputations <= 2
+      && noRuleTraversal.douyinDanmakuItems === 5
+      && enabledTraversal.activeVideoRootCalls <= 3 && enabledTraversal.activeVideoRootComputations <= 2
+      && enabledTraversal.douyinDanmakuCollections === 0 && enabledTraversal.douyinDanmakuItems === 0)
+      report.pass.push('AUTO-DOUYIN-PERF 自动规则关闭时走快速路径，启用时复用已观察弹幕节点，不再重复全量深遍历');
+    else report.fail.push('AUTO-DOUYIN-PERF 活动播放器根节点重复遍历：' + JSON.stringify({ noRuleTraversal, enabledTraversal }));
 
     const douyinDanmakuManager = await douyin.evaluate(async () => {
       const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

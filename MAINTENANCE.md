@@ -13,6 +13,7 @@
 | `test/quickblock.cjs` | B 站评论计数、菜单、弹窗安全、`mid_hash`、protobuf 与 XHR 过滤回归夹具。 |
 | `test/danmaku-auto.cjs` | 人工合成的 B 站/抖音关键词与正则自动弹幕规则、身份入库、总开关和当前视频隔离回归。 |
 | `test/comment-manager.cjs` | 人工合成的三平台统一评论管理器、作者去重、搜索、多选和楼操作回归夹具。 |
+| `test/work-block.cjs` | 人工合成的抖音、微博、B 站作品作用域、作者/评论/子评论/弹幕去重、一次事务和撤销回归。 |
 | `test/adapters.cjs` | 微博、知乎、贴吧、X、抖音的身份契约回归夹具。 |
 | `test/douyin.cjs` | 人工合成的抖音推荐流节点复用、跳过上限和延迟守卫回归。 |
 | `test/real-bilibili-probe.cjs` | 隔离、只读的真实 B 站探针，可启用严格断言。 |
@@ -21,8 +22,11 @@
 | `test/weibo-replay.cjs` | 基于真实微博虚拟列表契约的本地回放和平台反复回写压力回归；支持 `--git-ref=` 做旧版可失败性复核。 |
 | `test/weibo-dom-capture.cjs` | 连接专用 9222 Chrome 的微博 DOM/布局只读捕获器；只接受显式 target，不读取 Cookie 或平台写入控件。 |
 | `test/dev-browser.cjs` | 以非默认 profile 和固定 9222 端口幂等启动/复用专用调试 Chrome。 |
+| `test/build-dev-extension.cjs` | 从当前 userscript 生成忽略目录中的本地 MV3 开发扩展；不进入发布物。 |
+| `test/dev-extension.cjs` | 用临时隔离 profile 打开多平台新文档，验证开发扩展自动加载和 GM 存储桥接。 |
+| `test/installed-browser-probe.cjs` | 连接已安装的专用浏览器，只读打开两个新页面核对运行版本/构建和控制坞；不注入源码。 |
 | `test/real-login-probe.cjs` | 专用 Chrome 登录态只读探针；导航前注入当前工作区源码、内存 GM 存储和性能诊断，支持运行时 `--url=`、专用窗口 `--current` 和同文档重复注入压力对照。 |
-| `test/maintenance-check.cjs` | 顺序执行静态门禁、完整结构矩阵、微博回放和当前源码注入的微博真站探针。 |
+| `test/maintenance-check.cjs` | 顺序执行静态门禁、完整结构矩阵、作品级回归、微博回放和当前源码注入的三平台真站探针。 |
 | `test/discover.cjs` | 真实探针的目标发现器：从平台公开入口页选出只读目标并提供脱敏形式。 |
 | `test/runtime.cjs` | 浏览器测试的公共启动器；自动确定仓库根目录与可用运行时。 |
 | `README.md` | 安装、行为、平台限制和面向用户的验证表。 |
@@ -39,9 +43,11 @@
 ## 测试运行时
 
 测试不再依赖固定的仓库绝对路径。它们优先使用已安装的 `playwright-core`，也可通过
-`PLAYWRIGHT_CORE_PATH` 指定模块路径；Chrome 可通过 `CHROME_PATH` 指定。未设置时，
-运行时会尝试常见 Chrome 路径以及本机 WorkBuddy 的开发依赖回退路径。缺少依赖时应
-显式报错，不得改成跳过测试。
+`PLAYWRIGHT_CORE_PATH` 指定模块路径；普通页面回归的浏览器可通过 `CHROME_PATH` 指定。
+`test/dev-extension.cjs` 默认优先使用可用的 Edge/Chromium，因为当前 Google Chrome 版本会
+忽略自动化命令行加载解压扩展的开关；可用 `OMNIBLOCK_EXTENSION_BROWSER_PATH` 显式指定兼容浏览器。
+专用 Chrome 的长期运行不是命令行注入：先用 `test/dev-browser.cjs ensure` 启动固定非默认 profile，
+再在 `chrome://extensions` 一次性加载 `test/_dev-extension`。缺少依赖时应显式报错，不得改成跳过测试。
 
 ## 发布流程
 
@@ -76,6 +82,400 @@
 ```
 
 ## 当前交接
+
+### 2026-08-29 - 0.45.0 - 全插件性能与资源效率发布收口
+
+**范围**
+
+本轮将抖音视频页高 CPU 和空闲日志快速增长的修复，以及前一轮的持久开发扩展、控制坞、平台分列、作品级
+屏蔽和详细日志能力，统一收口为 0.45.0 发布候选。重点覆盖通用扫描器、MutationObserver 生命周期、Shadow DOM
+遍历、弹幕/评论增量收集、缓存边界、日志聚合、页面可见性和专用浏览器自动加载链路。
+
+**改动**
+
+- `omniblock.user.js`：@version/RUNTIME_BUILD 提升到 0.45.0；保留共享页面生命周期、增量脏节点扫描、活动播放器缓存、
+  有界评论/弹幕索引和被动日志聚合等性能边界。
+- `test/installed-browser-probe.cjs`：改用项目其他登录态探针已经验证可用的直接页面级 CDP，避免 Chrome 148 浏览器级
+  `connectOverCDP` handshake 超时把已安装扩展误判为不存在；探针仍只打开两个新页面，禁止源码注入和平台写操作。
+- `README.md`、`CHANGELOG.md`：将当前用户可见内容更新到 0.45.0，并明确持久扩展刷新、真实站点证据和外部阻断边界。
+- `MAINTENANCE.md`、`.gitignore` 及 `test/` 下相关回归/探针：同步性能、扩展、真实站点和发布维护链路；`test/_*` 生成物继续忽略。
+
+**证据**
+
+- **`structure regression`**：`node test/run.cjs` 16/16、`node test/state.cjs` 7/7、`node test/quickblock.cjs` 33/33、
+  `node test/danmaku-auto.cjs` 6/6、`node test/comment-manager.cjs` 3/3、`node test/work-block.cjs` 3/3、
+  `node test/performance.cjs` 6/6、`node test/adapters.cjs` 21/21、`node test/douyin.cjs` 2/2、
+  `node test/weibo-replay.cjs` 11/11、`node test/dev-extension.cjs` 3/3；userscript 和探针语法检查通过。
+- **`real-site verified`**：2026-08-29，专用 Chrome 的隔离、未读取登录态的真实 `bilibili.com/video/...` 页面注入当前
+  0.45.0 源码；运行时版本/构建/标记一致，发现 2 个评论渲染器和 2 位评论作者，评论菜单出现「🚫 本地拉黑」与
+  「🧵 屏蔽该楼回复」，评论管理器读取 2 行，弹幕管理器读取 100 个文案组/95 位发送者，浮动弹幕发现 27 条；
+  单条、批量、主评论楼操作和撤销均完成。
+- **`real-site verified`**：2026-08-29，在源码版本提升前，直接页面级 CDP 的无注入持久扩展探针在专用 Chrome 的
+  B 站视频页、抖音入口页和微博入口页各打开两个新页面；六个新页面均自动加载 `persistent-dev-extension`，齿轮和控制坞
+  初始均为 collapsed。该证据证明一次性安装后的跨平台自动加载链路；由于随后磁盘源码提升到 0.45.0，不能把这批 0.44.0
+  快照标记写成当前 0.45.0 已安装证据。
+- **`blocked`**：源码提升后重新运行 B 站持久探针，两个新页面仍加载旧 0.44.0 开发扩展快照；需要用户在
+  `chrome://extensions` 手动点击开发扩展刷新按钮后，才能完成 0.45.0 无注入核对。维护总门禁另一次 B 站导航遇到执行
+  上下文销毁；抖音公开入口停在验证码中间页，微博公开入口没有可安全验证的独立楼中楼作者和活动顶层虚拟列表 spacer，
+  因此没有伪造当前候选的抖音 CPU 数字、微博 spacer 通过或 B 站持久 0.45.0 通过。
+
+**检查**
+
+- `node --check omniblock.user.js`：PASS。
+- 本地完整矩阵及 `git diff --check`：通过；总维护门禁的本地项目全部通过，真实站点阻断按下述证据保留。
+- 当前源码真实 B 站隔离探针：`node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku`：PASS，
+  运行时 0.45.0，页面与身份标识已脱敏。
+- 持久扩展探针：源码提升前的 0.44.0 快照跨 B 站/抖音/微博通过；源码提升后的 0.45.0 核对为 `blocked`，原因是需手动刷新扩展。
+
+**限制**
+
+专用 Chrome 的扩展管理页不允许自动化工具替用户点击刷新；不通过 CDP 绕过。0.45.0 发布后，用户更新 Tampermonkey
+即可使用正式 userscript；维护者若要继续使用持久开发扩展，必须先重新构建并在扩展页刷新，再打开新页面。抖音视频解码、
+平台自身弹幕渲染和公开入口验证码不属于本脚本可控范围；微博管理器仍只承诺当前路由安全观察到的评论，作品级入口不承诺
+平台接口意义上的绝对全量。
+
+**版本/发布状态**
+
+工作区源码已经提升为 `@version 0.45.0`，构建为
+`0.45.0-persistent-runtime-floating-dock-log-aggregation-performance-resource-bounds`；当前条目等待显式暂存审阅、
+提交、推送 `master`、创建 `v0.45.0` tag 和 GitHub Release。完成后在本条目上方追加实际提交哈希、远端分支、tag 和
+Release URL 回写。
+
+**下一步验证**
+
+发布前完成隐私门禁和暂存差异审阅；发布后核对远端 master、v0.45.0 tag、GitHub Release，以及 raw master 中的 0.45.0
+userscript 内容。
+
+### 2026-08-29 - 0.44.0 未发布候选 - 全插件性能与资源效率专项收口
+
+**范围**
+
+针对抖音视频页持续高 CPU，以及日志在无操作时快速增长的问题，本轮把优化范围从单个平台热路径扩大到整个
+userscript：审计观察器、定时任务、Shadow DOM 遍历、虚拟列表、弹幕收集、评论缓存、日志写入、设置变化和页面
+可见性生命周期，并重新检查了 B 站、抖音、微博和通用模块之间的边界。目标是同时降低空闲消耗、避免无界缓存和
+DOM 引用滞留、保持用户操作链可追溯，并让页面从后台恢复后仍能补齐必要状态。
+
+**调研与设计依据**
+
+本轮查阅并采用了以下公开资料中的通用原则：Chrome 的脚本示例明确提醒 MutationObserver 有性能成本，应只观察
+相关变化；[Chrome MutationObserver 示例](https://developer.chrome.com/docs/extensions/get-started/tutorial/scripts-on-every-tab?authuser=117)、
+[MDN MutationObserver.observe](https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver/observe?from=20423)。
+页面不可见时暂停非必要工作，恢复时再同步；依据 [MDN Page Visibility API](https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API)。
+长任务应拆分或让出主线程；依据 [web.dev Optimize long tasks](https://web.dev/articles/optimize-long-tasks)、
+[MDN Prioritized Task Scheduling](https://developer.mozilla.org/en-US/docs/Web/API/Prioritized_Task_Scheduling_API)。
+跨 Shadow DOM 遍历必须把开放 ShadowRoot 作为明确边界；依据 [MDN Using shadow DOM](https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM)。
+成熟扩展实现也采用帧调度/有界观察与增量处理，例如 [uBlock contentscript](https://github.com/gorhill/uBlock/blob/master/src/js/contentscript.js)、
+[uBlock DOM inspector](https://github.com/gorhill/uBlock/blob/master/src/js/scriptlets/dom-inspector.js) 和
+[Dark Reader dynamic theme](https://github.com/darkreader/darkreader/blob/main/src/inject/dynamic-theme/modify-css.ts)。
+
+据此形成三层方案：P1 先消除无条件和重复工作，P2 再缩小观察/扫描范围并复用稳定元数据，P3 最后用上限、可见性
+和回归计数把长期运行边界固定下来。没有把 `requestIdleCallback` 当作唯一依赖，因为它在部分浏览器/忙碌页面上
+可能长期推迟；低频一次性 timeout、页面可见性和脏标记组合更适合本脚本的兼容范围。
+
+**已落实**
+
+- P1 生命周期与调度：增加共享页面可见性生命周期和一次性 timeout 循环；隐藏标签页断开主观察器并暂停非必要循环，
+  回到前台再补全扫描；关闭设置时对快捷/批量入口同步清理，避免 inactive loop 无法唤醒造成入口残留或重建。
+- P1 观察与扫描：主扫描器共用一个 MutationObserver，按新增子树、相关祖先和非样式属性变化建立 dirty 集合；
+  首轮/路由变化才做全量扫描，后续只处理脏节点；同一次开放 Shadow DOM 遍历复用多个选择器；被屏蔽容器清理只遍历
+  已登记集合，不再反复深扫整页。
+- P2 平台热路径：抖音活动播放器根节点和视频会话键缓存到稳定边界，弹幕自动规则仅处理当前会话已观察节点；
+  B 站弹幕列表按内容建立 progress 索引和 CRC/例外缓存；作者、快速入口、批量入口、作品入口和评论相关循环均改为
+  活动置脏后低频合并刷新；微博虚拟列表只在相关变化时触发布局同步。
+- P2 评论与日志：统一评论管理器、微博评论缓存和批量入口缓存只保存元数据，不持有虚拟列表 DOM 引用，并设置
+  20,000/5,000 等明确上限；document-start 后在 DOMContentLoaded 使首轮缓存失效，补发现后续 Shadow DOM 评论；
+  用户操作/屏蔽/恢复/状态转移/错误仍逐条记录，DOM 与扫描等被动热路径改为 10 秒窗口聚合，日志关闭时跳过摘要构造。
+- P3 可观测边界：增加性能边界回归，直接断言无关 DOM 不唤起抖音深扫、弹幕按批处理、隐藏页暂停消费变化，以及重复
+  批量刷新不会反复收集评论；保留日志脱敏、30 天/单日 50,000 条/约 16 MB 原有上限，并对评论记录上限给出明确提示。
+- 结构审视结论：保留单 userscript 的闭包模块边界。当前文件虽较大，但拆分会改变 document-start 顺序、GM 桥接、
+  运行锁和平台注入边界；在没有打包产物、加载顺序和跨平台回归证据前不做形式上的拆文件重构，先用共享基础设施收敛
+  热路径和生命周期。
+
+**改动文件**
+
+核心为 `omniblock.user.js`；验证与维护链路包括 `test/performance.cjs`、`test/state.cjs`、`test/run.cjs`、
+`test/comment-manager.cjs`、`test/quickblock.cjs`、`test/danmaku-auto.cjs`、`test/maintenance-check.cjs`、
+`test/build-dev-extension.cjs`、`test/dev-extension.cjs` 及相关真实探针；用户可见说明同步到 `README.md` 和
+`CHANGELOG.md`。持久化开发扩展已从当前源码重新生成到被忽略的 `test/_dev-extension`，不属于发布物。
+
+**证据**
+
+- **`structure regression`**：全量本地矩阵中，通用 UI 16/16、核心状态 7/7、B 站 33/33、自动弹幕 6/6、统一评论
+  管理器 3/3、作品级屏蔽 3/3、性能边界 6/6、持久化开发扩展 3/3、跨平台适配 21/21、抖音推荐流 2/2、微博回放
+  11/11 均通过；userscript 语法检查、各新增测试语法检查和 `git diff --check` 通过。性能边界回归明确覆盖了无关
+  DOM、抖音自动规则扫描、弹幕增量批处理、隐藏页暂停、评论缓存命中、启动入口不建立 body 轮询和不使用独立
+  `setInterval`。
+- **`real-site verified`（源码注入，不是持久扩展验收）**：2026-08-29，专用 Chrome 的隔离只读新页，登录状态未读取，
+  脱敏页面形式为 `bilibili.com/video/...`；当前候选源码版本/构建与机器标记一致，真实页发现 2 个评论渲染器、3 个
+  可识别评论用户和 1 个可识别子评论，评论菜单出现本地拉黑与屏蔽该楼回复入口；评论管理器读取 3 行并完成搜索、
+  全选、加载和屏蔽/恢复回放，楼操作收集 7 位作者，控制坞从 collapsed 悬停展开为 expanded。该证据证明当前源码在
+  B 站真实 DOM 上的入口链路，但页面仍是探针临时注入，不能替代无注入持久开发扩展验证，也没有提供修复后 CPU 数字。
+- **`blocked`**：本轮 `node test/maintenance-check.cjs` 尚未形成完整三平台性能验收：抖音公开入口停在验证码中间页，
+  未发现可测视频；微博虽然发现了可识别评论并完成了只读本地入口回放，但当前页面没有活动顶层虚拟列表 spacer，
+  无法验证虚拟列表布局指标。探针输出中的页面标识只留在当轮终端诊断，不写入仓库文档或发布物。
+- **`blocked`**：旧构建的专用 Chrome 诊断仍只能作为问题定位证据：此前在脱敏的抖音精选页观察到脚本任务约 4.51 秒/
+  10 秒、主要采样落在重复 `querySelectorAllDeep` 递归；它确认旧热路径和用户报告，但不能代表当前候选性能。候选
+  需要在固定专用 Chrome 的持久开发扩展重新加载后，用无注入新页面复测。
+
+**当前限制**
+
+性能边界回归证明代码路径的增量/暂停/缓存契约，不证明平台今天仍使用相同 DOM。抖音视频解码、平台弹幕渲染和其他
+网页脚本的 CPU 不属于 OmniBlock；线上指标必须在当前候选运行标识下单独采集。开放 ShadowRoot 之外、跨 iframe 和
+平台私有 Worker 不在本脚本可控范围。日志聚合降低了被动事件写放大，但不保存完整原始 DOM/正文；详细用户操作仍逐条
+保留，且日志写入失败不能影响屏蔽主链路。
+
+**版本/发布状态**
+
+工作区仍是未发布候选：`@version 0.44.0`，构建为
+`0.44.0-persistent-runtime-floating-dock-log-aggregation-performance-resource-bounds`；当前源码和测试改动尚未提交、
+推送、创建 tag 或 GitHub Release。固定专用 Chrome 当前仍需人工在 `chrome://extensions` 打开开发者模式并加载
+`E:\pluginforchrome\test\_dev-extension`；浏览器自动化不绕过该页面的安全策略。完成加载并刷新/新建页面后，下一项
+最有价值的验证是执行 `node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...`，再用同一方式检查
+抖音和微博的候选运行标识与静置性能；候选通过用户确认后才进入发布收口。
+
+### 2026-08-29 - 0.44.0 未发布候选 - 抖音视频页高 CPU 热路径修复
+
+**范围**
+
+用户反馈：打开抖音视频界面后专用浏览器持续高强度占用 CPU，其他网站没有同样现象。
+本轮在 2026-08-29 连接专用 Chrome 做只读运行时诊断，脱敏页面形式为 `douyin.com/jingxuan?...`，
+登录状态未读取（诊断不依赖登录身份，也未读取 Cookie）。10 秒性能指标显示 renderer 的 `TaskDuration`
+增加约 4.55 秒，其中 `ScriptDuration` 约 4.51 秒，`LayoutDuration` 约 0.003 秒；日志只增加 1 条，
+因此主因不是上一轮日志写入，而是抖音适配器的 JavaScript 热路径。
+
+**根因**
+
+CPU profile 的主要调用链是 `activeVideoRoot → isInActiveDanmakuRoot → applyDouyinAutoDanmaku →
+collectDanmaku → collectRecords → refresh`。`activeVideoRoot()` 每次都会通过 `querySelectorAllDeep(document, ...)`
+递归遍历页面；旧逻辑在每条弹幕处理时重复调用它，即形成“每条弹幕 × 多次整页深遍历”。当前页只读观察到 31 个
+弹幕身份候选节点，profile 中扩展脚本采样主要落在递归 `collect`，与该调用链相符。日志聚合已经降低了落盘增长，
+但不能解决这个计算问题。
+
+**改动**
+
+- `omniblock.user.js`：活动播放器根节点只在同一 JavaScript turn 内计算一次并复用；视频会话键支持复用已确认的根节点；
+  `collectDanmaku()` 把根节点和会话键传给逐项自动规则处理；没有启用抖音自动规则时先走快速返回，不再逐条计算活动根节点。
+  下一轮 JavaScript turn 会清掉缓存，播放器切换仍会重新读取 DOM。
+- `test/danmaku-auto.cjs`：加入抖音热路径诊断计数，分别验证自动规则关闭/开启时根节点调用和计算次数不会随 5 条弹幕重复增长。
+- `README.md`、`CHANGELOG.md`：记录抖音 CPU 热路径修复的用户可见边界。
+
+**证据**
+
+- **`real-site verified`（仅诊断）**：2026-08-29，专用 Chrome、只读、登录状态未读取，`douyin.com/jingxuan?...`；
+  旧构建静置 10 秒的脚本任务约 4.51 秒、布局约 0.003 秒，CPU profile 共 3326 个采样，其中大量采样在
+  `querySelectorAllDeep` 的递归 `collect`，并沿着上述抖音弹幕收集调用链进入。该证据确认用户报告现象和代码热路径，
+  不代表修复后的新构建已经在线生效。
+- **`structure regression`**：`node test/danmaku-auto.cjs` 通过 6/6，新增性能回归通过；通用 UI 16/16、B站 33/33、
+  核心状态 7/7、跨平台适配 21/21、评论管理 3/3、作品级屏蔽 3/3、抖音推荐流 2/2、微博回放 11/11、
+  持久开发扩展 3/3 均通过；维护门禁、userscript/测试语法检查和 `git diff --check` 通过。
+- **`blocked`**：当前专用 Chrome 页面仍运行修复前的已安装构建；需要在 `chrome://extensions` 重新加载开发扩展，
+  再刷新抖音页面，才能进行修复后 10 秒 CPU 对照。本轮没有把旧页面的性能数字当作修复后的线上结果。
+
+**当前限制**
+
+- 本轮修复的是 OmniBlock 自身重复深遍历；抖音网页播放器、视频解码和平台脚本的 CPU 仍由浏览器/平台负责，不能把所有 renderer CPU 都归因于插件。
+- 活动根节点缓存只跨同一 JavaScript turn，不跨异步任务，优先保证播放器切换和动态弹幕作用域不会长期使用旧节点。
+- 当前候选仍保留日志的 30 天、单日 50,000 条和约 16 MB 上限；日志聚合与 CPU 修复是两个独立问题。
+
+**版本/发布状态**
+
+工作区仍是未发布候选：`@version 0.44.0`，构建为 `0.44.0-persistent-runtime-floating-dock-log-aggregation-douyin-cpu-hotpath`；
+修复已生成到本地 `test/_dev-extension`，尚未提交、推送、创建 tag 或 GitHub Release。安装并刷新后，最有价值的下一项验证是
+在同一个抖音页面静置 10 秒，再读取 Performance 指标和日志计数，确认脚本时间显著下降且日志仍按窗口摘要增长。
+
+### 2026-08-29 - 0.44.0 未发布候选 - 反馈日志被动遥测聚合
+
+**范围**
+
+用户反馈：专用浏览器的 B 站页面在没有人工操作时仍以每秒数条的速度增加日志，担心长期占用内存。
+本轮先在已安装旧构建的真实 B 站页面做只读测量：静置 10 秒新增 29 条事件，其中 15 条为
+`dom.mutation.batch`、14 条为 `scanner.scan`，错误数为 0。根因是 B 站页面自身持续产生 DOM 变化，
+而当前日志把每个观察批次和每次扫描都作为独立事件落盘；它不是已确认的对象泄漏，但会造成不必要的日志增长、
+整片日志重复序列化和跨标签页缓存压力。
+
+本轮将被动遥测改为 10 秒窗口聚合：用户操作、屏蔽/恢复、设置、状态转移、存储变化和错误仍逐条记录；
+DOM 变化、扫描和逐项扫描只保留窗口计数、节点/类型分布、扫描耗时、选择器统计和少量安全样本。
+
+**改动文件**
+
+- `omniblock.user.js`：增加被动日志桶和 10 秒聚合刷新；DOM observer 不再保留整批 MutationRecord 摘要，
+  扫描/逐项扫描改写为汇总事件；日志清空、导出、日期刷新会先处理待聚合事件；当前构建标识更新为
+  `0.44.0-persistent-runtime-floating-dock-log-aggregation`。
+- `test/run.cjs`：增加被动事件聚合、DOM 汇总不携带原始 `records` 数组、选择器统计和脱敏导出回归。
+- `README.md`、`CHANGELOG.md`：记录高频日志的聚合策略和仍保留的详细用户操作日志边界。
+
+**证据**
+
+- **`structure regression`**：`node test/run.cjs` 通过 16/16；新增 E3 聚合断言通过；
+  `node test/quickblock.cjs` 33/33、`node test/state.cjs` 7/7、`node test/adapters.cjs` 21/21；
+  `node test/dev-extension.cjs` 使用隔离临时 profile 通过 3/3。
+- **`structure regression`**：`node --check omniblock.user.js`、`node --check test/run.cjs` 和
+  `git diff --check` 通过；事件导出仍完成字段级脱敏，测试中的合成正文、身份和 URL 没有进入导出结果。
+- **`blocked`**：当前专用浏览器里的已安装扩展仍需在 `chrome://extensions` 刷新，才能把本轮聚合构建加载到已打开页面；
+  本轮没有重新操作用户页面做优化后的 10 秒线上增量对照。此前的 B 站/抖音真实平台功能门禁仍按各自探针状态记录，
+  不因本地日志回归通过而升级。
+
+**当前限制**
+
+- 被动事件不再逐条保存每一个 DOM 观察批次，而是每 10 秒写一条窗口摘要；若反馈问题需要完整原始 DOM 或正文，
+  仍不能从本地日志恢复，必须通过单独的只读复现或临时诊断夹具获取。
+- 日志仍保留最近 30 天、每天最多 50,000 条、总大小最多约 16 MB；聚合降低增长和写放大，但不替代用户定期导出重要诊断。
+- 多标签页共享 GM/扩展存储仍是最后写入者优先；本轮未扩大为跨标签页事件序列合并。
+
+**版本/发布状态**
+
+工作区仍是未发布候选：`@version 0.44.0`，构建为 `0.44.0-persistent-runtime-floating-dock-log-aggregation`；
+未提交、未推送、未创建 tag 或 GitHub Release。安装当前构建后，最有价值的下一项验证是静置 B 站和抖音页面
+10 秒以上，确认日志按窗口增长且用户操作仍逐条可见。
+
+### 2026-08-29 - 0.44.0 未发布候选 - 持久开发运行时与右下角控制坞
+
+**范围**
+
+本轮在上一条未发布候选的基础上，先审视完整 userscript 的运行时边界，再补齐专用浏览器的持久加载方式，
+最后统一处理 B 站/抖音及其他页面级入口的右下角控制坞。源码仍保留已发布 `@version 0.44.0`，本轮只生成
+候选构建，不提高用户可见版本，也不发布。
+
+**结构审视与决策**
+
+- `omniblock.user.js` 约 10,000 行，仍是单文件 userscript，但存储、事件日志、通用扫描器、平台适配器、
+  评论/弹幕管理器和设置 UI 已由闭包/窄接口分隔。当前没有证据表明整文件拆分能降低本轮风险；直接拆分会同时改变
+  userscript 打包顺序、Shadow DOM 作用域和多个平台的闭包共享，因此本轮不做无回归依据的全面重构。
+- 发现并处理的运行时边界：同文档运行锁避免重复扫描器/观察器/定时器/UI；开发扩展先恢复 GM 存储快照再启动 userscript，
+  避免新页面先用默认设置覆盖持久名单；开发扩展匹配覆盖 B 站/抖音子域及 `m.weibo.cn`，不只覆盖首页。
+- 保留的专业风险：平台 DOM、Shadow DOM、虚拟列表和弹幕会话都是外部结构；每个平台仍独立使用自己的适配器和探针。
+  现有 `setInterval` 是文档生命周期内的适配器轮询，硬导航时由浏览器销毁；SPA 切换由扫描器路由检测处理，运行锁只
+  保护同文档重复执行。跨标签页名单仍是 GM 的最后写入者生效，没有引入未经需求授权的云端冲突合并。
+
+**改动文件**
+
+- `omniblock.user.js`：开发扩展异步存储启动栅栏；统一 `FloatingDock` 状态机；页面入口默认收起、悬停/聚焦展开、
+  action hold、面板 hold、关闭后自动收起、淡入/滑入动画和 `prefers-reduced-motion`；修正 `aria-expanded` 只表达设置面板状态，
+  `data-ob-dock-state` 单独表达控制坞状态。
+- `test/build-dev-extension.cjs`：生成本地忽略的 MV3 开发扩展，桥接 `chrome.storage`/只读跨域请求，镜像平台匹配边界。
+- `test/dev-browser.cjs`：固定专用 Chrome profile 启动/复用和一次性手动加载指引；不再把 Chrome 不支持的命令行扩展开关当成成功条件。
+- `test/dev-extension.cjs`：Edge/Chromium 临时 profile 的 B 站主域、B 站空间子域和抖音新文档自动加载回归。
+- `test/installed-browser-probe.cjs`：显式 URL 的已安装运行时双新页只读探针，无 `addInitScript`/源码注入路径。
+- `test/run.cjs`：控制坞收起、展开、入口联动、交互保持、自动收起和设置面板关闭回归；更新总数为 16 项。
+- `test/real-bilibili-probe.cjs`、`test/real-douyin-probe.cjs`：真实页面探针适配控制坞默认收起和脚本自身悬停展开路径。
+- `test/maintenance-check.cjs`、`README.md`、`CHANGELOG.md`：纳入持久运行时、结构回归和本轮候选边界。
+
+**证据**
+
+- **`structure regression`**：`node test/run.cjs` 通过 16/16，无页面错误；`node test/dev-extension.cjs` 使用
+  `msedge.exe` 的隔离临时 profile 通过 3/3，验证 B 站主域、B 站空间子域和抖音新文档都自动加载当前构建，且第二页共享
+  第一页写入的本地设置。源码/新增探针语法检查通过。
+- **`blocked`**：同一机器的 Google Chrome 148 自动化启动即使只使用 `--load-extension`，`chrome://extensions` 仍显示没有用户扩展，
+  目标页面没有扩展桥接标记；因此没有把 Chrome 命令行启动结果写成自动加载通过。专用 Chrome 的一次性手动加载尚未在本轮打开，
+  `installed-browser-probe.cjs` 也未运行，需下一轮在用户授权后验证。
+- **`blocked`**：本轮 `node test/real-bilibili-probe.cjs --verify-local` 因真实页面导航销毁执行上下文而未完成；
+  `node test/real-platform-probe.cjs douyin --verify-local` 真实公开入口停在验证码中间页，未发现可验证视频。抖音探针代码已更新，
+  但没有把隔离页面的 `blocked` 改写为线上 UI 通过。
+
+**检查命令与结果**
+
+```text
+node --check omniblock.user.js                         PASS
+node --check test/run.cjs                              PASS
+node --check test/installed-browser-probe.cjs          PASS
+node --check test/dev-browser.cjs                      PASS
+node --check test/dev-extension.cjs                    PASS
+node test/run.cjs                                      PASS 16/16
+node test/dev-extension.cjs                            PASS 3/3 (Edge/Chromium)
+node test/real-bilibili-probe.cjs --verify-local       blocked: navigation destroyed execution context
+node test/real-platform-probe.cjs douyin --verify-local blocked: CAPTCHA interstitial
+```
+
+**当前限制**
+
+- 仍需用户在固定专用 Chrome profile 中一次性加载开发扩展，并用显式目标运行 `installed-browser-probe.cjs`；
+  该动作必须使用本轮用户授权的登录态只读会话，不能由维护者读取 Cookie 或代替用户登录。
+- Edge/Chromium 的自动扩展回归只证明扩展加载、桥接和脚本结构，不证明 B 站/抖音真实 DOM 当前仍然稳定；真实平台证据仍按平台分别记录。
+- 控制坞只管理脚本自己的页面级入口，不隐藏模态面板；打开模态面板时通过 hold 保持展开。平台页面自身的原生弹窗仍由各适配器的
+  遮挡判断控制，入口可能因没有可靠用户、页面切换或原生弹窗而消失。
+
+**发布**
+
+工作区仍是未发布候选：`@version 0.44.0`，构建 `0.44.0-persistent-runtime-floating-dock`；未提交、未推送、未创建 tag 或 GitHub Release。
+
+**下一步验证**
+
+用户明确允许后，在固定专用 Chrome profile 完成一次性开发扩展加载；打开 B 站视频和抖音视频的全新页面，运行
+`node test/installed-browser-probe.cjs --url=...` 做无注入版本核对，再由用户检查控制坞遮挡、悬停展开、移入入口、打开/关闭面板后的收起行为。
+
+### 2026-08-28 - 0.44.0 未发布候选 - 平台分列、作品级屏蔽与详细事件日志
+
+**范围**
+
+本轮在已发布 `0.44.0` 的源码基础上增加三项候选升级：设置页屏蔽名单按平台分列且每列独立滚动；
+抖音视频、微博帖子和 B 站动态详情页提供作品级本地屏蔽；设置页提供默认开启、按日分片的详细运行日志和反馈导出。
+候选保留 `@version 0.44.0`，通过新的运行时构建标识与已发布源码区分。
+
+**改动文件**
+
+- `omniblock.user.js`：平台列布局；`EventLog` 本地事件流、字段脱敏、按日分片、30 天/单日 50,000 事件/总计约 16 MB 上限、导出和清理；
+  扫描器、设置、评论管理、楼操作、弹幕管理、批量操作、存储和作品操作的事件记录；公共作品确认/一次事务/精确撤销；
+  抖音作品评论/弹幕安全滚动，微博卡片作用域和回复展开，B 站动态作者/当前 DOM/当前弹幕会话收集。
+- `test/run.cjs`：新增平台列、列内独立滚动、事件流记录和导出二次脱敏断言。
+- `test/work-block.cjs`：人工合成三平台作品作用域回归，验证不跨作品收集、作者/主评论/子评论/弹幕分段去重、一次写入与撤销。
+- `test/real-platform-probe.cjs`、`test/real-bilibili-probe.cjs`：只读记录作品作用域 API/入口状态；微博详情页探针增加入口数量一致性检查。
+- `test/maintenance-check.cjs`：纳入作品级回归、B 站探针和新测试文件隐私门禁。
+- `README.md`、`CHANGELOG.md`、`MAINTENANCE.md`：记录候选行为、日志容量/隐私策略、验证证据和未发布边界。
+
+**证据**
+
+- **`real-site verified`**：2026-08-28，隔离、未登录的真实微博详情页 `weibo.com/...` 注入构建
+  `0.44.0-platform-work-log-columns`；运行时解析出 1 个带可靠作者的作品作用域，并在页面中注入 1 个「屏蔽作品」入口。
+  本轮只观察页面和脚本自身入口，没有点击微博举报、官方拉黑、关注或发帖等写入控件，也没有提交真实名单。
+- **`structure regression`**：`node test/work-block.cjs` 通过 3/3；三个人工合成页面分别验证抖音、微博、B 站的作者、主评论、子评论和弹幕
+  作用域、跨作品隔离、一次事务和撤销。`node test/run.cjs` 通过 15/15，含平台列/独立滚动和日志 DOM/扫描/脱敏导出；
+  `node test/quickblock.cjs` 33/33、`node test/adapters.cjs` 21/21、`node test/comment-manager.cjs` 3/3、`node test/state.cjs` 7/7、
+  `node test/danmaku-auto.cjs` 5/5、`node test/douyin.cjs` 2/2、`node test/weibo-replay.cjs` 11/11；源码、受影响探针/测试语法检查，
+  `git diff --check` 和公开页面隐私门禁通过。
+- **`blocked`**：`node test/real-platform-probe.cjs douyin --verify-local` 的未登录公开入口停在验证码中间页，未发现可测视频作用域；
+  B 站隔离探针本轮只发现 `bilibili.com/video/...`，不是 `/opus/...` 动态详情页，不能将视频页评论证据扩写为动态作品级线上验收；
+  微博探针实际详情页没有带可测活动顶层 spacer，因此既有虚拟列表专项仍报告 blocked。真实平台的作品级“加载全部”也没有被声称为平台接口意义上的绝对全量。
+
+**当前限制**
+
+- “屏蔽作品”只会写入可靠解析到的身份键；未知身份、未加载内容和没有明确作用域的内容不会猜测。确认框中的“部分”和“无可靠身份”必须保留给用户判断。
+- 抖音与微博的评论/回复收集依赖当前 DOM、明确展开控件和安全滚动；B 站动态评论/子评论只读当前 DOM，动态视频弹幕只读当前页面已建立的弹幕会话。
+- 日志为了诊断结构和状态保留计数、阶段、标签和选择器统计；字段级脱敏会去掉身份键、正文、地址、原始 HTML、请求头、Cookie/Token 和堆栈。
+  设置页仅显示当天最近 800 条，导出 JSON 才包含保留范围内当天的全部事件；写入失败只进入内存待写队列，不阻断屏蔽主链路。
+
+**检查命令**
+
+```powershell
+node --check omniblock.user.js
+node --check test/run.cjs
+node --check test/work-block.cjs
+node --check test/real-platform-probe.cjs
+node --check test/real-bilibili-probe.cjs
+node --check test/maintenance-check.cjs
+node test/run.cjs
+node test/work-block.cjs
+node test/state.cjs
+node test/quickblock.cjs
+node test/comment-manager.cjs
+node test/adapters.cjs
+node test/danmaku-auto.cjs
+node test/douyin.cjs
+node test/weibo-replay.cjs
+node test/real-bilibili-probe.cjs --verify-local
+node test/real-platform-probe.cjs douyin --verify-local
+node test/real-platform-probe.cjs weibo --verify-local
+node test/maintenance-check.cjs
+git diff --check
+```
+
+**发布**
+
+工作区仍为未发布候选：`@version 0.44.0`，构建 `0.44.0-platform-work-log-columns`；本轮未提交、未推送、未创建 tag 或 GitHub Release。
+
+**下一步验证**
+
+在用户本人授权并操作的专用浏览器中，分别打开一个抖音视频、一个微博帖子和一个 B 站动态视频详情页，只点击脚本自身的作品入口，
+确认收集计数、部分提示、确认/取消和撤销；平台官方写入控件仍不得点击。若无法取得稳定 B 站动态页，继续保持 blocked，不把现有视频页证据升级。
 
 ### 2026-08-28 - 0.44.0 - B站主评论楼操作读取完整子评论分页
 

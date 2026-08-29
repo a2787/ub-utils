@@ -1,6 +1,6 @@
 /*
  * OmniBlock 维护闭环：默认由维护者运行，不依赖用户 Tampermonkey 已安装版本。
- * 它会顺序执行静态门禁、通用/平台回归、微博虚拟列表回放和当前源码注入的抖音/微博真站探针。
+ * 它会顺序执行静态门禁、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和当前源码注入的三平台真站探针。
  * 真实探针仍遵守只读边界；用户浏览器只作为最终环境复核，不是本命令的代码生效前提。
  * 运行：node test/maintenance-check.cjs
  */
@@ -12,7 +12,9 @@ const { ROOT } = require('./runtime.cjs');
 const trackedFiles = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
   .split(/\r?\n/).filter(Boolean);
 const privacyFiles = trackedFiles.filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
-for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/maintenance-check.cjs']) {
+for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
+  'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
+  'test/performance.cjs']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
 }
 const privacyPatterns = [
@@ -32,12 +34,18 @@ const checks = [
   { label: 'userscript syntax', command: process.execPath, args: ['--check', 'omniblock.user.js'] },
   { label: 'comment manager syntax', command: process.execPath, args: ['--check', 'test/comment-manager.cjs'] },
   { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
+  { label: 'work block syntax', command: process.execPath, args: ['--check', 'test/work-block.cjs'] },
+  { label: 'installed browser probe syntax', command: process.execPath, args: ['--check', 'test/installed-browser-probe.cjs'] },
   { label: 'generic UI/state', command: process.execPath, args: ['test/run.cjs'] },
   { label: 'core state', command: process.execPath, args: ['test/state.cjs'] },
   { label: 'Bilibili', command: process.execPath, args: ['test/quickblock.cjs'] },
   { label: 'automatic danmaku rules', command: process.execPath, args: ['test/danmaku-auto.cjs'] },
   { label: 'unified comment manager', command: process.execPath, args: ['test/comment-manager.cjs'] },
+  { label: 'work block', command: process.execPath, args: ['test/work-block.cjs'] },
+  { label: 'performance boundaries', command: process.execPath, args: ['test/performance.cjs'] },
+  { label: 'persistent development extension', command: process.execPath, args: ['test/dev-extension.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
+  { label: 'Bilibili isolated real-site probe', command: process.execPath, args: ['test/real-bilibili-probe.cjs', '--verify-local'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },
   { label: 'Douyin isolated real-site probe', command: process.execPath, args: ['test/real-platform-probe.cjs', 'douyin', '--verify-local'] },
   { label: 'Weibo replay stress', command: process.execPath, args: ['test/weibo-replay.cjs'] },
@@ -67,6 +75,16 @@ for (const check of checks) {
     }
     const probePrefix = 'PROBE ' + probeId + ': ';
     const probeLines = String(result.stdout || '').split(/\r?\n/).filter((line) => line.startsWith(probePrefix));
+    if (probeId === 'bilibili' && !probeLines.length) {
+      try {
+        const target = JSON.parse(String(result.stdout || '').trim());
+        probeLines.push(probePrefix + JSON.stringify({
+          discovered: !!target.discovered,
+          loaded: !!target.pageLoaded,
+          errors: Array.isArray(target.errors) ? target.errors : [],
+        }));
+      } catch (error) {}
+    }
     let sawBlocked = false;
     for (const line of probeLines) {
       try {

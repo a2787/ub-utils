@@ -151,6 +151,31 @@ const toolbarPosition = (node) => node ? {
   right: getComputedStyle(node).right,
   bottom: getComputedStyle(node).bottom,
 } : null;
+const visible = (node) => {
+  if (!node) return false;
+  const style = getComputedStyle(node);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+};
+const dockInitial = {
+  state: document.documentElement.getAttribute('data-ob-dock') || '',
+  gearState: gear && gear.getAttribute('data-ob-dock-state') || '',
+  pageToolsHidden: [commentFab, document.getElementById('ob-douyin-dm-tool')]
+    .filter(Boolean).every((node) => !visible(node)),
+};
+if (gear) {
+  // 这是脚本自身齿轮的悬停事件，不是平台写入操作；验证真实页面上由
+  // 收起态进入展开态后，评论/弹幕入口确实恢复可见。
+  gear.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, composed: true, relatedTarget: document.body }));
+  await pause(280);
+}
+const dockExpanded = {
+  state: document.documentElement.getAttribute('data-ob-dock') || '',
+  gearState: gear && gear.getAttribute('data-ob-dock-state') || '',
+  pageToolsVisible: [commentFab, document.getElementById('ob-douyin-dm-tool')]
+    .filter(Boolean).every(visible),
+};
+out.dockInitial = dockInitial;
+out.dockExpanded = dockExpanded;
 out.commentToolPresent = !!commentFab;
 out.commentToolPosition = toolbarPosition(commentFab);
 out.gearPosition = toolbarPosition(gear);
@@ -160,7 +185,7 @@ out.gearRightColumn = !!gear && getComputedStyle(gear).right === '14px'
   && getComputedStyle(gear).bottom === '14px';
 const dmTool = document.getElementById('ob-douyin-dm-tool');
 out.managerToolPresent = !!dmTool;
-out.managerToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
+out.managerToolVisible = visible(dmTool);
 out.managerToolText = dmTool && dmTool.textContent;
 out.managerToolPosition = toolbarPosition(dmTool);
 out.managerToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px'

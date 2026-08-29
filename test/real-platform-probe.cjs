@@ -167,6 +167,26 @@ async function pickWeiboDetailTarget(browser, candidates) {
             count: document.querySelectorAll(selector).length,
             samples: Array.from(document.querySelectorAll(selector)).slice(0, 3).map((el) => ({ tag: el.tagName, id: el.id, className: el.className, href: el.getAttribute('href'), usercard: el.getAttribute('data-user-card') || el.getAttribute('data-usercard') || el.getAttribute('usercard') || el.getAttribute('data-uid'), text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120) })),
           })) : undefined;
+          const workApi = adapter && adapter.workScope;
+          let workCandidates = [];
+          let workError = '';
+          try {
+            if (workApi && typeof workApi.list === 'function') workCandidates = workApi.list() || [];
+          } catch (error) { workError = String(error && error.message || error).slice(0, 120); }
+          const workButtons = Array.from(document.querySelectorAll('.ob-work-block'));
+          const visibleWorkButtons = workButtons.filter((button) => {
+            const style = getComputedStyle(button);
+            const rect = button.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+              && rect.width > 0 && rect.height > 0;
+          });
+          const work = {
+            api: !!workApi,
+            candidateCount: workCandidates.length,
+            buttonCount: workButtons.length,
+            visibleButtonCount: visibleWorkButtons.length,
+            error: workError,
+          };
           const platform = id === 'weibo' ? (() => {
             const comments = Array.from(document.querySelectorAll('.wbpro-list > .item1, .wbpro-list .list2 > .item2'));
             const commentInfos = comments.map((item) => adapter && adapter.extract(item));
@@ -216,9 +236,18 @@ async function pickWeiboDetailTarget(browser, candidates) {
             samples: entries.slice(0, 5),
             pageText: (document.body && document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 220),
             detail,
+            work,
             platform,
           };
         }, { id: target.id, showDetails });
+        if (target.id === 'weibo' && onDetail && result.page && result.page.work) {
+          const work = result.page.work;
+          if (work.error) result.errors.push('验证失败：微博作品作用域查询异常：' + work.error);
+          else if (!work.candidateCount) result.errors.push('blocked：本轮真实微博详情页没有解析出带可靠作者的作品作用域');
+          else if (work.buttonCount !== work.candidateCount) {
+            result.errors.push('验证失败：微博作品作用域入口数量与当前作品候选数量不一致');
+          }
+        }
         if (target.id === 'weibo' && verifyLocal) {
           if (result.page && result.page.platform && result.page.platform.duplicateInlineQuickCount) {
             result.errors.push('验证失败：微博评论常驻入口旁重复注入了快捷按钮');

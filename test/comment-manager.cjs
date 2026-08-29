@@ -224,7 +224,9 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
       const manager=window.OB.adapters.weibo.commentManager;
       const savedCollect=manager.collectRecords; const savedLoadAll=manager.loadAll;
       let collectCalls=0;
-      const manyRecords=Array.from({length:1000},(_,index)=>({
+      // 超过脚本的本地评论管理器安全上限，验证旧记录会被有界淘汰，
+      // 而不是随着虚拟列表滚动无限保留。
+      const manyRecords=Array.from({length:20005},(_,index)=>({
         keys:['weibo:uid:'+(700000+index)], label:'人工作者'+index, note:'人工合成评论'+index,
         level:index%2?'reply':'root', threadId:'synthetic-thread-'+index, source:'dom',
       }));
@@ -236,7 +238,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
       const manyPanel=document.querySelector('#ob-comment-manager');
       const manyRows=manyPanel ? manyPanel.querySelectorAll('.ob-cm-row').length : 0;
       const manySearch=manyPanel && manyPanel.querySelector('.ob-cm-search');
-      if (manySearch) { manySearch.value='人工作者999'; manySearch.dispatchEvent(new Event('input',{bubbles:true})); }
+      if (manySearch) { manySearch.value='人工作者19999'; manySearch.dispatchEvent(new Event('input',{bubbles:true})); }
       const manySearchRows=manyPanel ? manyPanel.querySelectorAll('.ob-cm-row').length : 0;
       window.OB.closeCommentManager();
       manager.collectRecords=savedCollect; manager.loadAll=savedLoadAll;
@@ -249,7 +251,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
     });
     check(weiboState.fab && weiboState.rootLocal && weiboState.rootThread && !weiboState.childThread
       && weiboState.rows === 2 && weiboState.searchRows === 1
-      && weiboState.manyRows === 1000 && weiboState.manySearchRows === 1 && weiboState.collectCalls < 10
+      && weiboState.manyRows === 20000 && weiboState.manySearchRows === 1 && weiboState.collectCalls < 10
       && weiboState.threadPartial,
       '微博评论管理器与行内楼操作共用统一记录，主评论/回复入口边界正确', JSON.stringify(weiboState), report);
     await weibo.close();

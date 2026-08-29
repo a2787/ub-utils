@@ -244,14 +244,20 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const backupStatus = panel ? panel.querySelector('#ob-backup-status') : null;
     const restoreBackup = panel ? panel.querySelector('#ob-restore-backup') : null;
     const runtime = panel ? panel.querySelector('#ob-runtime-build') : null;
+    const logs = panel ? panel.querySelector('#ob-log-events') : null;
+    const logDay = panel ? panel.querySelector('#ob-log-day') : null;
+    const gear = document.getElementById('ob-gear');
     return {
       panelShown: !!panel, hasSkipCap: !!skip, hasUpdateBtn: !!upd, hasLocalBackup: !!localBackup,
       hasBackupStatus: !!backupStatus, hasRestoreBackup: !!restoreBackup,
-      hasRuntime: !!runtime && /运行版本：v/.test(runtime.textContent || '')
+      hasRuntime: !!runtime && /运行版本：v/.test(runtime.textContent || ''),
+      hasLogs: !!logs && !!logDay,
+      gearExpanded: !!gear && gear.getAttribute('aria-controls') === 'ob-panel'
+        && gear.getAttribute('aria-expanded') === 'true',
     };
   })()`);
-  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup && e.hasRuntime)
-    ? report.pass.push('E 设置面板：含运行标识、"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
+  (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup && e.hasRuntime && e.hasLogs && e.gearExpanded)
+    ? report.pass.push('E 设置面板：含运行标识、详细日志、"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
 
   // E2 设置名单按平台分组，并保留可悬停查看的屏蔽依据（人工合成身份）。
   const e2 = await page.evaluate(async () => {
@@ -260,15 +266,22 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     window.OB.Store.addIdentityGroups([
       { keys:['weibo:uid:123450010'], label:'微博测试作者', note:'微博评论：人工合成正文' },
       { keys:['douyin:secuid:MS4wLjABAASettings'], label:'抖音测试作者', note:'抖音弹幕：人工合成正文' },
+      ...Array.from({ length: 28 }, (_, index) => ({
+        keys:['bili:uid:' + String(900000001 + index)], label:'B站布局测试' + index, note:'设置列布局人工合成身份',
+      })),
     ]);
     const close = panel.querySelector('.ob-close'); if (close) close.click();
     document.getElementById('ob-gear').click();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const current = document.getElementById('ob-panel');
-    const groups = Array.from(current ? current.querySelectorAll('.ob-platform-group') : [])
-      .map((group) => group.querySelector('.ob-platform-title') && group.querySelector('.ob-platform-title').textContent);
+    const list = current && current.querySelector('#ob-list');
+    const groupNodes = Array.from(current ? current.querySelectorAll('.ob-platform-group') : []);
+    const groups = groupNodes.map((group) => group.querySelector('.ob-platform-title') && group.querySelector('.ob-platform-title').textContent);
     const weiboRow = current && Array.from(current.querySelectorAll('.ob-item'))
       .find((row) => row.textContent.includes('微博测试作者'));
+    const biliGroup = groupNodes.find((group) => /^B站（/.test(group.querySelector('.ob-platform-title')?.textContent || ''));
+    const listStyle = list ? getComputedStyle(list) : null;
+    const groupStyle = biliGroup ? getComputedStyle(biliGroup) : null;
     return {
       grouped: groups.some((text) => /^微博（\d+）/.test(text || ''))
         && groups.some((text) => /^抖音（\d+）/.test(text || '')),
@@ -276,11 +289,151 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       reasonTitle: !!(weiboRow && weiboRow.title.includes('屏蔽依据：微博评论：人工合成正文')),
       reasonText: !!(weiboRow && weiboRow.querySelector('.ob-note')
         && weiboRow.querySelector('.ob-note').textContent.includes('微博评论：人工合成正文')),
+      columns: !!(list && listStyle && listStyle.display === 'flex' && listStyle.overflowY === 'hidden'),
+      independentScroll: !!(biliGroup && groupStyle && groupStyle.overflowY === 'auto'
+        && biliGroup.scrollHeight > biliGroup.clientHeight),
     };
   });
-  (e2.grouped && e2.reasonTitle && e2.reasonText)
-    ? report.pass.push('E2 设置名单：按平台分组，行内备注并可通过鼠标悬停查看屏蔽依据')
+  (e2.grouped && e2.reasonTitle && e2.reasonText && e2.columns && e2.independentScroll)
+    ? report.pass.push('E2 设置名单：按平台分列、各列独立滚动，行内备注并可通过鼠标悬停查看屏蔽依据')
     : report.fail.push('E2 设置名单分组/屏蔽依据失败：' + JSON.stringify(e2));
+
+  // E3 详细日志：记录运行事件，导出再次脱敏，不出现人为注入的正文/身份值。
+  const e3 = await page.evaluate(() => {
+    const logs = window.OB && window.OB.logs;
+    if (!logs) return { logs:false };
+    logs.record('test.sensitive-probe', {
+      text: '不应进入导出日志的人工合成正文',
+      identity: 'bili:uid:999999999',
+      url: 'https://example.invalid/video/private?id=999',
+      safeCount: 7,
+    }, { force:true, immediate:true });
+    const day = logs.days()[0];
+    const events = logs.eventsForDay(day);
+    const exported = logs.exportJSON();
+    const probe = events.find((event) => event.type === 'test.sensitive-probe');
+    const scan = events.find((event) => event.type === 'scanner.scan' && event.data && event.data.selectorCounts);
+    const mutation = events.find((event) => event.type === 'dom.mutation.batch');
+    for (let index = 0; index < 20; index++) logs.recordPassive('test.passive', { safeCount: index });
+    const passiveEvents = logs.eventsForDay(day).filter((event) => event.type === 'test.passive');
+    const passiveAggregation = passiveEvents.length === 1
+      && passiveEvents[0].data && passiveEvents[0].data.aggregated === true
+      && passiveEvents[0].data.sampleCount === 20;
+    const selectorCountsVisible = !!(scan && scan.data.selectorCounts
+      && Object.values(scan.data.selectorCounts).some((value) => typeof value === 'number'));
+    const mutationAggregated = !!(mutation && mutation.data && mutation.data.aggregated === true
+      && !Object.prototype.hasOwnProperty.call(mutation.data, 'records')
+      && mutation.data.sampleCount > 0);
+    return {
+      logs: true,
+      hasProbe: !!probe,
+      hasMutation: events.some((event) => event.type === 'dom.mutation.batch'),
+      hasScan: events.some((event) => event.type === 'scanner.scan'),
+      hasUserAction: events.some((event) => event.type === 'action.manual-block' || event.type === 'ui.settings.open'),
+      hasPersistence: events.some((event) => event.type === 'storage.persist'),
+      redacted: !!(probe && probe.data && probe.data.text === '[redacted]' && probe.data.identity === '[redacted]' && probe.data.url === '[redacted]'),
+      exportClean: !exported.includes('不应进入导出日志的人工合成正文')
+        && !exported.includes('bili:uid:999999999')
+        && !exported.includes('private?id=999')
+        && exported.includes('safeCount'),
+      selectorCountsVisible,
+      mutationAggregated,
+      passiveAggregation,
+      status: logs.status(),
+    };
+  });
+  (e3.logs && e3.hasProbe && e3.hasMutation && e3.hasScan && e3.hasUserAction && e3.hasPersistence && e3.redacted && e3.exportClean
+    && e3.mutationAggregated && e3.passiveAggregation
+    && e3.selectorCountsVisible && e3.status.events > 0)
+    ? report.pass.push('E3 详细运行日志：高频 DOM/扫描事件窗口聚合，导出二次脱敏并保留安全计数')
+    : report.fail.push('E3 详细运行日志失败：' + JSON.stringify(e3));
+
+  // E4. 右下角控制坞：收起时隐藏页面入口，移入齿轮展开；从齿轮移向入口时
+  // 用短暂 action hold 防止指针离开齿轮后浮窗抢先消失。
+  const e4 = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const panel = document.getElementById('ob-panel');
+    if (panel) panel.querySelector('.ob-close')?.click();
+    // 收起由 release 的 450ms 计时和 visibility 的 200ms CSS 过渡组成；
+    // 初始面板关闭也要留出完整余量，避免读取到过渡中的 visible 状态。
+    await sleep(900);
+    const gear = document.getElementById('ob-gear');
+    const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+    if (!gear || !fab) return { gear:false, fab:!!fab };
+    const collapsed = {
+      state: document.documentElement.getAttribute('data-ob-dock'),
+      gearState: gear.getAttribute('data-ob-dock-state'),
+      fabOpacity: getComputedStyle(fab).opacity,
+      fabVisibility: getComputedStyle(fab).visibility,
+      fabPointerEvents: getComputedStyle(fab).pointerEvents,
+      fabInlineVisibility: fab.style.getPropertyValue('visibility'),
+      fabInlineVisibilityPriority: fab.style.getPropertyPriority('visibility'),
+      fabMatchesCollapsed: fab.matches('html[data-ob-dock="collapsed"] .ob-bulk[data-ob-kind="page"]'),
+    };
+    gear.dispatchEvent(new PointerEvent('pointerover', { bubbles:true, composed:true, relatedTarget: document.body }));
+    await sleep(280);
+    const expanded = {
+      state: document.documentElement.getAttribute('data-ob-dock'),
+      gearState: gear.getAttribute('data-ob-dock-state'),
+      fabOpacity: getComputedStyle(fab).opacity,
+      fabVisibility: getComputedStyle(fab).visibility,
+      fabPointerEvents: getComputedStyle(fab).pointerEvents,
+      fabInlineVisibility: fab.style.getPropertyValue('visibility'),
+      fabInlineVisibilityPriority: fab.style.getPropertyPriority('visibility'),
+    };
+    fab.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, composed:true }));
+    fab.dispatchEvent(new PointerEvent('pointerout', { bubbles:true, composed:true, relatedTarget: document.body }));
+    await sleep(550);
+    const held = { state: document.documentElement.getAttribute('data-ob-dock') };
+    await sleep(2550);
+    const autoCollapsed = { state: document.documentElement.getAttribute('data-ob-dock') };
+    gear.dispatchEvent(new PointerEvent('pointerover', { bubbles:true, composed:true, relatedTarget: document.body }));
+    await sleep(280);
+    gear.click();
+    await sleep(120);
+    const panelOpen = {
+      present: !!document.getElementById('ob-panel'),
+      gearExpanded: gear.getAttribute('aria-expanded') === 'true',
+    };
+    const closeButton = document.getElementById('ob-panel')?.querySelector('.ob-close');
+    const closeBefore = {
+      panel: !!document.getElementById('ob-panel'),
+      button: !!closeButton,
+      gearExpanded: gear.getAttribute('aria-expanded'),
+    };
+    closeButton?.click();
+    // release 的收起计时为 450ms，visibility 还带 200ms 的 CSS 过渡延迟；
+    // 留出明确余量，避免在两个定时器恰好同一 tick 时读取到过渡中的状态。
+    await sleep(800);
+    const panelClosed = {
+      state: document.documentElement.getAttribute('data-ob-dock'),
+      panelPresent: !!document.getElementById('ob-panel'),
+      closeBefore,
+      gearAttribute: gear.getAttribute('aria-expanded'),
+      gearExpanded: gear.getAttribute('aria-expanded') === 'false',
+    };
+    return { gear:true, fab:true, collapsed, expanded, held, autoCollapsed, panelOpen, panelClosed };
+  });
+  const dockWorks = e4.gear && e4.fab
+    && e4.collapsed.state === 'collapsed'
+    && e4.collapsed.gearState === 'collapsed'
+    && e4.collapsed.fabOpacity === '0'
+    && e4.collapsed.fabVisibility === 'hidden'
+    && e4.collapsed.fabPointerEvents === 'none'
+    && e4.expanded.state === 'expanded'
+    && e4.expanded.gearState === 'expanded'
+    && e4.expanded.fabOpacity === '1'
+    && e4.expanded.fabVisibility === 'visible'
+    && e4.expanded.fabPointerEvents === 'auto'
+    && e4.held.state === 'expanded'
+    && e4.autoCollapsed.state === 'collapsed'
+    && e4.panelOpen.present && e4.panelOpen.gearExpanded
+    && e4.panelClosed.state === 'collapsed' && e4.panelClosed.gearExpanded;
+  dockWorks
+    ? report.pass.push('E4 右下角控制坞：收起隐藏页面入口、悬停展开，移向入口时 action hold 保持可用')
+    : report.fail.push('E4 右下角控制坞状态/联动失败：' + JSON.stringify(e4));
+  await page.evaluate(() => document.getElementById('ob-gear')?.click());
+  await sleep(120);
 
   // F. 全局影子穿透兜底：Frank(666) 在双层嵌套 Shadow DOM 内也应被隐藏
   const f = await page.evaluate(`(() => {
