@@ -7,7 +7,8 @@
 
 任何代码、测试或维护文档工作，都必须先运行 `git status --short`，并阅读
 `docs/KNOWLEDGE_TREE.md`、`docs/MAINTENANCE_WORKFLOW.md` 和
-`docs/maintenance/CURRENT.md`，确认阅读路径、当前事实和工作区状态；涉及用户可见行为时再读
+`docs/maintenance/CURRENT.md`、`docs/maintenance/PLAN.md` 和
+`docs/architecture/ARCHITECTURE.md`，确认阅读路径、当前事实、活动计划和运行时边界；涉及用户可见行为时再读
 `README.md`，涉及某个历史版本时按知识树按需读取对应历史。根目录 `MAINTENANCE.md` 与
 `CHANGELOG.md` 是入口索引，不要求每轮加载完整历史归档。不得覆盖、暂存或回退与当前
 任务无关的脏文件。
@@ -44,15 +45,17 @@
    必须说明原因。
 2. 每个修复的缺陷都必须新增或更新回归断言；条件允许时，该断言必须能在旧行为
    上失败。
-3. 身份键必须保持规范化。不得创造新前缀，也不得把不可逆身份（例如 B 站
+3. 每轮实现必须先选择或创建 `docs/maintenance/PLAN.md` 中的 `OB-*` 计划项，写明范围、
+   非目标、验收标准和下一步；没有计划 ID 的大改动不得开始。
+4. 身份键必须保持规范化。不得创造新前缀，也不得把不可逆身份（例如 B 站
    `mid_hash`）伪装成已知 UID。
-4. DOM 适配优先使用当前捕获结构和安全兜底，禁止猜测选择器。身份未可靠解析时，
+5. DOM 适配优先使用当前捕获结构和安全兜底，禁止猜测选择器。身份未可靠解析时，
    不得注入可执行的拉黑入口。
-5. 用户可见行为变化时必须同步更新 `README.md` 和当前版本 changelog；验证状态、限制和
+6. 用户可见行为变化时必须同步更新 `README.md` 和当前版本 changelog；验证状态、限制和
    交接事实变化时必须同步更新 `docs/maintenance/CURRENT.md`。只有入口或历史路由变化时
    才更新根 `MAINTENANCE.md`、知识树或历史索引。
-6. 改动必须限于任务范围。修复平台适配时不得顺手进行无关重构。
-7. 多平台只对齐用户能力，不对齐实现细节。每个平台的 DOM、数据源、身份归属和入口
+7. 改动必须限于任务范围。修复平台适配时不得顺手进行无关重构。
+8. 多平台只对齐用户能力，不对齐实现细节。每个平台的 DOM、数据源、身份归属和入口
    位置都必须用该平台当前捕获结构或安全兜底独立验证；禁止把另一平台的选择器、组件
    层级或事件路径直接套用过来。
 
@@ -66,6 +69,7 @@
 
 - `AGENTS.md` 是强制规则正文；`docs/KNOWLEDGE_TREE.md` 是阅读路由；
   `docs/MAINTENANCE_WORKFLOW.md` 是详细维护流程；`docs/maintenance/CURRENT.md` 是当前事实唯一正文。
+  `docs/maintenance/PLAN.md` 是唯一活动计划，`docs/architecture/ARCHITECTURE.md` 是运行时边界正文；
   其他入口只做摘要或链接，不复制另一份会过期的规则。
 - 必须时刻注意更新：每次代码、测试、真实站点验证、性能结论、发布或文档结构变化完成后，
   立即判断哪些文档受影响，并在同一轮同步更新；不得把“以后再补文档”当成完成条件。
@@ -73,6 +77,9 @@
 - 所有供 AI 日常读写的活动文档都受 UTF-8 字节预算约束。接近预算时先拆分职责、去除重复、
   建立知识树，再继续追加；超过预算不得以追加内容硬撑。历史台账和法律/第三方原文只能作为
   明确标注的只读归档，不得当作活动文档，也不得在归档中继续追加当前事实。
+- 活动计划只保留未关闭项；已验证项应回写 CURRENT、版本 changelog 或历史索引后从活动正文移出。
+- `CURRENT.md` 记录的是“最近验证的源码快照”，不把后续纯文档提交误称为当前功能提交；门禁只要求该快照是
+  当前 `HEAD` 的祖先，并用候选源码 SHA-256 核对工作区 userscript；工作区状态描述必须与实际状态一致。
 - 每次文档或知识树变更至少运行 `node test/docs-check.cjs` 与 `git diff --check`；该检查负责
   发现大小超限、断链、版本不同步以及关键维护入口缺失。检查本身变化时也要同步维护本节和
   `docs/MAINTENANCE_WORKFLOW.md`。
@@ -85,7 +92,7 @@
 
 | 改动范围 | 必跑检查 |
 |---|---|
-| 文档、规则、知识树或版本说明 | `node test/docs-check.cjs` |
+| 文档、规则、知识树、计划、架构或版本说明 | `node test/docs-check.cjs` |
 | 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
 | B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
 | 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
@@ -142,10 +149,10 @@
 4. 除非用户明确要求，不得提交 `.workbuddy/`、已忽略的探针产物或重新生成的测试
    截图。
 5. 提交信息必须说明用户可见结果和受影响平台。
-6. 本仓库用户已明确授权常规版本发布：完成要求的验证后，默认提交本次明确范围内的
-   改动、推送当前分支、创建 `vX.Y.Z` tag，并创建同版本 GitHub Release，无需逐次请求；
-   用户明确要求暂停、仅修改、不推送或不发布时必须遵从。新增或更换远端、修改
-   Tampermonkey 更新 URL、覆盖既有 tag/Release 等实质不同操作仍须另行取得明确授权。
+6. push、公开 tag、GitHub Release、部署和其他公开发布必须得到当前任务上下文中的明确授权；
+   历史对话、旧交接或“常规版本发布”约定不自动继承。即使已经完成验证，未获得当前任务授权时也只能
+   保留本地提交或候选产物。新增或更换远端、修改 Tampermonkey 更新 URL、覆盖既有 tag/Release 等
+   实质不同操作始终需要单独明确授权。
 7. GitHub Release 必须使用与 userscript `@version` 一致的 tag，说明中区分
    `real-site verified`、`structure regression` 和 `blocked`。成功后报告提交哈希、远端
    分支、tag 和 Release URL。

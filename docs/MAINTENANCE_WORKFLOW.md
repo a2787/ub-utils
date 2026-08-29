@@ -5,11 +5,16 @@
 
 ## 0. 接手与边界确认
 
-先读 `AGENTS.md`、`docs/KNOWLEDGE_TREE.md`、本文件和 `docs/maintenance/CURRENT.md`，再读与任务直接相关的
+先读 `AGENTS.md`、`docs/KNOWLEDGE_TREE.md`、本文件、`docs/maintenance/CURRENT.md`、`docs/maintenance/PLAN.md`
+和 `docs/architecture/ARCHITECTURE.md`，再读与任务直接相关的
 README 段落、源码和测试。执行 `git status --short`，把已有脏改动视为用户资产；不覆盖、不回退、不暂存无关改动。
 
 先写出本轮范围：受影响的平台、用户可见行为、是否涉及存储/身份/网络/发布、需要的验证等级，以及明确不做的事项。
 需求不清时先给出最合理的范围和风险；只有会改变任务边界、需要新权限或触碰红线时才暂停请求决定。
+在 `PLAN.md` 选择或创建一个 `OB-*` 项，补齐范围、非目标、依赖、验收、证据和下一步；大改动必须先经过用户确认。
+
+计划状态由 `proposed → approved → in_progress → verified` 组成，验证受阻时转为 `blocked`，暂缓时转为 `deferred`，
+被新决定替代时转为 `superseded`。状态不能跳过证据直接写成 `verified`。
 
 ## 1. 复现与证据基线
 
@@ -35,6 +40,7 @@ README 段落、源码和测试。执行 `git status --short`，把已有脏改�
 4. 平台只对齐用户能力，不套用另一平台的选择器、层级或事件路径；新增选择器先由真实结构捕获确认。
 5. 保持运行锁、GM 存储启动栅栏、用户脚本 document-start 顺序和跨页面状态边界。
 6. 代码改动完成后主动运行受影响的测试和 `node --check omniblock.user.js`；不要注释错误或增加绕过标记。
+7. 涉及架构边界、信任边界、数据格式或长期维护方式时，用一个短 ADR 记录一个决定；旧 ADR 不改写。
 
 ## 3. “注意更新”同步协议
 
@@ -45,7 +51,8 @@ README 段落、源码和测试。执行 `git status --short`，把已有脏改�
 | 用户看到的入口、文案、范围、默认值或限制 | `README.md`、当前版本 changelog |
 | 测试命令、通过/失败数字、真实站点、限制或下一步 | `docs/maintenance/CURRENT.md` |
 | 维护规则、安全边界、发布门禁、文档路由 | `AGENTS.md`、`docs/KNOWLEDGE_TREE.md`、本文件 |
-| 版本号、构建标识、提交、tag、Release、raw 更新出口 | 当前 changelog、`CURRENT.md`、发布回写 |
+| 版本号、构建标识、源码快照、提交、tag、Release、raw 更新出口 | 当前 changelog、`CURRENT.md`、发布回写 |
+| 计划状态、依赖、验收或架构决策 | `PLAN.md`、`ARCHITECTURE.md`、必要时 ADR |
 | 文件移动、拆分、合并、归档 | 所有入口索引、相对链接、大小门禁 |
 
 更新后用搜索检查旧状态残留，例如旧版本号、旧的“未发布/已发布”、过时命令和已经移动的路径；
@@ -56,6 +63,7 @@ README 段落、源码和测试。执行 `git status --short`，把已有脏改�
 活动文档使用 UTF-8 字节预算：`AGENTS.md` 16 KiB、知识树 12 KiB、流程 24 KiB、当前状态 24 KiB、
 根维护入口 16 KiB、根 changelog 24 KiB、单版本条目 24 KiB、README 64 KiB。`node test/docs-check.cjs`
 负责自动检查这些边界和入口一致性。
+活动计划 24 KiB、架构正文 24 KiB、单个 ADR 12 KiB；接近预算时先拆分，不把历史流水账挪进活动文件。
 
 达到预算的处理顺序：
 
@@ -84,7 +92,7 @@ git diff --check
 
 ## 6. 发布与关闭
 
-只有用户明确授权且发布边界满足时才公开发布。发布前：提升 userscript `@version`，同步 `RUNTIME_BUILD`、README、
+只有当前任务上下文中的明确授权且发布边界满足时才公开发布；历史授权不自动继承。发布前：提升 userscript `@version`，同步 `RUNTIME_BUILD`、README、
 当前版本 changelog 和 CURRENT；运行完整矩阵、真实探针、docs check、隐私门禁和暂存差异审阅；只暂存明确路径。
 
 发布顺序：

@@ -9,6 +9,9 @@
 2. [docs/KNOWLEDGE_TREE.md](docs/KNOWLEDGE_TREE.md)：知识树和按任务阅读路由。
 3. [docs/MAINTENANCE_WORKFLOW.md](docs/MAINTENANCE_WORKFLOW.md)：标准维护、验证、发布和文档更新流程。
 4. [docs/maintenance/CURRENT.md](docs/maintenance/CURRENT.md)：当前版本、证据、限制和下一步。
+5. [docs/maintenance/PLAN.md](docs/maintenance/PLAN.md)：唯一活动计划、状态、依赖和验收条件。
+6. [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)：运行时架构、生命周期和资源边界。
+7. [docs/decisions/0001-maintenance-control-plane.md](docs/decisions/0001-maintenance-control-plane.md)：维护控制平面架构决策。
 
 README、测试、平台探针和历史记录只按任务读取；不要默认打开历史归档。
 
