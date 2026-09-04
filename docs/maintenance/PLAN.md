@@ -96,6 +96,24 @@ proposed → approved → in_progress → verified
 - supersedes: none
 - files: omniblock.user.js; test/state.cjs; test/performance.cjs
 
+### OB-WEIBO-002 — 详情页虚拟评论滚动稳定性
+
+- status: verified
+- priority: P1
+- scope: 微博帖子详情页 `.woo-panel-main` 的虚拟评论列表；在连续屏蔽多条主评论/楼主评论并快速滚轮时，以当前回收器的空间位置作为补位基线，避免物理行临时重排导致内容层重叠或空白；补充人工合成快速滚动回归和用户授权专用浏览器复测。
+- non-goals: 不新增运行模式或独立诊断模式；不降低屏蔽效果；不改用户主页嵌套评论、微博选择器/身份来源、其他平台或 X；不执行平台写入；不在用户确认前收尾、版本发布或公开推送。
+- dependencies: OB-CORE-001, OB-LIFE-001
+- acceptance: required
+  - [x] 人工合成的多条隐藏 + 物理行重排/快速滚动回归在旧行为上失败，在候选行为上无可见内容重叠或异常空白。
+  - [x] 既有 `node test/weibo-replay.cjs` 与跨平台矩阵保持通过，身份键、回收占位和撤销恢复语义不变。
+  - [x] 2026-09-04 用户授权登录态专用 Chrome 的 `weibo.com/...` 详情页复现问题：快速上下滚轮期间捕获到物理行 DOM 顺序与空间顺序不一致，出现最大约 195px 重叠、345px 空白；候选修复后同一详情页采样活动内容最大重叠约 0.33px，用户体验后未报告主要问题并要求继续收口。
+  - [x] 用户确认候选体验无主要问题后，同步 CURRENT/README/版本 changelog 并创建本地提交；push、tag、Release 仍未执行且仍需另行授权。
+- evidence: `structure regression`：`node test/weibo-replay.cjs` 当前候选 12/12，旧行为同一回放失败；`real-site verified`：2026-09-04 用户授权登录态专用 Chrome 的微博详情页只读多条临时屏蔽/快速滚轮采样，候选活动内容最大重叠约 0.33px。
+- next: 继续观察微博回收器结构变化；若再次出现真实滚动异常，另立计划并先重新捕获当前 DOM，不扩大本项范围。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/weibo-replay.cjs
+
 ### OB-RULE-001 — 自动规则正则安全边界
 
 - status: proposed
