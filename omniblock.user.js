@@ -3657,7 +3657,7 @@
       const listState = virtualListSyncStates.get(list);
       runtimeDiagnostics.virtualLastBlockedRows = listState ? listState.blockedRows.size : 0;
     }
-    const meta = rows.map((candidate) => {
+    const meta = rows.map((candidate, domOrder) => {
       const state = virtualRowInlineStates.get(candidate);
       const inlineValue = candidate.style.getPropertyValue('transform');
       const inlinePriority = candidate.style.getPropertyPriority('transform');
@@ -3709,6 +3709,7 @@
         candidate,
         source,
         y: readTranslateY(source),
+        domOrder,
         inactive,
         blocked: blockedByState,
         height: safeVirtualRowHeight(blockedState?.height)
@@ -3723,15 +3724,39 @@
     if (runtimeDiagnostics) runtimeDiagnostics.virtualLastHiddenPixels = hiddenPixels;
     if (hiddenPixels > 0) syncVirtualListSize(list, hiddenPixels);
     else restoreVirtualListSize(list);
-    let shift = 0;
-    let previousActive = null;
-    for (let i = 0; i < meta.length; i++) {
-      const entry = meta[i];
+    // 微博详情页的回收器会复用物理行，快速滚动时 DOM 顺序可能暂时与
+    // translateY 的空间顺序不同（例如 16、8、2、3...）。隐藏高度必须按
+    // 空间顺序累计；若仍按物理 DOM 顺序补位，就会把某些内容层重复上移，
+    // 形成滚轮中的短暂重叠/空白。只对已由真实结构确认的详情列表启用，
+    // 并在出现超大/无效基线时保留原有异常修复路径。
+    let activeMeta = meta.filter((entry) => !entry.inactive);
+    if (isWeiboDetailVirtualList(list)) {
+      const hasUnsafePosition = activeMeta.some((entry) => (
+        !Number.isFinite(entry.y) || Math.abs(entry.y) > MAX_VIRTUAL_ROW_HEIGHT
+      ));
+      let previousY = NaN;
+      const spatiallyDisordered = !hasUnsafePosition && activeMeta.some((entry) => {
+        const currentY = entry.y;
+        const disordered = Number.isFinite(previousY) && currentY < previousY;
+        if (Number.isFinite(currentY)) previousY = currentY;
+        return disordered;
+      });
+      if (spatiallyDisordered) {
+        activeMeta = activeMeta.slice().sort((left, right) => (
+          left.y - right.y || left.domOrder - right.domOrder
+        ));
+      }
+    }
+    for (const entry of meta) {
       if (entry.inactive) {
         // 保留平台的回收标记和原始 transform；等它重新变为活动行后再补位。
         syncVirtualContentOffset(entry.candidate, 0);
-        continue;
       }
+    }
+    let shift = 0;
+    let previousActive = null;
+    for (let i = 0; i < activeMeta.length; i++) {
+      const entry = activeMeta[i];
 
       const expectedBaseY = previousActive && Number.isFinite(previousActive.baseY) && previousActive.height > 0
         ? previousActive.baseY + previousActive.height : NaN;

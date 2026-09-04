@@ -102,6 +102,20 @@ const detailFixture = `<!doctype html><html><head><meta charset="utf-8"></head><
   ${detailTopRow('translateY(144px)', '100002', '详情页后续作者')}
 </div></div></div></div></body></html>`;
 
+// 2026-09-04 针对专用 Chrome 微博详情页滚轮波动的人工合成回归：
+// 回收器保留同一批物理行，但在快速滚动期间把它们临时重排到不同的
+// translateY/data-index 位置；其中多条评论已在本地名单中。UID、文案和
+// 页面标识均为人工合成，夹具只验证“按空间顺序累计隐藏高度”这一契约。
+const detailOrderRow = (index) => `
+  <div class="vue-recycle-scroller__item-view" style="position:absolute;transform:translateY(${index * 72}px) translateX(0px);opacity:1">
+    <div class="wbpro-scroller-item" data-index="${index}" style="display:flex;box-sizing:border-box;height:72px !important">
+      <div class="wbpro-list"><div class="item1" style="min-height:72px;box-sizing:border-box"><div class="item1in"><div class="con1"><div class="text"><a href="/u/${100000 + index}" usercard="${100000 + index}">详情滚动回放作者${index}</a><span>详情滚动回放正文${index}</span></div><div class="info"><div class="opt"></div></div></div></div></div></div>
+    </div>
+  </div>`;
+const detailOrderFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body><div class="woo-panel-main"><div class="detail-comment-region"><div class="vue-recycle-scroller ready page-mode"><div class="vue-recycle-scroller__item-wrapper" style="min-height:864px">
+  ${Array.from({ length: 8 }, (_, index) => detailOrderRow(index)).join('')}
+</div></div></div></div></body></html>`;
+
 // 2026-08-25 专用 Chrome 微博个人页展开评论的真实层级回放：帖子本身位于
 // item-view > wbpro-scroller-item，帖子内的评论才位于其更深处的 wbpro-list > item1。
 // 这是人工合成夹具，只保留帖子回收和嵌套评论隐藏所需的结构；嵌套评论不能触发
@@ -557,6 +571,96 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('详情页回收行重新激活回放：内容层 transform 在观察回调内恢复，不出现隐藏行高度空洞');
     } else report.fail.push('详情页回收行重新激活补位失败：' + JSON.stringify(detailRecycle));
     await detailPage.close();
+
+    const detailOrderPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await detailOrderPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: detailOrderFixture }));
+    await detailOrderPage.addInitScript({ content: shim + '\n' + userscript });
+    await detailOrderPage.goto('https://weibo.com/detail-comment-order-replay', { waitUntil: 'domcontentloaded' });
+    await detailOrderPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    await sleep(600);
+    const detailOrder = await detailOrderPage.evaluate(async () => {
+      const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = () => Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const blockedKeys = ['weibo:uid:100003', 'weibo:uid:100005'];
+      const added = blockedKeys.map((key) => window.OB.Store.addIdentities([key], '详情滚动回放屏蔽作者', '人工合成滚轮回归'));
+      await sleepInPage(180);
+      const permutations = [
+        [5, 0, 3, 1, 7, 2, 6, 4],
+        [6, 2, 0, 7, 3, 5, 1, 4],
+        [1, 6, 4, 0, 7, 2, 5, 3],
+        [7, 3, 5, 1, 6, 0, 4, 2],
+        [2, 7, 1, 5, 0, 4, 3, 6],
+      ];
+      const sample = () => {
+        const entries = rows().map((row, domOrder) => {
+          const item = row.querySelector('.wbpro-list > .item1');
+          if (!item) return { domOrder, item: false };
+          const rect = item.getBoundingClientRect();
+          const content = row.firstElementChild;
+          return {
+            domOrder,
+            dataIndex: content ? content.getAttribute('data-index') : '',
+            outerTop: row.getBoundingClientRect().top,
+            outerTransform: row.style.getPropertyValue('transform'),
+            contentTransform: content ? content.style.getPropertyValue('transform') : '',
+            height: rect.height,
+            top: rect.top,
+            bottom: rect.bottom,
+          };
+        });
+        const visible = entries.filter((entry) => entry.height > 0)
+          .sort((left, right) => left.top - right.top || left.domOrder - right.domOrder);
+        let overlap = 0;
+        let gap = 0;
+        for (let index = 1; index < visible.length; index++) {
+          overlap = Math.max(overlap, visible[index - 1].bottom - visible[index].top);
+          gap = Math.max(gap, visible[index].top - visible[index - 1].bottom);
+        }
+        return { entries, visible, overlap: Math.max(0, overlap), gap: Math.max(0, gap) };
+      };
+      const samples = [];
+      const timer = setInterval(() => samples.push(sample()), 2);
+      for (let round = 0; round < 24; round++) {
+        const permutation = permutations[round % permutations.length];
+        rows().forEach((row, index) => {
+          const slot = permutation[index];
+          const content = row.firstElementChild;
+          if (content) content.setAttribute('data-index', String(slot));
+          row.style.setProperty('transform', `translateY(${slot * 72}px) translateX(0px)`, '');
+        });
+        window.scrollTo(0, (round % 6) * 24);
+        window.dispatchEvent(new Event('scroll'));
+        await sleepInPage(12);
+        // 让 MutationObserver/回收同步先在一个可绘制帧内完成；同步写入过程中的
+        // 同一 JS task 中间态不会被浏览器绘制，不作为用户可见波动计入断言。
+        samples.push(sample());
+      }
+      clearInterval(timer);
+      await sleepInPage(220);
+      const settled = sample();
+      const maxOverlap = samples.reduce((max, value) => Math.max(max, value.overlap), 0);
+      const maxGap = samples.reduce((max, value) => Math.max(max, value.gap), 0);
+      const worstOverlap = samples.reduce((worst, value) => value.overlap > worst.overlap ? value : worst, { overlap: 0, gap: 0, visible: [] });
+      const worstGap = samples.reduce((worst, value) => value.gap > worst.gap ? value : worst, { overlap: 0, gap: 0, visible: [] });
+      return {
+        added: added.map((result) => ({ added: result && result.added, persisted: result && result.persisted })),
+        samples: samples.length,
+        maxOverlap,
+        maxGap,
+        worstOverlap,
+        worstGap,
+        settled,
+        virtualSyncs: window.OB.diagnostics ? window.OB.diagnostics.virtualSyncs : 0,
+      };
+    });
+    const detailOrderPass = detailOrder && detailOrder.samples >= 20
+      && detailOrder.maxOverlap <= 1 && detailOrder.maxGap <= 1
+      && detailOrder.settled && detailOrder.settled.overlap <= 1 && detailOrder.settled.gap <= 1
+      && detailOrder.virtualSyncs > 0;
+    if (detailOrderPass) {
+      report.pass.push('详情页快速滚动回放：多条隐藏评论与物理行重排期间无内容层重叠或异常空白');
+    } else report.fail.push('详情页快速滚动/物理行重排补位失败：' + JSON.stringify(detailOrder));
+    await detailOrderPage.close();
 
     const feedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await feedPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: feedFixture }));
