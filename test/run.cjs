@@ -186,6 +186,37 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ? report.pass.push('K 同文档重复注入被运行锁忽略：仅保留一套运行时与设置入口')
     : report.fail.push('K 同文档重复注入防护失败：' + JSON.stringify(duplicateRuntime));
 
+  // K2. 开发扩展存储恢复栅栏可能在启动阶段等待消息；重复注入必须在第一份
+  // 实例 await 期间就被运行锁拒绝，而不是等 state=active 后才幂等。
+  const delayedGuardPage = await browser.newPage();
+  await delayedGuardPage.route('**/*', (route) => route.fulfill({
+    status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE,
+  }));
+  const delayedInit = SHIM + `
+window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolve, 180));
+` + '\n' + USERSCRIPT;
+  await delayedGuardPage.addInitScript({ content: delayedInit });
+  await delayedGuardPage.goto('https://www.bilibili.com/delayed-guard', { waitUntil: 'domcontentloaded' });
+  await sleep(30);
+  await delayedGuardPage.evaluate((source) => { (0, eval)(source); }, USERSCRIPT);
+  await sleep(520);
+  const delayedGuard = await delayedGuardPage.evaluate(() => ({
+    guard: window.__OB_RUNTIME_GUARD__ ? { ...window.__OB_RUNTIME_GUARD__ } : null,
+    gearCount: document.querySelectorAll('#ob-gear').length,
+    runtime: window.OB && window.OB.runtime,
+  }));
+  const delayedGuardWorks = !!(delayedGuard.guard
+    && delayedGuard.guard.active
+    && delayedGuard.guard.state === 'active'
+    && delayedGuard.guard.duplicateExecutions === 1
+    && delayedGuard.runtime
+    && delayedGuard.runtime.build === SOURCE_BUILD
+    && delayedGuard.gearCount === 1);
+  delayedGuardWorks
+    ? report.pass.push('K2 异步扩展恢复期间的重复注入也被运行锁拒绝')
+    : report.fail.push('K2 异步扩展恢复期间运行锁竞态：' + JSON.stringify(delayedGuard));
+  await delayedGuardPage.close();
+
   // P. 突发 DOM 更新不能在 MutationObserver 回调内同步深扫。人工追加 40 棵
   // 相互独立的 Shadow DOM 评论树，扫描器应分帧处理，并至少触发一次预算让步。
   const scannerBefore = await page.evaluate(() => ({ ...(window.OB && window.OB.diagnostics || {}) }));

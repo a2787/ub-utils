@@ -11,6 +11,7 @@ const path = require('path');
 const source = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (source.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const shim = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled:true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'disappear', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (key, fallback) => key in window.__gm ? window.__gm[key] : fallback;
 window.GM_setValue = (key, value) => { window.__gm[key] = value; if (key === 'omniblock:data:v1') window.__writes = (window.__writes || 0) + 1; };
@@ -116,6 +117,25 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
       manager.loadAll = savedLoadAll;
       const managerWrites = window.__writes || 0;
       window.OB.closeCommentManager();
+
+      // 异步加载返回前关闭管理器：当前实现必须中止 signal，并丢弃旧结果，
+      // 防止路由/面板切换后旧 Promise 再次写入已失效的管理器状态。
+      let deferredResolve = null;
+      let receivedSignal = null;
+      manager.loadAll = async (_onProgress, options) => {
+        receivedSignal = options && options.signal || null;
+        return new Promise((resolve) => { deferredResolve = resolve; });
+      };
+      window.OB.openCommentManager(window.OB.adapters.bilibili, fab);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const pendingPanel = !!document.querySelector('#ob-comment-manager');
+      window.OB.closeCommentManager();
+      const signalAborted = !!receivedSignal && receivedSignal.aborted;
+      if (deferredResolve) deferredResolve({ records: [], partial: true, reason: '人工合成取消' });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const cancelDiagnostics = window.OB.diagnostics && window.OB.diagnostics.commentManagerCancelledLoads || 0;
+      const cancelledPanelAbsent = !document.querySelector('#ob-comment-manager');
+      manager.loadAll = savedLoadAll;
       const rootMenu = window.__biliRoot && window.__biliRoot.shadowRoot
         ? window.__biliRoot.shadowRoot.querySelector('bili-comment-renderer') : null;
       const rootMenuOptions = rootMenu && rootMenu.shadowRoot
@@ -124,6 +144,26 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
         ? rootMenuOptions.shadowRoot.querySelector('#options') : null;
       const threadButton = rootOptions && rootOptions.querySelector('.ob-thread-quick');
       const threadWritesBefore = window.__writes || 0;
+      const savedLoadThread = manager.loadThread;
+      let cancelledThreadResolve = null;
+      let cancelledThreadSignal = null;
+      manager.loadThread = async (_item, _onProgress, options) => {
+        cancelledThreadSignal = options && options.signal || null;
+        return new Promise((resolve) => { cancelledThreadResolve = resolve; });
+      };
+      const cancelTarget = window.__biliRoot;
+      const cancelInfo = window.OB.adapters.bilibili.extract(cancelTarget);
+      const cancelPromise = window.OB.runThreadBlock(cancelTarget, window.OB.adapters.bilibili, cancelInfo);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      history.pushState({}, '', location.pathname + '#ob-thread-cancel');
+      await new Promise((resolve) => setTimeout(resolve, 1250));
+      const threadSignalAborted = !!cancelledThreadSignal && cancelledThreadSignal.aborted;
+      if (cancelledThreadResolve) cancelledThreadResolve({ records: [], partial: true, reason: '人工合成路由取消' });
+      await cancelPromise;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const threadCancelDiagnostics = window.OB.diagnostics && window.OB.diagnostics.threadCancelledLoads || 0;
+      const threadCancelConfirmAbsent = !document.querySelector('#ob-confirm');
+      manager.loadThread = savedLoadThread;
       if (threadButton) threadButton.click();
       await new Promise((resolve) => setTimeout(resolve, 120));
       const threadConfirm = document.querySelector('#ob-confirm');
@@ -143,12 +183,19 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
         hasMeta:rows.some((row) => /主评论/.test(row.textContent || '')), searchRows,
         searchMatch:searchRows === 1 && searchKey === 'bili:uid:400001', searchKey, searchValue:search.value, searchRowText,
         selectedText, managerWrites, writes:window.__writes || 0, confirm:!!confirm, partialStatus,
+        pendingPanel, receivedSignal:!!receivedSignal, signalAborted, cancelDiagnostics,
+        cancelledPanelAbsent,
+        threadSignalAborted, threadCancelDiagnostics, threadCancelConfirmAbsent,
         threadButton:!!threadButton, threadConfirmOk, threadBlocked, threadWrites, threadRestored,
       };
     });
     check(biliState.fab && biliState.panel && biliState.rows === 3 && biliState.hasSample && biliState.hasMeta
       && biliState.searchMatch && /3/.test(biliState.selectedText) && biliState.managerWrites === 0 && biliState.confirm
       && /部分加载|分页失败/.test(biliState.partialStatus || '')
+      && biliState.pendingPanel && biliState.receivedSignal && biliState.signalAborted
+      && biliState.cancelDiagnostics >= 1 && biliState.cancelledPanelAbsent
+      && biliState.threadSignalAborted && biliState.threadCancelDiagnostics >= 1
+      && biliState.threadCancelConfirmAbsent
       && biliState.threadButton && biliState.threadConfirmOk && biliState.threadBlocked
       && biliState.threadWrites === 1 && biliState.threadRestored,
       'B站统一管理器自动读取根评论/子回复、作者去重、示例评论、搜索和筛选全选', JSON.stringify(biliState), report);

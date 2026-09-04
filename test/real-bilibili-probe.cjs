@@ -1029,13 +1029,20 @@ async function pickLocalCommentTarget(candidates) {
         result.restored = !!undo && !target.hasAttribute('data-ob-blocked') && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0;
 
         // 同一条根评论的楼操作：只点击脚本自己的入口和确认框，存储仍是内存 stub。
-        const threadButton = collect(targetRenderer, '.ob-thread-quick')[0] || null;
+        // 评论管理器打开/关闭期间 B站可能复用整棵 renderer；重新取得仍连接在文档中的
+        // 目标，避免把平台节点回收误判成脚本没有弹出楼操作确认框。
+        const freshTargetRenderer = collect(document, 'bili-comment-renderer')
+          .find((renderer) => findButton(renderer) && hasLoadedReply(renderer)) || null;
+        const threadButton = freshTargetRenderer ? collect(freshTargetRenderer, '.ob-thread-quick')[0] || null : null;
         result.thread = { found: !!threadButton, confirm: false, authorKeyCount: 0, blocked: false, partial: false, writes: 0, restored: false };
         if (threadButton) {
           const writesBeforeThread = window.__obProbeWrites || 0;
           threadButton.click();
-          await new Promise((resolve) => setTimeout(resolve, 700));
-          const threadConfirm = document.getElementById('ob-confirm');
+          let threadConfirm = null;
+          for (let attempt = 0; attempt < 20 && !threadConfirm; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            threadConfirm = document.getElementById('ob-confirm');
+          }
           const threadText = threadConfirm && threadConfirm.textContent || '';
           const threadKeys = Array.from(new Set(threadText.match(/bili:uid:\d+/g) || []));
           const countMatch = threadText.match(/屏蔽该楼及\s*(\d+)\s*位作者/);

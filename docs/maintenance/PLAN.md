@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-08-30
+更新时间：2026-09-04
 
 本文件是 OmniBlock 唯一的活动计划。它记录当前要解决的问题、范围、依赖、验收条件和
 下一步动作；当前事实放在 `CURRENT.md`，用户可见变化放在 README/版本 changelog，已经
@@ -25,9 +25,97 @@ proposed → approved → in_progress → verified
 
 ## 活动项
 
+### OB-CORE-001 — 单一运行路径的正确性与低开销治理
+
+- status: verified
+- priority: P0
+- scope: 已证实的启动去重竞态、持久化成功语义、事件日志写放大、热路径重复判定等通用核心路径；保持一个运行模式，诊断详细记录继续由插件内开关控制。扫描时间片与可取消异步任务等尚未实施的优化留在后续性能计划，不在本项冒充完成。
+- non-goals: 不新增“第一资源模式”/“低资源模式”或独立“诊断模式”；除独立的 OB-TIEBA-001 外不改变平台选择器、身份规则或屏蔽效果；不处理 X 平台；不执行公开发布、push 或部署。
+- dependencies: none
+- acceptance: required
+  - [x] 启动守卫在异步初始化期间也能原子地阻止重复实例。
+  - [x] 持久化失败不会继续宣称成功或触发成功后置流程，并有回归断言。
+  - [x] 日志/扫描热路径不引入额外常驻轮询；现有本地矩阵保持通过。
+  - [x] 修改前后均有 `node --check`、受影响测试和 `git diff --check` 证据。
+  - [x] 每个平台行为变更仍须同轮真实浏览器验证；没有现场结构证据时只做通用核心修复。
+- evidence: 2026-09-04 `node test/run.cjs` 20/20、`node test/state.cjs` 9/9、`node test/performance.cjs` 8/8、`node test/adapters.cjs` 22/22 及其余本地矩阵通过；用户授权专用 Chrome 登录态页面均 `readyState=complete` 且运行时可读；X 明确排除。
+- next: 启动守卫、持久化失败语义、日志裁剪、抖音规则重复计算、异步任务取消和身份索引缓存均已分项落地；深扫描时间片仍须先取得可归因线上基线，不在本项扩大范围。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/run.cjs; test/state.cjs; test/performance.cjs
+
+### OB-TIEBA-001 — 现代详情评论身份路径
+
+- status: verified
+- priority: P1
+- scope: 为登录态真站已捕获的 `.pb-comment-item` 增加 Vue `userInfo.id` 数字身份解析和自身容器隐藏；保留旧版 `data-field` 路径。
+- non-goals: 不读取或保存 Cookie；不把 `home/main?id` 的 opaque portrait 当作 UID；不猜测首页 `.thread-card` 作者或未加载楼中楼；不处理 X 平台。
+- dependencies: OB-CORE-001
+- acceptance: required
+  - [x] 新增人工合成结构回归，数字 `userInfo.id` 可解析，集合容器不被误选。
+  - [x] 旧版 `data-field`、楼中楼集合防护和现有跨平台矩阵保持通过。
+  - [x] 2026-09-04 用户授权登录态专用 Chrome 的 `tieba.baidu.com/p/...` 真实详情页选中 1 个 `.pb-comment-item`，来源 `dom-vue`，测试存储桩写入后零占位隐藏。
+  - [x] 选择器来自本轮真实 DOM 捕获，未新增首页 `.thread-card` 猜测兜底。
+- evidence: `structure regression`：`node test/adapters.cjs` 22/22；`real-site verified`：2026-09-04 登录态贴吧详情页 1 个现代评论项解析/隐藏通过；页面无登录拦截。
+- next: 取得第二个现代详情页或可展开楼中楼样本后，复核虚拟回收和多评论项边界；此前不扩展首页帖子作者。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/adapters.cjs
+
+### OB-LIFE-001 — 评论/楼操作异步会话边界
+
+- status: verified
+- priority: P1
+- scope: 评论管理器、楼中楼读取和作品读取完成后回调的会话校验；页面关闭、路由切换或面板重开时丢弃旧结果。
+- non-goals: 不改变任何平台选择器、身份来源或平台请求协议；不把平台写入操作交给脚本；不新增运行模式。
+- dependencies: OB-CORE-001
+- acceptance: required
+  - [x] 关闭或切换路由后，旧评论/楼操作不会重新渲染或提交名单。
+  - [x] 旧异步结果只记录安全的取消原因，不保存页面节点或原始内容。
+  - [x] B站、抖音、微博本地管理器回归保持通过，并在登录态真实页面完成只读入口核对；微博真实楼目标因平台重渲染无法确认时保持取消，不扩大为通过。
+- evidence: `structure regression`：`node test/comment-manager.cjs` 3/3，覆盖管理器关闭、SPA 路由切换、AbortSignal 和取消诊断；`real-site verified`：2026-09-04 抖音详情页管理器 3 行且本地隐藏/恢复通过，微博登录态管理器 23 行/搜索/全选/3 个根楼入口可读，并观察到 1 次路由切换取消；B站当前真实探针管理器 2 行且本地楼层/整楼隐藏与恢复通过。微博实际楼目标被平台回收，确认动作按 `blocked` 保留。
+- next: 若后续平台提供稳定楼目标，再复核真实确认动作；当前不修改选择器、不增加运行模式。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/run.cjs; test/comment-manager.cjs
+
+### OB-STORE-001 — 名单身份索引与并发合并
+
+- status: verified
+- priority: P1
+- scope: Store 内部身份到人物的索引、批量导入/批量屏蔽的重复遍历，以及跨标签页变化的安全合并。
+- non-goals: 不改变 v1 导入导出格式、身份规范化规则或用户可见名单语义；不引入云端同步；不执行远程写入。
+- dependencies: OB-CORE-001
+- acceptance: required
+  - [x] 批量添加和导入不再为每个组重复构建完整身份集合。
+  - [x] 重复身份仍只归属一个人物，合并结果与现有回归一致。
+  - [x] 外部标签页变化不会静默覆盖尚未确认落盘的本地内存变更；冲突有可观测结果。
+- evidence: `structure regression`：2026-09-04 `node test/state.cjs` 9/9，人工合成批量身份索引命中/惰性重建、重复身份归属和主名单写入失败后的跨标签页冲突保护均通过；索引只存在于 Store 内存，不改变 v1 导入导出格式。
+- next: 观察真实长名单下的 `identityIndex.rebuilds/lookups` 指标；任何跨标签页三方合并或格式变化另立 ADR，不在本项静默扩展。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/state.cjs; test/performance.cjs
+
+### OB-RULE-001 — 自动规则正则安全边界
+
+- status: proposed
+- priority: P2
+- scope: 自动弹幕正则的灾难性回溯风险识别、失败提示和热路径编译缓存。
+- non-goals: 不删除用户规则；不改变关键词规则；不为规避风险而关闭自动屏蔽。
+- dependencies: OB-CORE-001
+- acceptance: required
+  - [ ] 明显高风险表达式在保存前被拒绝并给出可理解原因。
+  - [ ] 合法表达式只编译一次，匹配过程不重复构造 RegExp。
+  - [ ] B站/抖音自动弹幕本地夹具和已授权真实页面只读探针保持通过。
+- evidence: pending；先补充人工合成的高风险/合法表达式回归。
+- next: 设计保守启发式并评估对现有规则兼容性，必要时先以 warning 方式落地。
+- updated: 2026-09-04
+- supersedes: none
+- files: omniblock.user.js; test/danmaku-auto.cjs; test/state.cjs
+
 ### OB-PERF-001 — 可归因的性能预算
 
-- status: blocked
+- status: in_progress
 - priority: P2
 - scope: 抖音高频 DOM、深层扫描、虚拟列表、B 站弹幕和日志/存储写入的测量与优化。
 - non-goals: 不凭单次主观 CPU 观察修改多个平台的行为。
@@ -37,9 +125,9 @@ proposed → approved → in_progress → verified
   - [x] 有可重复的可见/隐藏/换片场景本地基线和回归阈值。
   - [x] 真实页面无法访问时保留 blocked，不用夹具数字替代。
   - [ ] 取得可归属于当前构建的抖音真实静置、播放和换片基线。
-- evidence: structure regression 7/7；2026-08-30 抖音隔离页进入验证码中间页，无法采集真实 CPU/脚本时长。
-- next: 在无需读取 Cookie 的可访问抖音会话中复跑只读探针并采集静置、播放和切换视频基线；此前保持 blocked。
-- updated: 2026-08-30
+- evidence: `structure regression`：性能边界 8/8；2026-09-04 用户授权登录态抖音详情页只读探针识别 3 条带身份弹幕、6 条评论和 3 行管理器，弹幕/评论本地隐藏与恢复通过，稳定性采样 10 次、心跳错误 0、最大延迟 4ms；播放 4.025 秒 renderer/page 总量为 TaskDuration 0.482075 秒、ThreadTime 0.477392 秒、ScriptDuration 0.095069 秒、LayoutDuration 0.006822 秒、RecalcStyleDuration 0.041989 秒，暂停 4.012 秒分别为 0.345100、0.352478、0.038331、0、0.033411 秒。该指标是页面 renderer 总量，不是插件独占 CPU。换片场景在平台回收旧节点后没有稳定的新目标，按 `blocked` 记录。
+- next: 保留播放/暂停数据作为当前候选的页面总量基线；取得稳定换片目标后再补采切换窗口。只有在获得可归因插件指标后，才考虑深扫描时间片或进一步缓存优化；若入口再次验证码阻断，维持 `blocked`。
+- updated: 2026-09-04
 - supersedes: none
 - files: omniblock.user.js; test/performance.cjs; test/real-platform-probe.cjs
 

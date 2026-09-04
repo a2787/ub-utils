@@ -129,6 +129,32 @@ function resetDiagnostics(page) {
         report.fail.push('存储/日志性能指标不完整：' + JSON.stringify(metricStatus));
       }
 
+      // 日志分片上限回归：用延迟写入一次性制造略超上限的人工事件，确认只保留
+      // 最近 MAX_EVENTS_PER_DAY 条；这条断言也保护 trimAndWriteShard 不退回逐条 shift。
+      const logCap = await page.evaluate(() => {
+        const day = new Date().toISOString().slice(0, 10);
+        for (let index = 0; index < 50005; index++) {
+          window.OB.logs.record('test.performance.log-cap', { safeCount: index }, {
+            force: true, deferFlush: true, at: Date.now(),
+          });
+        }
+        window.OB.logs.flush();
+        const status = window.OB.logs.status();
+        const events = window.OB.logs.eventsForDay(day);
+        return {
+          events: events.length,
+          maxEventsPerDay: status.maxEventsPerDay,
+          firstCount: events[0] && events[0].data && events[0].data.safeCount,
+          lastCount: events[events.length - 1] && events[events.length - 1].data && events[events.length - 1].data.safeCount,
+        };
+      });
+      if (logCap && logCap.events === logCap.maxEventsPerDay
+        && logCap.firstCount === 5 && logCap.lastCount === 50004) {
+        report.pass.push('日志分片超限时一次裁剪并保留最近事件，数量和顺序边界稳定');
+      } else {
+        report.fail.push('日志分片裁剪边界错误：' + JSON.stringify(logCap));
+      }
+
       const bulkCache = await page.evaluate(async () => {
         const manager = window.OB.adapters && window.OB.adapters.douyin && window.OB.adapters.douyin.commentManager;
         if (!manager || typeof manager.collectRecords !== 'function') return { supported: false };

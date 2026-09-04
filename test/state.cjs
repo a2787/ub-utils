@@ -12,7 +12,7 @@ function shim(persons, settings = {}) {
   return `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:${JSON.stringify({ enabled: true, hideMode: 'collapse', showHoverButton: true, douyinAutoSkip: true, skipCap: 6, showQuickBlock: true, showBulkBlock: true, ...settings })} }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
-window.GM_setValue = (k,v) => { window.__gm[k] = v; };
+window.GM_setValue = (k,v) => { if (window.__gmFailWrites) throw new Error('simulated storage failure'); window.__gm[k] = v; };
 window.GM_deleteValue = () => {};
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
@@ -198,6 +198,73 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (identity.canonical && !identity.raw && !identity.invalid && !identity.injected)
       report.pass.push('STATE-F 手动/导入身份规范化，未知前缀被拒绝且名单文本不执行 HTML');
     else report.fail.push('STATE-F 身份或渲染边界错误：' + JSON.stringify(identity));
+
+    // G0. 主名单写入失败时，内存状态仍可供当前页继续运行，但不得触发备份/provider
+    // 成功通知或把操作返回值伪装成已落盘；下一次成功写入应恢复正常状态。
+    const persistFailure = await x.evaluate(() => {
+      const store = window.OB.Store;
+      const sinkSnapshots = [];
+      const unregister = store.registerBackupSink('persist-failure-test', {
+        onSnapshot: (snapshot) => sinkSnapshots.push(snapshot),
+      });
+      const before = store.storageStatus().persist;
+      window.__gmFailWrites = true;
+      const failed = store.addIdentities(['x:handle:persistfailure'], '写入失败人工合成');
+      const afterFailure = store.storageStatus();
+      const failedInMemory = window.OB.Index.isBlocked('x:handle:persistfailure');
+      const externalRaw = JSON.stringify({ version:1, persons:{ external:{ label:'外部覆盖', identities:['x:handle:external-only'] } }, settings:{ enabled:true } });
+      window.__gm['omniblock:data:v1'] = externalRaw;
+      if (window.__gmListeners['omniblock:data:v1']) window.__gmListeners['omniblock:data:v1'](true, externalRaw, window.__gm['omniblock:data:v1']);
+      const afterConflict = store.storageStatus();
+      const preservedAfterExternal = window.OB.Index.isBlocked('x:handle:persistfailure')
+        && !window.OB.Index.isBlocked('x:handle:external-only');
+      window.__gmFailWrites = false;
+      const recovered = store.addIdentities(['x:handle:persistrecovery'], '写入恢复人工合成');
+      const afterRecovery = store.storageStatus();
+      unregister();
+      return {
+        failedPersisted: failed && failed.persisted === false,
+        failedPersistError: failed && failed.persistError,
+        failedInMemory,
+        failureCountIncreased: afterFailure.persist.failures > before.failures,
+        lastFailed: afterFailure.persist.lastOk === false && afterFailure.persist.lastError === 'main-storage-write-failed',
+        externalConflict: afterConflict.persist.externalConflict === true && afterConflict.persist.externalConflicts >= 1,
+        preservedAfterExternal,
+        sinkSuppressed: sinkSnapshots.length === 1,
+        recoveredPersisted: recovered && recovered.persisted === true,
+        lastRecovered: afterRecovery.persist.lastOk === true && afterRecovery.persist.lastError === ''
+          && afterRecovery.persist.externalConflict === false && afterRecovery.persist.pendingLocalWrite === false,
+      };
+    });
+    if (persistFailure.failedPersisted && persistFailure.failedPersistError === 'main-storage-write-failed'
+      && persistFailure.failedInMemory && persistFailure.failureCountIncreased && persistFailure.lastFailed
+      && persistFailure.externalConflict && persistFailure.preservedAfterExternal
+      && persistFailure.sinkSuppressed && persistFailure.recoveredPersisted && persistFailure.lastRecovered) {
+      report.pass.push('STATE-G0 主名单写入失败可见且不触发伪成功备份，恢复写入后状态正常');
+    } else report.fail.push('STATE-G0 主名单写入失败语义错误：' + JSON.stringify(persistFailure));
+
+    const identityIndex = await x.evaluate(() => {
+      const store = window.OB.Store;
+      const before = store.storageStatus().identityIndex;
+      const groups = Array.from({ length: 80 }, (_, index) => ({
+        keys: ['x:handle:index' + index], label: '索引批量 ' + index,
+      }));
+      const writes = store.addIdentityGroups(groups);
+      const after = store.storageStatus().identityIndex;
+      const all = store.allIdentities();
+      return {
+        count: writes.length,
+        persisted: writes.persisted === true,
+        entries: after.entries,
+        added: all.has('x:handle:index0') && all.has('x:handle:index79'),
+        rebuildDelta: after.rebuilds - before.rebuilds,
+        lookupDelta: after.lookups - before.lookups,
+      };
+    });
+    if (identityIndex.count === 80 && identityIndex.persisted && identityIndex.entries >= 80
+      && identityIndex.added && identityIndex.rebuildDelta === 0 && identityIndex.lookupDelta >= 80) {
+      report.pass.push('STATE-G1 批量身份添加复用 key→人物索引，不为每个组重复重建完整名单');
+    } else report.fail.push('STATE-G1 身份索引批量路径异常：' + JSON.stringify(identityIndex));
 
     // G. 本地备份：人工合成状态只验证快照协议、保留上限、恢复可逆和未来 provider 边界，
     // 不代表浏览器配置丢失时仍能恢复；外部文件导出仍由用户显式操作。

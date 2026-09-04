@@ -46,6 +46,27 @@
 (async function () {
   'use strict';
 
+  // 运行锁必须先于任何异步初始化建立。开发扩展的存储恢复栅栏可能等待
+  // 多个消息边界；如果在 await 之后才写锁，重复注入可以同时通过检查，
+  // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
+  // 只有第一份实例允许继续等待初始化。
+  const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
+  const RUNTIME_BUILD = '0.46.0-signed-session-index-conflict-tieba-vue';
+  const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
+    ? String(GM_info.script.version) : 'unknown';
+  const activeRuntime = window[RUNTIME_GUARD_KEY];
+  if (activeRuntime && activeRuntime.active) {
+    activeRuntime.duplicateExecutions = Number(activeRuntime.duplicateExecutions || 0) + 1;
+    return;
+  }
+  const runtimeGuard = window[RUNTIME_GUARD_KEY] = {
+    active: true,
+    state: 'starting',
+    version: RUNTIME_VERSION,
+    build: RUNTIME_BUILD,
+    duplicateExecutions: 0,
+  };
+
   // 专用开发扩展在真正初始化 GM 存储前会暴露这个异步栅栏；Tampermonkey
   // 和本地夹具没有该桥接时保持原有同步启动路径。这样新标签页不会在存储
   // 尚未恢复时先扫描并把默认状态写回去。
@@ -53,6 +74,8 @@
   if (typeof extensionReady === 'function') {
     try { await extensionReady(); } catch (error) { /* 降级到当前运行时的默认存储 */ }
   }
+
+  runtimeGuard.state = 'active';
 
   // ====================================================================
   // 0. 基础工具
@@ -62,24 +85,9 @@
   const DOWNLOAD_URL = UPDATE_URL;
   // 维护门禁：@version 标识发布序列，RUNTIME_BUILD 标识源码契约；两者都显示在页面上，
   // 便于在用户自己的 Tampermonkey 会话中确认“当前运行代码”确实来自本轮源码。
-  const RUNTIME_BUILD = '0.46.0-signed-bridge-lifecycle-budgeted-scanner-storage-metrics';
-  const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
-    ? String(GM_info.script.version) : 'unknown';
   // 调试探针、浏览器扩展重放或同一文档内的手动注入可能把同一份源码执行多次。
   // 运行时必须按文档幂等：第二份不能再创建扫描器、观察器、定时器和 UI。
   // 新版本在既有页面中的生效仍以刷新/新文档为边界，符合用户脚本的正常生命周期。
-  const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const activeRuntime = window[RUNTIME_GUARD_KEY];
-  if (activeRuntime && activeRuntime.active) {
-    activeRuntime.duplicateExecutions = Number(activeRuntime.duplicateExecutions || 0) + 1;
-    return;
-  }
-  window[RUNTIME_GUARD_KEY] = {
-    active: true,
-    version: RUNTIME_VERSION,
-    build: RUNTIME_BUILD,
-    duplicateExecutions: 0,
-  };
   const RUNTIME_MARKER = `omniblock/${RUNTIME_VERSION}/${RUNTIME_BUILD}`;
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -306,6 +314,20 @@
     };
     return { subscribe, notify };
   })();
+
+  // 页面会话代号只用于丢弃跨 SPA 路由的旧异步结果；它不参与身份键，也不写入
+  // 名单。评论/楼中楼读取等长任务在回调返回前必须核对这个代号。
+  let pageSessionGeneration = 0;
+  const pageSessionAbortControllers = new Set();
+  PageRouteSignals.subscribe(() => {
+    pageSessionGeneration++;
+    // 适配器可选择消费 AbortSignal；即使旧版 loader 忽略它，下面各完成回调
+    // 仍会用 generation/url/isConnected 再次核对并丢弃结果。
+    for (const controller of Array.from(pageSessionAbortControllers)) {
+      try { controller.abort(); } catch (e) {}
+    }
+    pageSessionAbortControllers.clear();
+  });
 
   // 用一次性 timeout 取代独立 setInterval：任务执行期间不会重入，隐藏页面时
   // 不排队，功能关闭后也不会继续自我唤醒。wake() 供设置变化和页面恢复时立即
@@ -579,10 +601,21 @@
     const persistMetrics = {
       count: 0,
       failures: 0,
+      lastOk: true,
+      lastError: '',
+      pendingLocalWrite: false,
+      externalConflict: false,
+      externalConflicts: 0,
+      lastExternalConflictAt: 0,
       lastDurationMs: 0,
       maxDurationMs: 0,
       lastPayloadChars: 0,
     };
+    // key → 归属人物集合。名单通常很小，但批量导入/作品屏蔽会连续调用多个
+    // addIdentities；缓存避免每组都重新遍历全部人物和身份数组。直接改动名单的
+    // 少数路径会显式失效，下一次查询再惰性重建。
+    let identityOwners = null;
+    const identityIndexMetrics = { rebuilds: 0, lookups: 0 };
 
     function cleanText(value, fallback, maxLength) {
       if (value == null) return fallback;
@@ -644,7 +677,44 @@
       }
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
       data = { version: 1, persons: sanitizePersons(raw.persons), settings: sanitizeSettings(raw.settings) };
+      identityOwners = null;
       return data;
+    }
+
+    function invalidateIdentityOwners() {
+      identityOwners = null;
+    }
+
+    function ensureIdentityOwners() {
+      load();
+      if (identityOwners) return identityOwners;
+      const owners = new Map();
+      for (const id of Object.keys(data.persons || {})) {
+        const person = data.persons[id];
+        for (const key of (person && Array.isArray(person.identities) ? person.identities : [])) {
+          let ids = owners.get(key);
+          if (!ids) { ids = new Set(); owners.set(key, ids); }
+          ids.add(id);
+        }
+      }
+      identityOwners = owners;
+      identityIndexMetrics.rebuilds++;
+      return identityOwners;
+    }
+
+    function addIdentityOwner(key, id) {
+      if (!identityOwners || !key || !id) return;
+      let ids = identityOwners.get(key);
+      if (!ids) { ids = new Set(); identityOwners.set(key, ids); }
+      ids.add(id);
+    }
+
+    function removeIdentityOwner(key, id) {
+      if (!identityOwners || !key || !id) return;
+      const ids = identityOwners.get(key);
+      if (!ids) return;
+      ids.delete(id);
+      if (!ids.size) identityOwners.delete(key);
     }
 
     function snapshotObject(reason, source = 'local') {
@@ -763,20 +833,39 @@
     function persist(reason) {
       const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
       let payload = '';
+      let writeError = '';
       try {
         payload = JSON.stringify(data);
         GM_setValue(STORAGE_KEY, payload);
-      } catch (e) { persistMetrics.failures++; }
-      const snapshot = snapshotObject(reason || 'change');
-      captureBackup(snapshot, reason || 'change');
-      notifyBackupSinks(snapshot);
-      listeners.forEach((fn) => { try { fn(); } catch (e) {} });
-      persistListeners.forEach((fn) => { try { fn(snapshot); } catch (e) {} });
+      } catch (e) {
+        persistMetrics.failures++;
+        persistMetrics.lastOk = false;
+        persistMetrics.lastError = 'main-storage-write-failed';
+        persistMetrics.pendingLocalWrite = true;
+        writeError = persistMetrics.lastError;
+      }
       const duration = Math.max(0, (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt);
       persistMetrics.count++;
       persistMetrics.lastDurationMs = duration;
       persistMetrics.maxDurationMs = Math.max(persistMetrics.maxDurationMs, duration);
       persistMetrics.lastPayloadChars = payload.length;
+      if (writeError) {
+        // 内存状态仍需通知界面刷新，但不能把写入失败伪装成成功：备份、provider
+        // 和 storage.persist 日志只在主名单确认写入后触发。下一次成功写入仍会
+        // 把当前内存状态完整落盘，因此不会引入半份名单。
+        listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+        return { ok: false, error: writeError };
+      }
+      persistMetrics.lastOk = true;
+      persistMetrics.lastError = '';
+      persistMetrics.pendingLocalWrite = false;
+      persistMetrics.externalConflict = false;
+      const snapshot = snapshotObject(reason || 'change');
+      captureBackup(snapshot, reason || 'change');
+      notifyBackupSinks(snapshot);
+      listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+      persistListeners.forEach((fn) => { try { fn(snapshot); } catch (e) {} });
+      return { ok: true, error: '' };
     }
 
     function persons() { return load().persons; }
@@ -800,6 +889,10 @@
         warningChars: MAIN_STORAGE_WARNING_CHARS,
         criticalChars: MAIN_STORAGE_CRITICAL_CHARS,
         devBridgeMaxChars: DEV_BRIDGE_VALUE_MAX_CHARS,
+        identityIndex: {
+          ...identityIndexMetrics,
+          entries: ensureIdentityOwners().size,
+        },
         persist: { ...persistMetrics },
       };
     }
@@ -810,7 +903,8 @@
       if (Array.isArray(next[k]) || Array.isArray(previous)) {
         if (JSON.stringify(next[k]) === JSON.stringify(previous)) return true;
       } else if (next[k] === previous) return true;
-      data.settings = next; persist(); return true;
+      data.settings = next;
+      const result = persist(); return result.ok;
     }
     function getSetting(k) { return load().settings[k]; }
 
@@ -819,8 +913,15 @@
       const normalized = normalizeIdentityKeys(keys);
       if (!normalized.length) return { person: null, personId: '', added: 0, addedKeys: [], rejected: true };
       const pset = persons();
-      const existingKeys = allIdentities();
-      const matchedIds = Object.keys(pset).filter((id) => normalized.some((key) => pset[id].identities.includes(key)));
+      const ownerIndex = ensureIdentityOwners();
+      identityIndexMetrics.lookups += normalized.length;
+      const existingKeys = new Set(ownerIndex.keys());
+      const matchedIdSet = new Set();
+      for (const key of normalized) {
+        const owners = ownerIndex.get(key);
+        if (owners) for (const id of owners) matchedIdSet.add(id);
+      }
+      const matchedIds = Array.from(matchedIdSet);
       let targetId = matchedIds[0] || '';
       if (!targetId) {
         targetId = genId();
@@ -836,14 +937,21 @@
       // 一个身份只能归属一个人物；导入桥接记录时合并已有重复人物。
       for (const id of matchedIds.slice(1)) {
         const other = pset[id];
-        for (const key of other.identities) if (!target.identities.includes(key)) target.identities.push(key);
+        for (const key of other.identities) {
+          if (!target.identities.includes(key)) target.identities.push(key);
+          removeIdentityOwner(key, id);
+          addIdentityOwner(key, targetId);
+        }
         if (target.label === '未命名' && other.label) target.label = other.label;
         if (!target.note && other.note) target.note = other.note;
         target.createdAt = Math.min(target.createdAt || Date.now(), other.createdAt || Date.now());
         target.hits = (target.hits || 0) + (other.hits || 0);
         delete pset[id];
       }
-      for (const key of normalized) if (!target.identities.includes(key)) target.identities.push(key);
+      for (const key of normalized) {
+        if (!target.identities.includes(key)) target.identities.push(key);
+        addIdentityOwner(key, targetId);
+      }
       if (label && target.label === '未命名') target.label = cleanText(label, '未命名', 200);
       const addedKeys = normalized.filter((key) => !existingKeys.has(key));
       return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false };
@@ -851,8 +959,9 @@
 
     function addIdentities(keys, label, note) {
       const result = addIdentitiesInternal(keys, label, note);
-      if (!result.rejected) persist();
-      return result;
+      if (result.rejected) return result;
+      const persisted = persist();
+      return { ...result, persisted: persisted.ok, persistError: persisted.error || '' };
     }
 
     function addIdentityGroups(groups) {
@@ -861,7 +970,14 @@
         const result = addIdentitiesInternal(group && group.keys, group && group.label, group && group.note);
         if (!result.rejected) results.push(result);
       }
-      if (results.length) persist();
+      if (results.length) {
+        const persisted = persist();
+        // 保持原有数组返回兼容性，同时让批量调用方可以显式判断主名单写入。
+        Object.defineProperties(results, {
+          persisted: { value: persisted.ok, enumerable: false },
+          persistError: { value: persisted.error || '', enumerable: false },
+        });
+      }
       return results;
     }
 
@@ -870,8 +986,17 @@
       const normalized = normalizeIdentityKeys(keys);
       if (!normalized.length) return { person: null, personId: '', added: 0, addedKeys: [], rejected: true, undo: null };
       const pset = persons();
-      const existingKeys = allIdentities();
-      let targetId = Object.keys(pset).find((id) => normalized.some((key) => pset[id].identities.includes(key))) || '';
+      const ownerIndex = ensureIdentityOwners();
+      identityIndexMetrics.lookups += normalized.length;
+      const existingKeys = new Set(ownerIndex.keys());
+      const matchedIds = new Set();
+      for (const key of normalized) {
+        const owners = ownerIndex.get(key);
+        if (owners) for (const id of owners) matchedIds.add(id);
+      }
+      // 确认关联沿用旧语义：如果导入数据已经让一个身份属于多个
+      // 人物，仍只选稳定的第一个归属，不在用户确认动作里偷偷合并人物。
+      let targetId = Object.keys(pset).find((id) => matchedIds.has(id)) || '';
       const created = !targetId;
       if (created) {
         targetId = genId();
@@ -885,6 +1010,7 @@
         // 已属于另一人物的身份保持原归属；确认关联不能偷偷合并两个既有人物。
         if (existingKeys.has(key)) continue;
         target.identities.push(key);
+        addIdentityOwner(key, targetId);
         addedKeys.push(key);
       }
       const nextLabel = cleanText(label, target.label || '未命名', 200);
@@ -893,7 +1019,7 @@
       target.label = nextLabel;
       target.note = nextNote;
       const changed = created || addedKeys.length > 0 || metadataChanged;
-      if (changed) persist();
+      const persisted = changed ? persist() : { ok: true, error: '' };
       const committed = { label: nextLabel, note: nextNote };
       const undo = changed ? () => {
         load();
@@ -906,14 +1032,16 @@
           if (current.note === committed.note) current.note = previous.note;
           if (!current.identities.length) delete persons()[targetId];
         }
+        invalidateIdentityOwners();
         persist();
       } : null;
-      return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false, undo };
+      return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false,
+        persisted: persisted.ok, persistError: persisted.error || '', undo };
     }
 
     function removePerson(id) {
       load();
-      if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; persist(); return true; }
+      if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; invalidateIdentityOwners(); return persist().ok; }
       return false;
     }
 
@@ -929,17 +1057,14 @@
         if (kept.length) persons()[id].identities = kept;
         else if (kept.length !== arr.length) delete persons()[id];
       }
-      if (removed) persist();
+      if (removed) { invalidateIdentityOwners(); persist(); }
       return removed;
     }
 
     function removeIdentity(key) { return removeIdentities([key]) > 0; }
 
     function allIdentities() {
-      const set = new Set();
-      const pset = persons();
-      for (const id of Object.keys(pset)) for (const key of pset[id].identities) set.add(key);
-      return set;
+      return new Set(ensureIdentityOwners().keys());
     }
 
     function exportJSON() {
@@ -972,7 +1097,9 @@
         result.identities += added.added;
       }
       if (source.settings && typeof source.settings === 'object') data.settings = sanitizeSettings({ ...data.settings, ...source.settings });
-      persist();
+      const persisted = persist();
+      result.persisted = persisted.ok;
+      result.persistError = persisted.error || '';
       return result;
     }
 
@@ -1025,8 +1152,10 @@
       // 显式恢复是用户动作，即使自动快照当前关闭，也先保留当前状态，保证误恢复可回退。
       if (!preserveRestoreCheckpoint()) throw new Error('无法保留当前状态，已取消恢复');
       data = { version: 1, persons: sanitizePersons(target.persons), settings: sanitizeSettings(target.settings) };
-      persist('restore');
-      return { snapshotId: target.snapshotId, persons: Object.keys(data.persons).length, identities: allIdentities().size };
+      invalidateIdentityOwners();
+      const persisted = persist('restore');
+      return { snapshotId: target.snapshotId, persons: Object.keys(data.persons).length, identities: allIdentities().size,
+        persisted: persisted.ok, persistError: persisted.error || '' };
     }
 
     function restorePreviousBackup() {
@@ -1065,7 +1194,18 @@
     // 跨标签页/设置变更的监听
     try {
       GM_addValueChangeListener(STORAGE_KEY, () => {
+        // 主名单写入失败后，当前内存状态尚未得到落盘确认。此时不能让另一
+        // 标签页的通知静默覆盖这份状态；保留本地数据并暴露冲突，直到用户
+        // 重试成功或主动刷新页面重新加载外部版本。
+        if (persistMetrics.pendingLocalWrite) {
+          persistMetrics.externalConflict = true;
+          persistMetrics.externalConflicts++;
+          persistMetrics.lastExternalConflictAt = Date.now();
+          listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+          return;
+        }
         data = null;
+        identityOwners = null;
         load();
         const snapshot = snapshotObject('external-change', 'local');
         captureBackup(snapshot, 'external-change');
@@ -1432,7 +1572,11 @@
     }
 
     function trimAndWriteShard(day, shard) {
-      while (shard.events.length > MAX_EVENTS_PER_DAY) shard.events.shift();
+      if (shard.events.length > MAX_EVENTS_PER_DAY) {
+        // shift() 逐条搬移数组元素，在达到上限时会退化为 O(n²)。一次 slice
+        // 丢弃最旧前缀，保留同样的“最近 N 条”语义且只做一次线性复制。
+        shard.events = shard.events.slice(-MAX_EVENTS_PER_DAY);
+      }
       if (!writeShard(day, shard)) throw new Error('event log storage unavailable');
     }
 
@@ -2694,6 +2838,8 @@
       biliDmToolRefreshes: 0,
       weiboCommentCollections: 0,
       weiboCommentCacheHits: 0,
+      commentManagerCancelledLoads: 0,
+      threadCancelledLoads: 0,
       biliDmLastPanelState: null,
       virtualListSamples: [],
       virtualLastList: null,
@@ -3841,7 +3987,8 @@
       }
       unmark(container); return;
     }
-    if (Index.isBlocked(info.keys)) {
+    const blocked = Index.isBlocked(info.keys);
+    if (blocked) {
       if (adapter.id === 'weibo' && !wasBlocked) virtualDiagnostic('weiboBlockTransitions');
       const virtualRow = adapter.id === 'weibo' ? rememberVirtualRow(container, adapter) : null;
       if (virtualRow) rememberVirtualList(virtualRow);
@@ -3855,7 +4002,7 @@
     EventLog.recordPassive('scanner.item', {
       stage: 'handle', adapter: adapter.id, itemTag: item && item.tagName,
       containerTag: container && container.tagName, identified: !!(info && info.keys && info.keys.length),
-      blocked: !!(info && info.keys && info.keys.length && Index.isBlocked(info.keys)), wasBlocked,
+      blocked, wasBlocked,
       source: info && info.source || 'dom',
     });
   }
@@ -4366,7 +4513,11 @@
         added: transaction && transaction.result ? Number(transaction.result.added) || 0 : 0,
       }, { immediate: true });
       try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
-      showToast(`已拉黑：${toastLabel || label || normalizedKeys[0]}`, transaction && transaction.undo || null);
+      const persisted = !(transaction && transaction.result && transaction.result.persisted === false);
+      showToast(persisted
+        ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
+        : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`,
+      transaction && transaction.undo || null);
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
     };
@@ -5157,7 +5308,7 @@
         if (item.getAttribute('data-ob-auto-dm-blocked') === '1') setDouyinAutoHidden(item, false);
         return false;
       }
-      queueDouyinAutoDanmaku(info || { keys: [] }, text, key);
+      queueDouyinAutoDanmaku(info || { keys: [] }, text, key, match);
       setDouyinAutoHidden(item, true);
       return true;
     }
@@ -5187,10 +5338,10 @@
       if (dyAutoFlushTimer || !dyAutoQueue.size) return;
       dyAutoFlushTimer = setTimeout(flushDouyinAutoQueue, 0);
     }
-    function queueDouyinAutoDanmaku(info, content, sessionKey) {
+    function queueDouyinAutoDanmaku(info, content, sessionKey, matchedRule = null) {
       if (!Store.getSetting('enabled') || !DanmakuRules.hasEnabled('douyin')) return false;
       resetDyAutoSessionIfNeeded(sessionKey);
-      const match = DanmakuRules.match('douyin', content);
+      const match = matchedRule || DanmakuRules.match('douyin', content);
       if (!match) return false;
       const keys = normalizeIdentityKeys(info && info.keys);
       if (DanmakuExemptions.isExempt('douyin', keys)) return false;
@@ -6417,7 +6568,11 @@
   Adapters.tieba = (function () {
     const SEL = {
       thread: 'li.j_thread_list, div.threadlist_item',
-      post: 'div.l_post.l_post_bright, div.d_post_content_main',
+      // 2026-09-04 登录态真站捕获：新版 Vue 详情页使用 `.pb-comment-item`，
+      // 用户数字 ID 位于该节点的 `__vue__.userInfo.id`；链接中的 home/main?id
+      // 是不透明 portrait，不能当作 tieba:uid。只把评论项纳入扫描，不猜测首页
+      // `.thread-card` 的作者身份。
+      post: 'div.l_post.l_post_bright, div.d_post_content_main, .pb-comment-item',
       author: 'span.tb_icon_author[data-field], div.d_name[data-field], [data-field]',
     };
     function uidFromField(el) {
@@ -6440,7 +6595,21 @@
     }
     function containerForItem(item) {
       return item.matches(SEL.thread) ? findContainer(item, SEL.thread)
+        : (item.matches && item.matches('.pb-comment-item')) ? item
         : (item.closest && item.closest('div.l_post.l_post_bright')) || item;
+    }
+    function modernVueIdentity(item) {
+      const vm = item && item.__vue__;
+      const candidates = [
+        vm && vm.userInfo,
+        vm && vm.$props && vm.$props.commentData && vm.$props.commentData.userInfo,
+      ];
+      for (const user of candidates) {
+        if (!user || typeof user !== 'object') continue;
+        const uid = normalizeDigits(user.id);
+        if (uid) return { uid, name: normNick(user.name_show || user.name || '') };
+      }
+      return { uid: '', name: '' };
     }
     return {
       id: 'tieba',
@@ -6451,11 +6620,18 @@
       extract(item) {
         let fieldEl = item.querySelector(SEL.author);
         if (!fieldEl && item.hasAttribute && item.hasAttribute('data-field')) fieldEl = item;
-        const { uid, name } = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
+        let identity = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
+        if (!identity.uid && item.matches && item.matches('.pb-comment-item')) {
+          identity = modernVueIdentity(item);
+          if (!identity.name) {
+            const nameNode = item.querySelector('.head-name, .name-info-link');
+            identity.name = normNick(textOf(nameNode));
+          }
+        }
         const keys = [];
-        appendIdentityKey(keys, 'tieba:uid', uid);
+        appendIdentityKey(keys, 'tieba:uid', identity.uid);
         const container = containerForItem(item);
-        return { keys, label: name, container };
+        return { keys, label: identity.name, container, source: fieldEl ? 'data-field' : (identity.uid ? 'dom-vue' : 'dom') };
       },
       containerOf: containerForItem,
     };
@@ -7464,7 +7640,12 @@
         for (const key of result.addedKeys) if (!addedKeys.includes(key)) addedKeys.push(key);
       }
       return {
-        result: { added: addedKeys.length, addedKeys },
+        result: {
+          added: addedKeys.length,
+          addedKeys,
+          persisted: results.persisted !== false,
+          persistError: results.persistError || '',
+        },
         undo: addedKeys.length ? () => {
           EventLog.record('action.bulk.undo', { keyCount: addedKeys.length }, { immediate: true });
           Store.removeIdentities(addedKeys);
@@ -7631,17 +7812,19 @@
       try {
         clearDanmakuExemptionsForManualBlock(allKeys);
         const writes = Store.addIdentityGroups(result.users.map((user) => ({ keys: user.keys, label: user.label, note: user.note })));
+        const persisted = writes.persisted !== false;
         const addedKeys = [];
         for (const write of writes) for (const key of write.addedKeys || []) if (!addedKeys.includes(key)) addedKeys.push(key);
         EventLog.record('action.work.commit', {
-          adapter: adapter.id, users: result.users.length, added: addedKeys.length,
+          adapter: adapter.id, users: result.users.length, added: addedKeys.length, persisted,
           fresh: result.fresh.length, existing: result.existing.length,
           partial: result.partial, complete: result.complete,
           creator: result.sectionCounts.creator || 0, comments: result.sectionCounts.comment || 0,
           replies: result.sectionCounts.reply || 0, danmaku: result.sectionCounts.danmaku || 0,
         }, { immediate: true });
         box.remove(); FloatingDock.release('work-block');
-        showToast('已屏蔽当前作品的 ' + result.users.length + ' 位已识别用户' + (result.partial ? '（结果可能不完整）' : ''),
+        showToast((persisted ? '已屏蔽当前作品的 ' : '已在本页屏蔽但未确认落盘：') + result.users.length + ' 位已识别用户'
+          + (result.partial ? '（结果可能不完整）' : '') + (persisted ? '' : '，请重试或导出备份'),
           addedKeys.length ? () => {
             EventLog.record('action.work.undo', { adapter: adapter.id, removed: addedKeys.length }, { immediate: true });
             Store.removeIdentities(addedKeys);
@@ -8117,10 +8300,18 @@
   let commentManagerRoot = null;
   let commentManagerKeyHandler = null;
   let commentManagerMutationUnsubscribe = null;
+  let commentManagerGeneration = 0;
+  let commentManagerAbortController = null;
   function platformLabelForCommentManager(adapter) {
     return ({ bilibili: 'B站', douyin: '抖音', weibo: '微博' }[adapter && adapter.id]) || '评论';
   }
   function closeCommentManager(reason) {
+    commentManagerGeneration++;
+    if (commentManagerAbortController) {
+      try { commentManagerAbortController.abort(); } catch (e) {}
+      pageSessionAbortControllers.delete(commentManagerAbortController);
+      commentManagerAbortController = null;
+    }
     const platform = commentManagerRoot && commentManagerRoot.getAttribute('data-ob-platform') || 'unknown';
     if (commentManagerMutationUnsubscribe) commentManagerMutationUnsubscribe();
     commentManagerMutationUnsubscribe = null;
@@ -8152,6 +8343,11 @@
       showToast('当前页面没有可识别的评论');
       return;
     }
+    const managerGeneration = ++commentManagerGeneration;
+    const managerPageGeneration = pageSessionGeneration;
+    const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+    commentManagerAbortController = abortController;
+    if (abortController) pageSessionAbortControllers.add(abortController);
     const selected = new Set();
     // 记录按“评论实例”保存，而不是每次 render 都把当前 DOM 快照 append 到数组。
     // 否则搜索、全选和加载进度会让同一批评论在内存中重复累积，虚拟列表页面
@@ -8217,6 +8413,10 @@
     FloatingDock.hold('comment-manager');
     EventLog.record('ui.comment-manager.open', { platform: adapter.id, anchor: !!anchorEl }, { immediate: true });
     const close = (reason) => closeCommentManager(reason || 'user');
+    const isCurrent = () => commentManagerGeneration === managerGeneration
+      && pageSessionGeneration === managerPageGeneration
+      && commentManagerRoot === panel && panel.isConnected
+      && (!abortController || !abortController.signal.aborted);
     panel.querySelector('.ob-cm-close').onclick = () => close('button');
     panel.addEventListener('click', (event) => { if (event.target === panel) close('backdrop'); });
     commentManagerKeyHandler = (event) => { if (event.key === 'Escape') close('escape'); };
@@ -8270,7 +8470,7 @@
       return !!(element && (element === panel || panel.contains(element)));
     };
     commentManagerMutationUnsubscribe = PageMutationSignals.subscribe((records, adapterId) => {
-      if (adapterId !== adapter.id || !commentManagerRoot || commentManagerRoot !== panel) return;
+      if (!isCurrent() || adapterId !== adapter.id) return;
       for (const record of records || []) {
         const changed = Array.from(record.addedNodes || [])
           .concat(Array.from(record.removedNodes || []));
@@ -8318,6 +8518,10 @@
 
     function render() {
       if (!panel.isConnected) return;
+      if (!isCurrent()) {
+        closeCommentManager('page-session-changed');
+        return;
+      }
       const allRecords = collectCurrent();
       const filtered = filterRecords(allRecords);
       const available = new Set(allRecords.map(keyOf));
@@ -8361,12 +8565,12 @@
     }
 
     async function loadAllRecords() {
-      if (loading || typeof manager.loadAll !== 'function') return;
+      if (!isCurrent() || loading || typeof manager.loadAll !== 'function') return;
       EventLog.record('ui.comment-manager.load.start', { platform: adapter.id, discovered: discovered.size }, { immediate: true });
       loading = true; loadAll.disabled = true; refresh.disabled = true; render();
       try {
         const result = await manager.loadAll((progress) => {
-          if (!panel.isConnected) return;
+          if (!isCurrent()) return;
           const collected = progress && (progress.collected != null ? progress.collected : progress.records);
           EventLog.record('ui.comment-manager.load.progress', {
             platform: adapter.id,
@@ -8379,7 +8583,11 @@
           // 收集一次，再由 Map 去重，不在每个列表行渲染时重复深扫。
           collectionDirty = true;
           render();
-        });
+        }, abortController ? { signal: abortController.signal } : undefined);
+        if (!isCurrent()) {
+          runtimeDiagnostic('commentManagerCancelledLoads');
+          return;
+        }
         mergeDiscovered(result && result.records || []);
         collectionDirty = false;
         partial = !!(result && result.partial);
@@ -8391,11 +8599,17 @@
         }
         EventLog.record('ui.comment-manager.load.finish', { platform: adapter.id, discovered: discovered.size, partial }, { immediate: true });
       } catch (error) {
+        if (!isCurrent()) {
+          runtimeDiagnostic('commentManagerCancelledLoads');
+          return;
+        }
         partial = true;
         partialReason = String(error && error.message || error).slice(0, 160);
         EventLog.recordError('ui.comment-manager.load', error, { platform: adapter.id });
       }
-      loading = false; loadAll.disabled = false; refresh.disabled = false; render();
+      if (isCurrent()) {
+        loading = false; loadAll.disabled = false; refresh.disabled = false; render();
+      }
     }
 
     search.oninput = () => {
@@ -8456,28 +8670,46 @@
       return;
     }
     pendingThreadBlocks.add(item);
+    const threadGeneration = pageSessionGeneration;
+    const threadUrl = location.href;
+    const threadAbortController = typeof AbortController === 'function' ? new AbortController() : null;
+    if (threadAbortController) pageSessionAbortControllers.add(threadAbortController);
+    const isThreadCurrent = () => threadGeneration === pageSessionGeneration && location.href === threadUrl
+      && item.isConnected && (!threadAbortController || !threadAbortController.signal.aborted);
     EventLog.record('ui.thread.load.start', { platform: adapter.id }, { immediate: true });
     showToast('正在读取该楼已可加载的回复…');
     let partial = false; let reason = '';
     const records = [normalizeCommentRecord({ ...info, level: 'root', source: 'dom' })].filter(Boolean);
     try {
       const result = await manager.loadThread(item, (progress) => {
+        if (!isThreadCurrent()) return;
         EventLog.record('ui.thread.load.progress', {
           platform: adapter.id, collected: Number(progress && progress.collected) || 0,
           page: Number(progress && progress.page) || 0,
         });
         if (progress && progress.collected != null) showToast('正在读取该楼回复：' + progress.collected + ' 条');
-      });
+      }, threadAbortController ? { signal: threadAbortController.signal } : undefined);
+      if (!isThreadCurrent()) {
+        runtimeDiagnostic('threadCancelledLoads');
+        EventLog.record('ui.thread.load.cancel', { platform: adapter.id, reason: 'page-session-changed' });
+        return;
+      }
       for (const record of (result && result.records || [])) records.push(record);
       partial = !!(result && result.partial);
       reason = String(result && result.reason || '').slice(0, 160);
       EventLog.record('ui.thread.load.finish', { platform: adapter.id, records: records.length, partial }, { immediate: true });
     } catch (error) {
+      if (!isThreadCurrent()) {
+        runtimeDiagnostic('threadCancelledLoads');
+        EventLog.record('ui.thread.load.cancel', { platform: adapter.id, reason: 'page-session-changed' }, { immediate: true });
+        return;
+      }
       partial = true;
       reason = String(error && error.message || error).slice(0, 160);
       EventLog.recordError('ui.thread.load', error, { platform: adapter.id });
     } finally {
       pendingThreadBlocks.delete(item);
+      if (threadAbortController) pageSessionAbortControllers.delete(threadAbortController);
     }
     const merged = mergeCommentRecords(records);
     if (!merged.length) {
@@ -10621,7 +10853,8 @@
       expandedDmUidGroups.delete(content);
       refreshDmTool();
       scanDmPanels();
-      showToast('已拉黑：' + candidate.name + '（UID ' + candidate.uid + '）', result.undo || null);
+      showToast((result.persisted === false ? '已在本页生效但未确认落盘：' : '已拉黑：')
+        + candidate.name + '（UID ' + candidate.uid + '）' + (result.persisted === false ? '，请重试或导出备份' : ''), result.undo || null);
       if (currentScanner) currentScanner.schedule();
     }
 
@@ -11996,12 +12229,17 @@
       backupStatus.textContent = backup.error
         || (backup.count ? ('已保留 ' + backup.count + '/' + backup.retention + ' 份本地快照，最新：' + new Date(backup.latestAt).toLocaleString()) : '尚无本地快照，将在下一次名单变更时建立');
       storageStatus.dataset.level = storage.level;
-      storageStatus.style.color = storage.level === 'critical' ? '#c62828' : (storage.level === 'warning' ? '#b26a00' : '#999');
+      storageStatus.style.color = storage.persist && (storage.persist.lastOk === false || storage.persist.externalConflict)
+        ? '#c62828' : (storage.level === 'critical' ? '#c62828' : (storage.level === 'warning' ? '#b26a00' : '#999'));
       storageStatus.textContent = '主名单：' + storage.persons + ' 人、' + storage.identities + ' 个身份，序列化约 '
         + (storage.chars / (1024 * 1024)).toFixed(2) + ' MiB。'
-        + (storage.level === 'critical'
+        + (storage.persist && storage.persist.externalConflict
+          ? ' 检测到其他标签页变更；本页有未确认写入，已保留当前内存状态，请先导出并重试。'
+          : (storage.persist && storage.persist.lastOk === false
+          ? ' 上次主名单写入失败，本页内存状态未确认落盘；请重试或导出备份。'
+          : (storage.level === 'critical'
           ? ' 已接近专用开发扩展的单值上限，请先导出备份并清理不再需要的记录。'
-          : (storage.level === 'warning' ? ' 名单体积较大，建议定期导出并检查重复身份。' : ' 当前体积正常。'));
+          : (storage.level === 'warning' ? ' 名单体积较大，建议定期导出并检查重复身份。' : ' 当前体积正常。'))));
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
       refreshAutoRules();
@@ -12025,6 +12263,7 @@
       const result = Store.addIdentities([key], label || val);
       EventLog.record('action.manual-block', { platform: plat, added: result.added, rejected: !!result.rejected }, { immediate: true });
       panel.querySelector('#ob-val').value = '';
+      if (result.persisted === false) showToast('已在本页生效但未确认落盘，请重试或导出备份');
       refresh(); if (currentScanner) currentScanner.schedule();
     };
     panel.querySelectorAll('input[name="ob-mode"]').forEach((r) => r.onchange = () => { if (r.checked) { Store.setSetting('hideMode', r.value); logSettingChange('hideMode', r.value); if (currentScanner) currentScanner.schedule(); } });
@@ -12060,10 +12299,11 @@
       if (!window.confirm('恢复上一份本地快照？当前状态会先保留为新的快照。')) return;
       try {
         const result = Store.restorePreviousBackup();
-        EventLog.record('action.backup.restore', { ok: true, identities: result.identities }, { immediate: true });
+        EventLog.record('action.backup.restore', { ok: result.persisted !== false, identities: result.identities }, { immediate: true });
         refresh(); refreshQuickBlock(); refreshBulkBlock();
         if (currentScanner) currentScanner.schedule();
-        showToast('已恢复本地快照：' + result.identities + ' 个身份');
+        showToast((result.persisted === false ? '已在本页恢复但未确认落盘：' : '已恢复本地快照：') + result.identities + ' 个身份'
+          + (result.persisted === false ? '，请重试或导出备份' : ''));
       } catch (e) { EventLog.recordError('action.backup.restore', e); showToast('恢复失败：' + (e && e.message || e)); }
     };
     const file = panel.querySelector('#ob-file');
@@ -12075,10 +12315,12 @@
       reader.onload = () => {
         try {
           const result = Store.importJSON(String(reader.result));
-          EventLog.record('action.backup.import', { ok: true, identities: result.identities, skipped: result.skipped }, { immediate: true });
+          EventLog.record('action.backup.import', { ok: result.persisted !== false, identities: result.identities, skipped: result.skipped }, { immediate: true });
           refresh(); refreshQuickBlock(); refreshBulkBlock();
           if (currentScanner) currentScanner.schedule();
-          showToast('导入完成：新增 ' + result.identities + ' 个身份' + (result.skipped ? '，跳过 ' + result.skipped + ' 条无效记录' : ''));
+          showToast((result.persisted === false ? '已在本页导入但未确认落盘：' : '导入完成：') + '新增 ' + result.identities + ' 个身份'
+            + (result.skipped ? '，跳过 ' + result.skipped + ' 条无效记录' : '')
+            + (result.persisted === false ? '，请重试或导出备份' : ''));
         } catch (e) { EventLog.recordError('action.backup.import', e); alert('导入失败：' + e.message); }
         file.value = '';
       };

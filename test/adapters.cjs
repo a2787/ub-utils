@@ -53,6 +53,12 @@ const cases = [
     body: '<div class="l_post l_post_bright"><div class="d_post_content_main"><span class="tb_icon_author" data-field="{&quot;author&quot;:{&quot;user_id&quot;:&quot;987654322&quot;,&quot;user_name&quot;:&quot;贴吧楼层作者&quot;}}"></span></div></div>',
   },
   {
+    id: 'tieba', name: 'tieba-modern-comment-vue', url: 'https://tieba.baidu.com/p/1', selector: '.pb-comment-item', expected: 'tieba:uid:987654323', expectVanished: true, expectSelfContainer: true,
+    // 人工合成：2026-09-04 登录态真站捕获的 Vue 评论项；仅保留公开 DOM 形状，
+    // 不写入真实页面标识或账号数据。home/main?id 中的不透明 token 不参与身份键。
+    body: '<div class="pb-comment-item"><div class="head-line user-info"><a class="head-name" href="/home/main?id=opaque-portrait">现代贴吧作者</a></div><div class="comment-content">现代评论正文</div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654323, name: "modern-user", name_show: "现代贴吧作者" } };</script></div>',
+  },
+  {
     id: 'tieba', name: 'tieba-lzl-collection-guard', url: 'https://tieba.baidu.com/p/1', selector: '.j_lzl_container', expectSelected: false,
     body: '<div class="j_lzl_container"><div data-field="{&quot;user_id&quot;:&quot;111111111&quot;}"></div><div data-field="{&quot;user_id&quot;:&quot;222222222&quot;}"></div></div>',
   },

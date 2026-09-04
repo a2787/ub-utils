@@ -120,7 +120,7 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 
 ### v0.46.0 本地候选 - 受控生命周期、签名开发桥与分帧性能预算 - 2026-08-30
 
-当前候选构建标识为 `0.46.0-signed-bridge-lifecycle-budgeted-scanner-storage-metrics`。它尚未 push、tag 或创建
+当前候选构建标识为 `0.46.0-signed-session-index-conflict-tieba-vue`。它尚未 push、tag 或创建
 GitHub Release；当前公开版本仍是 0.45.0。
 
 - 高频平台新增 DOM 不再在 MutationObserver 回调内同步深扫。新增子树进入下一帧队列，每帧最多处理 32 个根，并以
@@ -133,6 +133,11 @@ GitHub Release；当前公开版本仍是 0.45.0。
   不自动删除名单，也不新增人数硬上限。
 - 详细日志继续保留用户动作和错误，被动事件继续聚合；分片大小使用缓存，不再在每次 flush 时重复序列化全部保留日期。
   可选诊断现在能分别看到 Mutation、扫描、微博布局、名单持久化和日志写入的次数、体积及最大耗时。
+- 屏蔽始终走同一条运行路径：基本屏蔽和必要事件记录持续工作，详细诊断明细仍由设置页现有日志开关控制；不新增“第一资源模式”/“低资源模式”或独立“诊断模式”。
+  若主名单写入失败，当前页会保留内存状态但返回失败并在设置页提示“未确认落盘”，不会伪造成功快照或 provider 通知。
+- 名单身份查找使用惰性 key→人物索引，批量导入/作品级批量屏蔽不再为每组重复遍历全部人物；跨标签页变化在本页存在未确认落盘时会显示冲突并保留当前内存状态，避免静默覆盖。
+- 评论管理器和楼中楼读取带页面/管理器会话代号与可取消边界；关闭面板、切换 SPA 路由或节点被回收后，旧结果只会安全丢弃，不会重新渲染或提交名单。
+- 贴吧新版详情评论在捕获到 `.pb-comment-item` 且 Vue `userInfo.id` 为数字时可识别并屏蔽；首页 `.thread-card` 的不透明作者参数和未加载楼中楼不被猜测。
 - 持久开发扩展不再把 GM 能力挂到页面全局；桥接消息使用 HMAC-SHA256、来源和序列校验，存储键、只读 URL、请求方法、
   响应大小和超时都有白名单/上限。缺少隔离桥时约 4 秒内降级启动。
 
@@ -284,7 +289,7 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 | B站 | B站 uid | 数字，如 `2233`（主页 URL `space.bilibili.com/2233`） |
 | 微博 | 微博 uid | 数字，如 `1234567890` |
 | 知乎 | 知乎 token | 个人页 URL `zhihu.com/people/这里` 的 slug |
-| 贴吧 | 贴吧 uid | 数字 user_id（楼层 data-field 里） |
+| 贴吧 | 贴吧 uid | 旧版楼层 `data-field` 中的数字 `user_id`；新版详情评论使用已捕获的 Vue `userInfo.id` 数字值（首页 `.thread-card` 暂不支持） |
 | X | X handle | 不带 @ 的用户名，如 `elonmusk` |
 | 抖音 | 抖音 sec_uid | `MS4wLjAB...` 那串（作者主页 URL 里） |
 
@@ -409,12 +414,12 @@ Tampermonkey 自动更新；Release 则是带固定 tag、按本仓库流程不�
 
 | 平台 | 当前可验证结果 | 当前限制与未验证范围 |
 |---|---|---|
-| B站 | `structure regression`：0.46.0 候选的通用 UI/状态 19/19、B站 33/33、性能边界 7/7；持久扩展 4/4 覆盖签名桥、伪造拒绝和有界降级。`real-site verified`：2026-08-30 隔离未登录 `bilibili.com/video/...` 页面识别 2 条根评论、1 条子评论和 3 位作者；菜单、批量入口和 Dock 折叠/展开可用，单条整楼隐藏/撤销及同楼 3 位作者一次写入/全部撤销完成。 | `blocked`：匿名页统一评论管理器报告“部分加载：根评论分页读取失败”，因此不把该次观察写成全分页读取通过；专用 Chrome 仍需在 `chrome://extensions` 手动刷新后做无注入核对，动态作品页也需单独复核。 |
-| 微博 | `structure regression`：0.46.0 候选的微博回放 11/11、跨平台适配器 21/21、统一管理器 3/3，覆盖布局耗时指标、详情页/用户主页补位、整帖屏蔽、回收行复用和楼操作。`real-site verified`：2026-08-30 隔离未登录 `weibo.com/...` 页面识别 21 条评论/21 位作者；一条楼中楼评论可独立隐藏并撤销，正文和根评论保持可见。 | `blocked`：本轮页面没有可测的活动顶层虚拟列表 spacer，不能把真实补位路径写成通过；持久扩展也需手动刷新到 0.46.0。 |
-| 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过。 | `blocked`：2026-08-22 隔离浏览器仍被重定向到 `zhihu.com/signin`。 |
-| 贴吧 | `structure regression`：`data-field` 中的 `user_id` 身份契约通过；集合容器不扫描。 | `blocked`：2026-08-22 隔离浏览器落在「百度安全验证」滑块页，无法复核真实列表或帖子页（2026-08-20 曾在公开列表页观察到 8 个候选中 6 个解析出 UID）。 |
-| X | `structure regression`：人工合成 `article[data-testid="tweet"]` 与 `/handle` 契约通过。 | `blocked`：未登录状态只有登录页。 |
-| 抖音 | `structure regression`：0.46.0 候选的性能边界 7/7、自动弹幕 6/6、推荐流 2/2、跨平台适配器 21/21；突发子树使用 8ms/32 根预算，后台/freeze 不消费新增节点。 | `blocked`：公开入口若仍停在验证码中间页，就无法给出 0.46.0 线上 CPU/脚本时长；旧构建和人工夹具数字不能替代。专用 Chrome 需手动刷新扩展，抖音楼中楼仍只覆盖当前 DOM 可安全展开/读取的部分。 |
+| B站 | `structure regression`：本轮完整矩阵共 121 项，其中通用 UI/运行器 20/20、核心状态 9/9、B站快速屏蔽 33/33、性能边界 8/8、持久扩展 4/4、跨平台适配 22/22。`real-site verified`：2026-09-04 当前候选在真实 `bilibili.com/video/...` 页面观察到 2 个根评论渲染器、2 个评论菜单和 2 行管理器记录；公开接口返回 3 条根评论及 1 条子回复，本地楼层/整楼隐藏与恢复通过（同楼 5 位作者一次写入后撤销）。 | `blocked`：匿名页管理器仍报告“部分加载：根评论分页读取失败”，不声称全分页通过；动态作品页尚未取得独立样本。专用 Chrome 已刷新到当前候选，后续新页面会自动加载。 |
+| 微博 | `structure regression`：微博回放 11/11、统一评论管理器 3/3、跨平台适配 22/22。`real-site verified`：2026-09-04 用户授权登录态真实页的管理器保留 23 行，可搜索、全选并显示 3 个根楼操作入口；路由切换期间记录 1 次异步楼操作安全取消，未提交名单。 | `blocked`：真实楼目标在平台重渲染后失去连接，确认动作未执行；本页仍无可测的活动顶层虚拟列表 spacer，不能把补位路径写成通过。 |
+| 知乎 | `structure regression`：作者主键采用 `/people/<token>`，人工合成身份契约通过；`real-site verified`：2026-09-04 已安装候选在两个新页面显示当前运行标记。 | `blocked`：本轮热门页没有可用文章/评论样本，独立详情验证仍受登录/导航状态影响；不据此扩展知乎选择器。 |
+| 贴吧 | `structure regression`：旧版 `data-field`、集合容器边界和新版 `.pb-comment-item` + Vue `userInfo.id` 身份契约通过；`real-site verified`：2026-09-04 登录态 `tieba.baidu.com/p/...` 候选源码识别 1 个现代评论并零占位隐藏。 | `blocked`：首页 `.thread-card` 当前只提供不透明 portrait 参数，不能据此伪造数字 UID；楼中楼更多虚拟项仍需单独捕获。 |
+| X | `structure regression`：人工合成 `article[data-testid="tweet"]` 与 `/handle` 契约通过。 | `blocked`：按用户要求本轮不做 X 登录态或功能验证。 |
+| 抖音 | `structure regression`：自动弹幕 6/6、推荐流 2/2、跨平台适配 22/22、性能边界 8/8；突发子树使用 8ms/32 根预算，后台/freeze 不消费新增节点。`real-site verified`：2026-09-04 当前候选详情页识别 3 条带身份弹幕和 6 条评论，管理器显示 3 行，弹幕/评论本地隐藏与恢复通过；同轮记录了播放/暂停 renderer/page 总时长。 | `blocked`：公开隔离入口仍可能停在验证码；换片后平台回收了旧节点且没有稳定的新评论样本，视频切换断言未通过。播放/暂停数字是页面 renderer 总量，不等同于插件独占 CPU，不能据此直接设线上阈值。 |
 
 可重复运行的检查：
 
@@ -426,7 +431,7 @@ node test/work-block.cjs           # 三平台作品作用域、作者/评论/�
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
 node test/quickblock.cjs          # B站楼中楼、弹幕分组、列表分段、浮动弹幕坐标命中、UID 候选、批量范围面板、PAKKU 与 XHR 回归
-node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器共 21 项结构回归
+node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器共 22 项结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
 node test/danmaku-auto.cjs       # B站/抖音关键词正则自动弹幕规则与 PAKKU 共存结构回归
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku

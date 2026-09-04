@@ -4,7 +4,7 @@
  * 滚动和脚本自身 UI 操作，不读取/导出 Cookie，不点击平台写入控件。
  * 运行：node test/real-douyin-probe.cjs [--url=https://www.douyin.com/...] [--duration=90]
  *        node test/real-douyin-probe.cjs --current --verify-video-switch --verify-auto-danmaku --duration=90
- *        node test/real-douyin-probe.cjs --open-entry --duration=90
+ *        node test/real-douyin-probe.cjs --open-entry --measure-performance --duration=30
  */
 const http = require('http');
 const fs = require('fs');
@@ -23,8 +23,10 @@ const durationSeconds = Math.max(5, Math.min(600, Number(durationArg ? durationA
 const openEntry = process.argv.includes('--open-entry');
 const verifyVideoSwitch = process.argv.includes('--verify-video-switch');
 const verifyAutoDanmaku = process.argv.includes('--verify-auto-danmaku');
+const measurePerformance = process.argv.includes('--measure-performance');
 
 const shim = `
+window.__OB_PROBE_DIAGNOSTICS__ = { enabled: true };
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
@@ -96,6 +98,105 @@ async function evaluate(send, sessionId, expression) {
   return result.result && result.result.value;
 }
 
+async function performanceMetrics(send, sessionId) {
+  try {
+    const result = await send('Performance.getMetrics', {}, sessionId);
+    const metrics = {};
+    for (const entry of (result && result.metrics) || []) {
+      if (entry && entry.name && Number.isFinite(Number(entry.value))) metrics[entry.name] = Number(entry.value);
+    }
+    return metrics;
+  } catch (error) {
+    return { error: String(error && error.message || error).slice(0, 180) };
+  }
+}
+
+function numericDelta(before, after) {
+  const out = {};
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of keys) {
+    const left = Number(before && before[key]);
+    const right = Number(after && after[key]);
+    if (Number.isFinite(left) && Number.isFinite(right)) out[key] = Math.max(0, right - left);
+  }
+  return out;
+}
+
+async function diagnosticsSnapshot(send, sessionId) {
+  return evaluate(send, sessionId, `(() => {
+    const source = window.__OB_TEST__ && window.__OB_TEST__.diagnostics;
+    const diagnostics = {};
+    if (source && typeof source === 'object') {
+      for (const [key, value] of Object.entries(source)) {
+        if (typeof value === 'number' && Number.isFinite(value)) diagnostics[key] = value;
+      }
+    }
+    const media = Array.from(document.querySelectorAll('video, audio')).find((item) => !item.ended) || null;
+    return {
+      diagnostics,
+      danmakuCount: document.querySelectorAll('[data-danmu-id],[data-danmaku-id]').length,
+      commentCount: document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length,
+      mediaPaused: media ? !!media.paused : null,
+      mediaEnded: media ? !!media.ended : null,
+    };
+  })()`);
+}
+
+async function runPerformancePhase(send, sessionId, label, durationMs) {
+  const startedAt = Date.now();
+  const beforeMetrics = await performanceMetrics(send, sessionId);
+  const beforeState = await diagnosticsSnapshot(send, sessionId);
+  const samples = [];
+  const deadline = startedAt + durationMs;
+  while (Date.now() < deadline) {
+    await sleep(Math.min(1000, Math.max(100, deadline - Date.now())));
+    const metrics = await performanceMetrics(send, sessionId);
+    const state = await diagnosticsSnapshot(send, sessionId);
+    samples.push({ at: Date.now(), metrics, state });
+  }
+  const afterMetrics = await performanceMetrics(send, sessionId);
+  const afterState = await diagnosticsSnapshot(send, sessionId);
+  return {
+    label,
+    durationMs: Date.now() - startedAt,
+    metricsDelta: numericDelta(beforeMetrics, afterMetrics),
+    diagnosticsDelta: numericDelta(beforeState && beforeState.diagnostics, afterState && afterState.diagnostics),
+    before: {
+      metrics: beforeMetrics,
+      state: beforeState,
+    },
+    after: {
+      metrics: afterMetrics,
+      state: afterState,
+    },
+    samples: samples.map((sample) => ({
+      at: sample.at,
+      metrics: sample.metrics,
+      state: sample.state,
+    })),
+  };
+}
+
+async function runPerformanceBaseline(send, sessionId) {
+  await send('Performance.enable', {}, sessionId);
+  const phases = [];
+  const phaseMs = Math.max(4000, Math.floor((durationSeconds * 1000) / 2));
+  phases.push(await runPerformancePhase(send, sessionId, 'playing', phaseMs));
+  await evaluate(send, sessionId, `(() => {
+    const media = Array.from(document.querySelectorAll('video, audio')).find((item) => !item.ended) || null;
+    if (media) media.pause();
+    return !!media;
+  })()`);
+  await sleep(800);
+  phases.push(await runPerformancePhase(send, sessionId, 'paused', phaseMs));
+  await evaluate(send, sessionId, `(() => {
+    const media = Array.from(document.querySelectorAll('video, audio')).find((item) => !item.ended) || null;
+    if (media) { media.muted = true; const promise = media.play(); if (promise && promise.catch) promise.catch(() => {}); }
+    return !!media;
+  })()`);
+  return { phaseMs, phases };
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const TEST_SCRIPT = `
@@ -141,6 +242,9 @@ if (!commentFab) {
 }
 out.commentEntryOpened = commentEntryOpened;
 out.commentDomCount = document.querySelectorAll('[data-e2e="comment-item"], .comment-item').length;
+// 详情页可能已经直接渲染评论，但没有精选流才有的“评论批量”工具；这种情况下
+// 只把评论结构记为已加载，不把不存在的入口误判成弹幕屏蔽闭环失败。
+out.commentPath = commentFab ? 'bulk-toolbar' : (commentEntryOpened ? 'opened-from-entry' : 'preloaded-detail');
 out.commentRecordCount = adapter.commentManager && typeof adapter.commentManager.collectRecords === 'function'
   ? adapter.commentManager.collectRecords('manager').length : null;
 out.commentManagerAvailable = adapter.commentManager && typeof adapter.commentManager.available === 'function'
@@ -533,7 +637,7 @@ async function runStabilityCheck(send, sessionId) {
 }
 
 (async () => {
-  const report = { version, sourceHash, build, durationSeconds, blocked: [], probe: null, videoSwitch: null, stability: null };
+  const report = { version, sourceHash, build, durationSeconds, blocked: [], probe: null, performance: null, videoSwitch: null, stability: null };
   const client = await browserClient();
   let targetId = '';
   let reusedTarget = false;
@@ -587,6 +691,13 @@ async function runStabilityCheck(send, sessionId) {
       if (count > 0) break;
       await sleep(1000);
     }
+    if (measurePerformance) {
+      try {
+        report.performance = await runPerformanceBaseline(client.send, sessionId);
+      } catch (error) {
+        report.blocked.push('抖音性能基线采集失败：' + String(error && error.message || error).slice(0, 240));
+      }
+    }
     if (verifyAutoDanmaku) {
       // 先在初始播放器弹幕稳定后验证自动规则；评论管理器的滚动/回收可能会
       // 让抖音重挂弹幕层，不能把评论操作后的正常节点回收当成自动规则失败。
@@ -602,17 +713,25 @@ async function runStabilityCheck(send, sessionId) {
     if (!probe.hasOB || !probe.adapterReady || !probe.runtime || probe.runtime.version !== version
       || probe.runtime.build !== build || !probe.danmakuCount || !probe.withIdentity) {
       report.blocked.push('临时标签页未渲染出带发送者身份的抖音弹幕（' + JSON.stringify({ danmakuCount: probe.danmakuCount, withIdentity: probe.withIdentity }) + '）');
-    } else if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
-      || !probe.commentToolPresent || !probe.commentToolRightColumn || !probe.gearRightColumn
+    } else {
+      const commentFlowExpected = !!probe.commentToolPresent || !!probe.commentEntryOpened;
+      const commentFlowFailed = commentFlowExpected && (
+        !probe.commentToolPresent || !probe.commentToolRightColumn
+        || !probe.commentManagerPresent || !probe.commentManagerStaysOpen
+        || !probe.commentSearchPresent || !probe.commentLoadPresent
+        || probe.commentSearchWorks === false || !probe.commentBatchEnabled
+        || (probe.commentModalScopePresent && !probe.commentModalBulkAbsent)
+      );
+      if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
+      || !probe.gearRightColumn
       || !probe.managerPresent || !probe.managerRows || !probe.managerSearchPresent
       || !probe.managerScanPresent || probe.managerSearchWorks === false
       || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored
-      || !probe.commentManagerPresent || !probe.commentManagerStaysOpen || !probe.commentSearchPresent || !probe.commentLoadPresent
-      || probe.commentSearchWorks === false || !probe.commentBatchEnabled
-      || (probe.commentModalScopePresent && !probe.commentModalBulkAbsent)
+      || commentFlowFailed
       || !probe.buttonPresent || !probe.buttonInside || !probe.confirmShown || !probe.confirmUid
       || !probe.blocked || !probe.hidden || !probe.restored || probe.noTarget) {
       report.blocked.push('抖音弹幕本地拉黑闭环未完成：' + JSON.stringify(probe));
+      }
     }
     if (!report.blocked.length && verifyVideoSwitch) {
       report.videoSwitch = await evaluate(client.send, sessionId, VIDEO_SWITCH_TEST_SCRIPT);
