@@ -1,21 +1,21 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-05
-状态来源：0.46.0 本地候选实现、结构回归与维护控制平面重建；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.46.0 已发布实现、结构回归与维护控制平面重建；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 本地候选 userscript：`0.46.0`
+- 当前 userscript：`0.46.0`
 - 构建：`0.46.0-signed-session-index-conflict-tieba-vue`
-- 当前公开版本：`0.45.0`
-- 当前公开功能提交：`17c6c45fe169da3943bd64544155eb5e6056514d`
+- 当前公开版本：`0.46.0`
+- 当前公开功能提交：`75ba0f7c7c54a056f0e41e9ae39ddd5a6340e770`
 - 最近验证的源码快照：`75ba0f7c7c54a056f0e41e9ae39ddd5a6340e770`
 - 当前候选源码 SHA-256：`d7be1300786d5a22ee35c4720ae7b10913dae6fb4311d23e495be89ba8257145`
-- 候选状态：`OB-WEIBO-003` 作品级评论读取/滚动锁恢复与 `OB-UI-001` 通用悬浮入口收敛均已通过用户专用浏览器体验，功能提交为 `75ba0f7`；当前仍未公开发布。
+- 发布状态：`OB-WEIBO-003` 作品级评论读取/滚动锁恢复与 `OB-UI-001` 通用悬浮入口收敛均已通过用户专用浏览器体验；功能提交为 `75ba0f7`，发布快照提交为 `ba8628e`。
 - 快照语义：`50f2a51` 是在 `96c58a7` 基础上加入微博详情虚拟行空间排序修复和人工合成快速滚动回归的功能提交；
   `96c58a7` 仍是前一阶段生命周期/身份索引/持久化修复、贴吧路径、回归测试和真实探针修正的祖先快照。后续若仅变更维护控制平面文档，不冒充新的功能快照。
-- 当前候选发布状态：未创建 `v0.46.0` tag，未 push，未创建 GitHub Release。
-- 当前公开 tag/Release：[`v0.45.0`](https://github.com/a2787/ub-utils/releases/tag/v0.45.0)。
+- 当前发布状态：已创建并推送 `v0.46.0` tag，已推送 `master`，已创建 GitHub Release。
+- 当前公开 tag/Release：[`v0.46.0`](https://github.com/a2787/ub-utils/releases/tag/v0.46.0)。
 
 ## 本轮已落实
 
@@ -116,7 +116,7 @@
 - 范围：删除跨平台通用 `.ob-block-btn` body 浮层和 document 级 `mouseover` 注入；保留微博「本地拉黑」/「屏蔽该楼回复」、各平台作者/作品/菜单/批量入口及抖音弹幕专用悬浮入口。
 - 原因：通用入口在微博与专用评论按钮重复，脱离评论节点的浮层还会随鼠标/滚动反复清理并闪动。
 - 代码状态：已移除通用注入和 CSS；`showHoverButton` 仍只控制抖音弹幕专用入口，设置文案和身份提示已收窄。候选源码 SHA-256：`d7be1300786d5a22ee35c4720ae7b10913dae6fb4311d23e495be89ba8257145`。
-- 当前证据：`structure regression`：`node test/adapters.cjs` 28/28，微博悬停路径通用按钮为 0、专用按钮保留，抖音弹幕专用入口通过；其余受影响回归（run20/quick33/weibo13/work3/danmaku7/perf8）通过。`real-site verified`：2026-09-05 用户授权登录态专用 Chrome 的 `weibo.com/...` 详情页刷新候选后实际悬停评论行，通用按钮 0，保留 21 个「本地拉黑」和 17 个「屏蔽该楼回复」；用户随后体验悬停、滚动及专用按钮并明确确认无问题，未点击平台写入控件。`blocked`：同轮探针无可测顶层虚拟列表 spacer，与本入口无关。功能已提交为 `75ba0f7`；未改 `@version`，未 push/tag/Release。
+- 当前证据：`structure regression`：`node test/adapters.cjs` 28/28，微博悬停路径通用按钮为 0、专用按钮保留，抖音弹幕专用入口通过；其余受影响回归（run20/quick33/weibo13/work3/danmaku7/perf8）通过。`real-site verified`：2026-09-05 用户授权登录态专用 Chrome 的 `weibo.com/...` 详情页刷新候选后实际悬停评论行，通用按钮 0，保留 21 个「本地拉黑」和 17 个「屏蔽该楼回复」；用户随后体验悬停、滚动及专用按钮并明确确认无问题，未点击平台写入控件。`blocked`：同轮探针无可测顶层虚拟列表 spacer，与本入口无关。功能提交为 `75ba0f7`，发布快照为 `ba8628e`，已随 `v0.46.0` 发布。
 - 浏览器状态：专用 Chrome 只保留一个 `weibo.com/...` 测试标签；本轮未点击平台写入控件，测试浮层和设置面板已清理。
 
 ## 证据
@@ -162,9 +162,9 @@ node test/dev-browser.cjs build
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-专用 Chrome 已在 `chrome://extensions` 手动刷新本地开发扩展，临时验证页已关闭，当前只保留一个 `weibo.com/...` 测试标签；后续源码更新仍需刷新扩展并打开新页面；真实用户使用则通过
-Tampermonkey 安装已公开发布的版本并刷新目标平台页面。0.46.0 目前只是本地候选，远端检查更新不会取得它。
+专用 Chrome 已在 `chrome://extensions` 手动刷新本地开发扩展，临时验证页已关闭，当前只保留一个 `weibo.com/...` 测试标签；后续源码更新仍需刷新扩展并打开新页面；真实用户使用可通过
+Tampermonkey 安装已公开发布的 0.46.0 并刷新目标平台页面。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是取得稳定的抖音换片目标，在当前候选构建上补采切换窗口并区分插件自身扫描/脚本时长与页面 renderer 总量；同时为贴吧现代 `.thread-card` 结构建立只读身份契约探针。微博顶层 spacer 和 B站根评论分页仍需各自可测样本。CI/CD、push、tag 和 Release 仍需用户另行明确授权。
+下一项最有价值的验证是取得稳定的抖音换片目标，在当前 0.46.0 构建上补采切换窗口并区分插件自身扫描/脚本时长与页面 renderer 总量；同时为贴吧现代 `.thread-card` 结构建立只读身份契约探针。微博顶层 spacer 和 B站根评论分页仍需各自可测样本。后续版本的 CI/CD、push、tag 和 Release 仍需当轮明确授权。

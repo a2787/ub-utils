@@ -32,7 +32,7 @@ AGENTS.md
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口
 └── docs/changelog/
     ├── INDEX.md                           ← 版本条目路由
-    ├── v0.45.0.md                         ← 当前版本完整发布说明
+    ├── v0.46.0.md                         ← 当前版本完整发布说明
     └── LEGACY-HISTORY.md                  ← 重组前只读完整变更日志
 
 验证入口：`test/docs-check.cjs` 维护本知识树的大小、链接、计划、快照、版本和关键内容门禁；受影响平台的

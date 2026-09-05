@@ -18,7 +18,7 @@ README、测试、平台探针和历史记录只按任务读取；不要默认�
 ## 当前状态
 
 - 当前版本、发布事实和证据：见 [docs/maintenance/CURRENT.md](docs/maintenance/CURRENT.md)。
-- 当前版本详细发布说明：见 [docs/changelog/v0.45.0.md](docs/changelog/v0.45.0.md)。
+- 当前版本详细发布说明：见 [docs/changelog/v0.46.0.md](docs/changelog/v0.46.0.md)。
 - 历史维护索引：见 [docs/maintenance/HISTORY_INDEX.md](docs/maintenance/HISTORY_INDEX.md)。
 - 历史变更索引：见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 

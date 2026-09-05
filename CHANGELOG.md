@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.46.0 - 受控生命周期、签名开发桥与分帧性能预算 - 2026-08-30（2026-09-04 审计续修）
+## v0.46.0 - 受控生命周期、签名开发桥与分帧性能预算 - 2026-08-30（2026-09-05 发布）
 
 - 新增统一运行时资源注册表和 freeze/resume、BFCache、普通 pagehide 边界；SPA 路由由单一信号源广播。
 - 新增子树队列的 8ms/32 根分帧预算，移除跨平台和空闲状态下的无效入口轮询。
@@ -19,8 +19,10 @@
 
 详细用户变化、验证标签和限制：[v0.46.0 完整条目](docs/changelog/v0.46.0.md)。
 
-发布状态：`v0.46.0` 是本地候选；未创建 tag，未推送，未创建 GitHub Release。当前公开版本仍为
-[OmniBlock 0.45.0](https://github.com/a2787/ub-utils/releases/tag/v0.45.0)。
+发布状态：`v0.46.0` 已推送并创建 tag 与 GitHub Release；当前公开版本为
+[OmniBlock 0.46.0](https://github.com/a2787/ub-utils/releases/tag/v0.46.0)。
+发布快照提交为 `ba8628e`，功能源码提交为 `75ba0f7`，构建为
+`0.46.0-signed-session-index-conflict-tieba-vue`。
 当前源码版本/构建和未完成的真实站点边界见 [当前维护状态](docs/maintenance/CURRENT.md)。
 
 ## 历史版本
