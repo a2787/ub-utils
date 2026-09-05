@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.46.2 - B站子评论菜单与楼回复入口修复 - 2026-09-05（本地候选，未公开发布）
+## v0.46.2 - B站子评论菜单与楼回复入口修复 - 2026-09-05（已推送候选，未创建 Release）
 
 - 将 B站主评论菜单中的楼操作显示为四字短文案「🧵 屏蔽回复」，保持菜单单行；完整功能语义保留在 title/aria-label「屏蔽该楼回复」。
 - 识别真实 `BILI-COMMENT-ACTION-BUTTONS-RENDERER` 内的 `#more`/更多图标触发器，使子评论三点菜单打开后能及时补扫并插入「🚫 本地拉黑」。
@@ -10,7 +10,7 @@
 
 详细用户变化、验证标签和限制：[v0.46.2 完整条目](docs/changelog/v0.46.2.md)。
 
-发布状态：`v0.46.2` 仅为本地候选，未 push、未创建 tag 或 GitHub Release；当前公开版本仍为
+发布状态：`v0.46.2` 候选已推送至 `origin/master`（当前提交 `930c426`），未创建 tag 或 GitHub Release；当前公开版本仍为
 [OmniBlock 0.46.0](https://github.com/a2787/ub-utils/releases/tag/v0.46.0)。候选构建为
 `0.46.2-bili-subcomment-menu-layout`；当前源码版本/构建和真实站点边界见
 [当前维护状态](docs/maintenance/CURRENT.md)。
