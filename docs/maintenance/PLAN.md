@@ -166,17 +166,17 @@ proposed → approved → in_progress → verified
 - dependencies: OB-CORE-001, OB-LIFE-001, OB-WEIBO-002, OB-WEIBO-003, OB-TIEBA-001
 - acceptance: required
   - [x] B站：评论/楼中楼快捷屏蔽、整楼、批量范围、弹幕工具/悬浮入口、UID 候选与恢复均有真实或明确 blocked 证据。
-  - [ ] B站本轮回归：真实视频评论菜单的 `硬核会员举报` 仍须注入 `本地拉黑`，且不改变无浮动弹幕身份时的弹幕举报安全边界。
+  - [x] B站本轮回归：真实视频评论菜单的 `硬核会员举报` 仍须注入 `本地拉黑`，且不改变无浮动弹幕身份时的弹幕举报安全边界。
   - [ ] 微博：帖子作者、主评论、楼中楼、评论管理器/批量、点赞用户列表、作品级入口与恢复均有真实或明确 blocked 证据；不把未加载评论写成全量。
   - [ ] 知乎：作者、评论、搜索/列表入口和恢复先取得当前 DOM 捕获；缺少稳定样本时维持 blocked，不猜选择器。
   - [ ] 贴吧：旧版楼层、新版现代详情评论、楼中楼/批量与恢复分别核验；opaque 首页作者继续 blocked。
   - [ ] 抖音：作者/评论、评论管理器与批量、弹幕悬停/管理器、推荐流遮罩/切换与恢复分别核验；验证码或换片目标不稳定时如实 blocked；弹幕管理器关闭时正在进行的时间轴扫描必须同步取消，不得留下后台任务。
   - [ ] 每项证据附日期、脱敏页面形式、登录状态、确切结果和命令；所有受影响本地回归保持通过。
-- evidence: `structure regression`：当前本地矩阵、`node test/work-block.cjs`、`node test/adapters.cjs`、`node test/quickblock.cjs`、`node test/danmaku-auto.cjs` 等通过；`real-site verified`：B站综合只读探针已覆盖评论/楼中楼、批量范围、弹幕工具/悬浮入口与恢复，微博登录态管理器/作品候选、知乎评论弹窗、贴吧现代详情/楼中楼/批量、抖音评论/弹幕管理器已取得部分闭环；其余范围按 CURRENT 逐项登记。X 明确排除。
-- next: 先闭环 B 站评论菜单 `硬核会员举报` 回归，再用单标签补齐微博点赞列表、知乎作者/列表、贴吧旧版楼层和抖音推荐流换片；微博顶层 spacer、B站匿名根评论分页和抖音换片/归因性能保持 `blocked` 时不猜测扩展。任何新选择器仍须先捕获再实现，X 按用户要求排除。
+- evidence: `structure regression`：当前本地矩阵与本轮 `node test/quickblock.cjs` 34/34 通过，新增 `QB-B-REPORT` 锁住「硬核会员举报」；`real-site verified`：2026-09-05 专用 Chrome 复现 0.46.0 缺入口，隔离 0.46.1 候选观察评论菜单/UID/整楼/批量闭环；`blocked`：当前 Chrome 无法按安全策略刷新候选扩展。其余范围按 CURRENT 逐项登记，X 明确排除。
+- next: 用单标签补齐微博点赞列表、知乎作者/列表、贴吧旧版楼层和抖音推荐流换片；微博顶层 spacer、B站匿名根评论分页和抖音换片/归因性能保持 `blocked` 时不猜测扩展。任何新选择器仍须先捕获再实现，X 按用户要求排除。
 - updated: 2026-09-05
 - supersedes: none
-- files: docs/maintenance/PLAN.md; docs/maintenance/CURRENT.md; README.md; test/real-*.cjs
+- files: omniblock.user.js; test/quickblock.cjs; docs/maintenance/PLAN.md; docs/maintenance/CURRENT.md; README.md; docs/changelog/v0.46.1.md
 
 ### OB-RULE-001 — 自动规则正则安全边界
 
