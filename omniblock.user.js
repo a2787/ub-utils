@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.46.1
+// @version       0.46.2
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -51,7 +51,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.46.1-bili-comment-menu-report';
+  const RUNTIME_BUILD = '0.46.2-bili-subcomment-menu-layout';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -7957,6 +7957,21 @@
     return ancestorChain(el).some((node) => node && node.tagName === 'BILI-COMMENT-MENU');
   }
 
+  // 真站评论操作按钮没有 aria-label/class 语义，三点按钮由 #more 容器和
+  // bili-icon[icon="BDC/more_vertical_fill/1"] 组成；该结构同时出现在主评论和子评论。
+  // 只在评论操作组件内认定，避免把页面其他“更多”按钮当成菜单补扫触发器。
+  function isBilibiliCommentMoreTrigger(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const isMore = el.id === 'more'
+      || (el.tagName === 'BILI-ICON' && /more_vertical/i.test(attr(el, 'icon') || ''));
+    if (!isMore) return false;
+    const chain = ancestorChain(el);
+    return chain.some((node) => node && node.tagName === 'BILI-COMMENT-ACTION-BUTTONS-RENDERER')
+      && chain.some((node) => node && (
+        node.tagName === 'BILI-COMMENT-RENDERER' || node.tagName === 'BILI-COMMENT-REPLY-RENDERER'
+      ));
+  }
+
   function identifyFromAnchor(anchor) {
     const a = currentAdapter; if (!a) return null;
     if (a.id === 'bilibili') {
@@ -7999,6 +8014,9 @@
     btn.className = 'ob-quick' + (listItem ? ' operation-option' : '');
     if (listItem) { btn.setAttribute('role', 'menuitem'); btn.tabIndex = 0; }
     else btn.type = 'button';
+    // B站评论菜单在 Shadow DOM 内，document 级样式无法穿透；内联约束保证
+    // 菜单内的本地入口不会因宿主 li 的默认 white-space 而折行。
+    if (listItem) btn.style.setProperty('white-space', 'nowrap', 'important');
     btn.setAttribute('data-key', key);
     btn.textContent = '🚫 ' + label;
     const activate = (e) => {
@@ -8028,8 +8046,11 @@
     btn.className = 'ob-quick ob-thread-quick' + (listItem ? ' operation-option' : '');
     if (listItem) { btn.setAttribute('role', 'menuitem'); btn.tabIndex = 0; }
     else btn.type = 'button';
+    if (listItem) btn.style.setProperty('white-space', 'nowrap', 'important');
     btn.setAttribute('data-thread-key', key);
-    btn.textContent = '🧵 屏蔽该楼回复';
+    btn.title = '屏蔽该楼回复';
+    btn.setAttribute('aria-label', '屏蔽该楼回复');
+    btn.textContent = '🧵 屏蔽回复';
     const activate = (event) => {
       event.stopPropagation(); event.preventDefault();
       if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
@@ -8257,6 +8278,7 @@
     const isMenuTrigger = (node) => {
       const element = menuNode(node);
       if (!element || !element.matches) return false;
+      if (a.id === 'bilibili' && isBilibiliCommentMoreTrigger(element)) return true;
       let text = '';
       let className = '';
       try { text = textOf(element) + ' ' + (attr(element, 'aria-label') || '') + ' ' + (attr(element, 'title') || '') + ' ' + (attr(element, 'data-e2e') || ''); }

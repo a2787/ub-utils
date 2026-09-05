@@ -126,6 +126,35 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     menuRoot.appendChild(list); root.append(link, menu); wrapper.appendChild(renderer); repliesRoot.appendChild(wrapper); thread.shadowRoot.appendChild(replies);
     return renderer;
   }
+  // 人工合成：模拟真站子评论在首次扫描后才打开三点菜单。真实操作按钮位于
+  // BILI-COMMENT-ACTION-BUTTONS-RENDERER Shadow Root 的 #more 容器内，且没有
+  // aria/class 语义；点击后只改变菜单状态，不触发平台写入。
+  function makeLazyReply(thread, mid, uname) {
+    const replies = document.createElement('bili-comment-replies-renderer');
+    replies.__data = thread.shadowRoot.querySelector('bili-comment-renderer').__data;
+    const repliesRoot = replies.attachShadow({mode:'open'});
+    const wrapper = document.createElement('div');
+    const renderer = document.createElement('bili-comment-reply-renderer');
+    renderer.id = 'reply-' + mid; renderer.style.display = 'block'; renderer.style.height = '20px';
+    renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
+    const root = renderer.attachShadow({mode:'open'});
+    const link = document.createElement('a'); link.className = 'user-name'; link.href = '//space.bilibili.com/' + mid; link.textContent = uname;
+    const actions = document.createElement('bili-comment-action-buttons-renderer');
+    const actionsRoot = actions.attachShadow({mode:'open'});
+    const more = document.createElement('div'); more.id = 'more';
+    const moreButton = document.createElement('button');
+    const moreIcon = document.createElement('bili-icon'); moreIcon.setAttribute('icon', 'BDC/more_vertical_fill/1');
+    moreButton.appendChild(moreIcon);
+    const menu = document.createElement('bili-comment-menu');
+    const menuRoot = menu.attachShadow({mode:'open'});
+    const list = document.createElement('ul'); list.id = 'options';
+    for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
+    menuRoot.appendChild(list);
+    moreButton.addEventListener('click', () => {});
+    more.append(moreButton, menu); actionsRoot.appendChild(more); root.append(link, actions);
+    wrapper.appendChild(renderer); repliesRoot.appendChild(wrapper); thread.shadowRoot.appendChild(replies);
+    return renderer;
+  }
   const first = makeComment(111, 'Alice');
   const second = makeComment(222, 'Bob');
   const third = makeComment(333, 'Carol');
@@ -138,6 +167,12 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     commentsRoot.appendChild(thread);
     return thread;
   };
+  window.__appendLazyReply = () => {
+    window.__lazyReply = makeLazyReply(third, 666, 'LazyReplyUser');
+    return window.__lazyReply;
+  };
+  window.__lazyReplyMore = () => window.__lazyReply && window.__lazyReply.shadowRoot
+    .querySelector('bili-comment-action-buttons-renderer').shadowRoot.querySelector('#more button');
   window.__commentRenderer = (mid) => commentsRoot.querySelector('#comment-' + mid).shadowRoot.querySelector('bili-comment-renderer');
   window.__replyRenderer = (mid) => third.shadowRoot.querySelector('bili-comment-replies-renderer').shadowRoot.querySelector('#reply-' + mid);
 </script>
@@ -482,6 +517,58 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && reportOnlyMenu.threadKey === '举报')
       report.pass.push('QB-B-REPORT 真站捕获的“硬核会员举报”评论菜单仍注入本地拉黑和楼回复入口');
     else report.fail.push('QB-B-REPORT 评论举报项回归失败：' + JSON.stringify(reportOnlyMenu));
+
+    const threadLayout = await page.evaluate(() => {
+      const renderer = window.__commentRenderer('111');
+      const list = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('#options');
+      const button = list.querySelector('.ob-thread-quick');
+      const range = document.createRange();
+      if (button) range.selectNodeContents(button);
+      const style = button ? getComputedStyle(button) : null;
+      return {
+        text: button && button.textContent,
+        title: button && button.title,
+        ariaLabel: button && button.getAttribute('aria-label'),
+        whiteSpace: style && style.whiteSpace,
+        lineCount: button ? [...range.getClientRects()].filter((rect) => rect.width || rect.height).length : 0,
+      };
+    });
+    if (threadLayout.text === '🧵 屏蔽回复' && threadLayout.title === '屏蔽该楼回复'
+      && threadLayout.ariaLabel === '屏蔽该楼回复' && threadLayout.whiteSpace === 'nowrap'
+      && threadLayout.lineCount === 1)
+      report.pass.push('QB-B-LAYOUT B站楼回复入口使用四字短文案并保持单行，完整语义保留在 title/aria-label');
+    else report.fail.push('QB-B-LAYOUT B站楼回复入口版式或无障碍语义错误：' + JSON.stringify(threadLayout));
+
+    const lazyReplyMenu = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const renderer = window.__appendLazyReply();
+      const menu = renderer.shadowRoot.querySelector('bili-comment-action-buttons-renderer').shadowRoot.querySelector('bili-comment-menu');
+      const list = menu.shadowRoot.querySelector('#options');
+      await pause(120);
+      const before = list.querySelectorAll('.ob-quick').length;
+      renderer.shadowRoot.querySelector('bili-comment-action-buttons-renderer').shadowRoot.querySelector('#more button').click();
+      await pause(1300);
+      const local = list.querySelector('.ob-quick:not(.ob-thread-quick)');
+      const thread = list.querySelector('.ob-thread-quick');
+      const info = local && local.__obQuickInfo;
+      const after = list.querySelectorAll('.ob-quick').length;
+      const wrapper = renderer.parentElement;
+      if (wrapper) wrapper.remove();
+      return {
+        before,
+        after,
+        localText: local && local.textContent,
+        localKeys: info && info.keys,
+        level: info && info.level,
+        threadCount: thread ? 1 : 0,
+      };
+    });
+    if (lazyReplyMenu.before === 0 && lazyReplyMenu.after === 1
+      && String(lazyReplyMenu.localText || '').includes('本地拉黑')
+      && Array.isArray(lazyReplyMenu.localKeys) && lazyReplyMenu.localKeys.includes('bili:uid:666')
+      && lazyReplyMenu.level === 'reply' && lazyReplyMenu.threadCount === 0)
+      report.pass.push('QB-B-REPLY-MENU B站子评论点击真实 #more 后触发补扫并注入本地拉黑，不注入楼回复入口');
+    else report.fail.push('QB-B-REPLY-MENU B站子评论菜单补扫失败：' + JSON.stringify(lazyReplyMenu));
 
     // 人工合成：B站接口请求 ps=20，但服务端实际按 page.size=10 返回三页子回复。
     // 旧逻辑只比较 replies.length < REPLY_PAGE_SIZE，会在第一页误认为已经结束，
