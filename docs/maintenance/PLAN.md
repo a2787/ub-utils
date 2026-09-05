@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-04
+更新时间：2026-09-05
 
 本文件是 OmniBlock 唯一的活动计划。它记录当前要解决的问题、范围、依赖、验收条件和
 下一步动作；当前事实放在 `CURRENT.md`，用户可见变化放在 README/版本 changelog，已经
@@ -43,6 +43,26 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-04
 - supersedes: none
 - files: omniblock.user.js; test/run.cjs; test/state.cjs; test/performance.cjs
+
+### OB-UI-001 — 移除跨平台通用悬浮拉黑入口
+
+- status: verified
+- priority: P1
+- scope: 删除跨平台通用的 `.ob-block-btn` body 浮层和 document 级 `mouseover` 注入路径；保留各平台已经单独实现并验证的评论、楼层、作者、作品、原生菜单、弹幕和批量入口。共享的名单、身份规范化、确认框、右键菜单和扫描器仍保留；`showHoverButton` 仅继续控制平台专用悬浮入口（当前为抖音弹幕跟随按钮），不再代表一个跨平台评论入口。
+- non-goals: 不改变任何平台选择器、身份键、屏蔽/恢复语义、扫描调度或 X；不删除微博“本地拉黑”/“屏蔽该楼回复”、B 站/抖音/其他平台的专用入口；不执行平台写入、push、tag、Release 或公开发布。
+- dependencies: OB-CORE-001
+- acceptance: required
+  - [x] 微博人工合成评论在鼠标事件路径中不再创建 `.ob-block-btn`，而 `.ob-weibo-comment-block` 与 `.ob-weibo-thread-block` 仍可用。
+  - [x] 抖音弹幕专用 `.ob-dy-dm-block` 悬浮、确认、隐藏和恢复回归保持通过；B 站、微博、知乎、贴吧的专用快捷/批量入口和现有右键菜单回归保持通过。
+  - [x] 设置页不再把“显示悬浮拉黑按钮”描述成跨平台通用入口；保留的开关语义明确指向平台专用悬浮入口。
+  - [x] 用户授权登录态专用 Chrome 的微博详情页真实悬停核对：不出现通用 `.ob-block-btn`，现有评论专用按钮仍保留；不点击平台写入控件。
+  - [x] 同步 README、当前版本 changelog、CURRENT 和本计划；用户体验确认前不创建本地提交，不进行公开发布。
+  - [x] 用户在专用浏览器中体验候选并确认没有回归；确认后才把本项改为 `verified` 并创建本地提交。
+- evidence: `structure regression`：`node test/adapters.cjs` 28/28（微博悬停路径 generic `.ob-block-btn` 为 0，微博专用按钮仍在；抖音弹幕专用悬浮入口通过），并由 `node test/run.cjs` 20/20、`node test/quickblock.cjs` 33/33、`node test/weibo-replay.cjs` 13/13、`node test/work-block.cjs` 3/3、`node test/danmaku-auto.cjs` 7/7、`node test/performance.cjs` 8/8 保持受影响路径通过；`real-site verified`：2026-09-05 用户授权登录态专用 Chrome 的 `weibo.com/...` 详情页刷新候选扩展后，实际移入评论行观察到通用按钮数量 0，同时保留 21 个“本地拉黑”和 17 个“屏蔽该楼回复”专用按钮；未点击平台举报、官方拉黑、关注或发帖控件。用户随后在同一专用浏览器体验悬停、滚动和专用按钮并明确确认无问题。`blocked`：同轮微博探针的既有顶层虚拟列表 spacer 无可测样本，不影响本入口核对。
+- next: 继续观察真实平台 DOM 变化；本项已完成本地收尾，公开 push/tag/Release 仍按发布门禁单独处理。
+- updated: 2026-09-05
+- supersedes: none
+- files: omniblock.user.js; test/adapters.cjs; README.md; docs/changelog/v0.46.0.md; docs/maintenance/CURRENT.md
 
 ### OB-TIEBA-001 — 现代详情评论身份路径
 
@@ -113,6 +133,49 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-04
 - supersedes: none
 - files: omniblock.user.js; test/weibo-replay.cjs
+
+### OB-WEIBO-003 — 详情页作品级评论统计作用域
+
+- status: in_progress
+- priority: P1
+- scope: 微博详情页“屏蔽作品”入口的作品作用域识别与一次性读取；把与帖子卡片同级的评论虚拟列表纳入当前帖子统计，在 page-mode 文档滚动中按有限分段保留规范化记录；关闭程序化展开的楼中楼后恢复页面原有滚动样式，并在用户取消/关闭读取时中止剩余异步扫描；插件自有弹窗收尾后把页面键盘焦点交还给文档，避免评论输入框吞掉方向键；在已有作品屏蔽身份且虚拟行被回收/复用时，只对视口内评论做轻量重判，避免已命中身份在滚动帧间短暂重新显示；保持作者、主评论、子评论的身份归属和现有虚拟列表补位逻辑不变。
+- non-goals: 不改变微博评论/回复选择器或身份键；不读取平台写入接口；不新增运行模式或独立诊断模式；不扩大到微博信息流、其他平台或 X；不把页面总评论数猜测成已读取的可屏蔽用户数。
+- dependencies: OB-CORE-001, OB-LIFE-001, OB-WEIBO-002
+- acceptance: required
+  - [x] 同一登录态专用 Chrome 详情页复现当前弹窗“主评论作者：0 位、子评论作者：0 位”，并记录现场 DOM 作用域与计数。
+  - [x] 作品候选在真实详情结构下覆盖帖子卡片和同级评论容器；人工合成夹具验证第二个帖子及其评论不会被并入。
+  - [x] `node test/work-block.cjs`、微博适配器回归、语法/文档门禁保持通过；旧行为回放对作用域边界断言失败、候选行为显示主评论/子评论计数。
+  - [x] 候选注入同一专用 Chrome 后，弹窗显示现场可读取的作者/评论/回复数量；仍标记 partial，不执行 push、tag、Release 或发布。
+  - [x] 作品级提交后，当前已挂载且身份命中的评论继续即时隐藏；page-mode 分段读取新增的可确认身份进入同一名单，未观察到的作者仍明确保留为 partial，不伪装成平台绝对全量。
+  - [ ] 作品级提交后，微博虚拟行回收/复用时，视口内已在名单中的评论在下一绘制帧内重新判定并隐藏；没有屏蔽工作时不建立滚动扫描。
+  - [x] 楼中楼程序化关闭后，真实页面 `woo-modal-main` 消失且 html/body 原滚动样式恢复；滚轮/脚本滚动不再被 `overflow-y:hidden` 卡住。
+  - [x] 楼中楼弹窗延迟出现、读取异常或用户取消时仍能关闭本次打开的弹窗并恢复文档原滚动样式；回归夹具在旧的短等待路径上失败。
+  - [x] 用户取消/关闭作品级读取后，未完成的异步扫描不再继续占用页面；页面焦点不留在已移除的插件按钮或微博评论输入框，方向键可继续滚动文档。
+- evidence: `structure regression`：`node test/work-block.cjs` 3/3 覆盖延迟弹窗、AbortSignal 和取消清理；`real-site verified`（2026-09-04 至 2026-09-05，用户授权登录态专用 Chrome，页面形式 `weibo.com/...`）：真实详情 wrapper 读取到作品作者 1、主评论作者 49、子评论作者 23–24，提交后当前已挂载且身份命中的评论行进入隐藏路径，读取保持 `partial`。取消/关闭后 `woo-modal-main=0`、html 恢复 `overflow: auto`、焦点回到 `BODY`，方向键与脚本滚动可继续。
+- next: 保留虚拟行回收/复用的视口内下一帧重判为未完成项；继续逐项核验其他平台，用户确认候选体验后再同步版本说明并创建本地提交，仍不执行 push/tag/Release。
+- updated: 2026-09-05
+- supersedes: none
+- files: omniblock.user.js; test/work-block.cjs
+
+### OB-COVERAGE-001 — 各平台屏蔽功能现场核验矩阵
+
+- status: in_progress
+- priority: P1
+- scope: 在专用浏览器和只读探针中逐项核对 B 站、微博、知乎、贴吧、抖音的作者/帖子、评论/楼中楼、批量入口、管理器、弹幕（适用平台）、恢复与页面稳定性；将真实观察、结构回归和外部阻断分开登记，作为 0.46.0 候选收口前的覆盖清单。
+- non-goals: 不验证 X（按用户要求暂不做）；不点击任何平台举报、官方拉黑、关注、发帖或其他写入控件；不新增运行模式；不因夹具通过而扩大线上支持范围；不执行 push、tag、Release 或发布。
+- dependencies: OB-CORE-001, OB-LIFE-001, OB-WEIBO-002, OB-WEIBO-003, OB-TIEBA-001
+- acceptance: required
+  - [x] B站：评论/楼中楼快捷屏蔽、整楼、批量范围、弹幕工具/悬浮入口、UID 候选与恢复均有真实或明确 blocked 证据。
+  - [ ] 微博：帖子作者、主评论、楼中楼、评论管理器/批量、点赞用户列表、作品级入口与恢复均有真实或明确 blocked 证据；不把未加载评论写成全量。
+  - [ ] 知乎：作者、评论、搜索/列表入口和恢复先取得当前 DOM 捕获；缺少稳定样本时维持 blocked，不猜选择器。
+  - [ ] 贴吧：旧版楼层、新版现代详情评论、楼中楼/批量与恢复分别核验；opaque 首页作者继续 blocked。
+  - [ ] 抖音：作者/评论、评论管理器与批量、弹幕悬停/管理器、推荐流遮罩/切换与恢复分别核验；验证码或换片目标不稳定时如实 blocked；弹幕管理器关闭时正在进行的时间轴扫描必须同步取消，不得留下后台任务。
+  - [ ] 每项证据附日期、脱敏页面形式、登录状态、确切结果和命令；所有受影响本地回归保持通过。
+- evidence: `structure regression`：当前本地矩阵、`node test/work-block.cjs`、`node test/adapters.cjs`、`node test/quickblock.cjs`、`node test/danmaku-auto.cjs` 等通过；`real-site verified`：B站综合只读探针已覆盖评论/楼中楼、批量范围、弹幕工具/悬浮入口与恢复，微博登录态管理器/作品候选、知乎评论弹窗、贴吧现代详情/楼中楼/批量、抖音评论/弹幕管理器已取得部分闭环；其余范围按 CURRENT 逐项登记。X 明确排除。
+- next: 继续用单标签补齐微博点赞列表、知乎作者/列表、贴吧旧版楼层和抖音推荐流换片；微博顶层 spacer、B站匿名根评论分页和抖音换片/归因性能保持 `blocked` 时不猜测扩展。任何新选择器仍须先捕获再实现，X 按用户要求排除。
+- updated: 2026-09-05
+- supersedes: none
+- files: docs/maintenance/PLAN.md; docs/maintenance/CURRENT.md; README.md; test/real-*.cjs
 
 ### OB-RULE-001 — 自动规则正则安全边界
 

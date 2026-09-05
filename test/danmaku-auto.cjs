@@ -307,6 +307,21 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       const autoIdentity = 'douyin:uid:7003';
       const identity = 'douyin:uid:7002';
       window.OB.Store.setSetting('showBulkBlock', true);
+      // 人工合成播放器：为管理器关闭时的时间轴取消回归提供可控的
+      // duration/currentTime/seeked 事件；不代表真实平台 DOM。
+      const playerRoot = document.querySelector('.basePlayerContainer');
+      const syntheticVideo = document.createElement('video');
+      let syntheticTime = 0;
+      Object.defineProperty(syntheticVideo, 'duration', { configurable: true, value: 120 });
+      Object.defineProperty(syntheticVideo, 'currentTime', {
+        configurable: true,
+        get: () => syntheticTime,
+        set: (value) => {
+          syntheticTime = Number(value) || 0;
+          setTimeout(() => syntheticVideo.dispatchEvent(new Event('seeked')), 0);
+        },
+      });
+      if (playerRoot) playerRoot.appendChild(syntheticVideo);
       try {
         await pause(180);
         const tool = document.getElementById('ob-douyin-dm-tool');
@@ -345,6 +360,27 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         await pause(120);
         const restoredRow = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
           .find((item) => item.textContent.includes('普通抖音弹幕'));
+        syntheticVideo.currentTime = 33;
+        await pause(20);
+        const diagnosticBeforeCancel = window.OB.diagnostics
+          ? Number(window.OB.diagnostics.douyinDanmakuCancelledScans) || 0 : 0;
+        const scan = panel && panel.querySelector('.ob-dd-scan');
+        if (scan) scan.click();
+        await pause(80);
+        const scanStarted = !!scan && scan.disabled && scan.textContent.includes('扫描中');
+        const closeBeforeScanFinish = panel && panel.querySelector('.ob-dd-close');
+        if (closeBeforeScanFinish) closeBeforeScanFinish.click();
+        await pause(40);
+        const cancelRestoredTime = Math.abs(syntheticVideo.currentTime - 33) < 0.5;
+        tool.click();
+        await pause(80);
+        const reopenedPanel = document.getElementById('ob-douyin-dm-manager');
+        const reopenedScan = reopenedPanel && reopenedPanel.querySelector('.ob-dd-scan');
+        const diagnosticAfterCancel = window.OB.diagnostics
+          ? Number(window.OB.diagnostics.douyinDanmakuCancelledScans) || 0 : diagnosticBeforeCancel;
+        const scanCancelledOnClose = scanStarted && !!reopenedScan
+          && !reopenedScan.disabled && !reopenedScan.textContent.includes('扫描中')
+          && diagnosticAfterCancel > diagnosticBeforeCancel && cancelRestoredTime;
         return {
           tool: true,
           toolText: tool.textContent,
@@ -355,6 +391,11 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
           restored: !window.OB.Index.isBlocked(identity),
           restoredState: restoredRow && restoredRow.getAttribute('data-ob-dd-state'),
           unblockRemoved: !(restoredRow && restoredRow.querySelector('.ob-dd-unblock')),
+          scanStarted,
+          scanCancelledOnClose,
+          cancelRestoredTime,
+          diagnosticBeforeCancel,
+          diagnosticAfterCancel,
         };
       } finally {
         const panel = document.getElementById('ob-douyin-dm-manager');
@@ -364,6 +405,7 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         window.OB.Store.removeIdentity(identity);
         window.OB.danmakuExemptions.remove('douyin', [autoIdentity, identity]);
         window.OB.Store.setSetting('showBulkBlock', false);
+        syntheticVideo.remove();
       }
     });
     if (douyinDanmakuManager.tool && douyinDanmakuManager.autoBlockedGray && douyinDanmakuManager.autoRestored
@@ -371,6 +413,9 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       && douyinDanmakuManager.restoredState === 'active' && douyinDanmakuManager.unblockRemoved)
       report.pass.push('AUTO-DOUYIN-MANAGER 自动命中可“恢复并例外”，删除例外后规则重新作用；手动屏蔽仍可单独取消');
     else report.fail.push('AUTO-DOUYIN-MANAGER 已屏蔽展示/取消屏蔽错误：' + JSON.stringify(douyinDanmakuManager));
+    if (douyinDanmakuManager.scanCancelledOnClose)
+      report.pass.push('AUTO-DOUYIN-MANAGER-CANCEL 关闭弹幕管理器会取消时间轴扫描并恢复原播放位置');
+    else report.fail.push('AUTO-DOUYIN-MANAGER-CANCEL 关闭面板后仍在扫描或播放位置未恢复：' + JSON.stringify(douyinDanmakuManager));
 
     const markedRootResult = await douyin.evaluate(async () => {
       const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -570,6 +570,48 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (detailRecyclePass) {
       report.pass.push('详情页回收行重新激活回放：内容层 transform 在观察回调内恢复，不出现隐藏行高度空洞');
     } else report.fail.push('详情页回收行重新激活补位失败：' + JSON.stringify(detailRecycle));
+
+    const detailVisibleRescan = await detailPage.evaluate(async () => {
+      const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rows = Array.from(document.querySelectorAll('.vue-recycle-scroller__item-view'));
+      const target = rows[2];
+      const list = target && target.querySelector('.wbpro-list');
+      if (!target || !list) return { error: 'missing visible rescan target' };
+      // 先建立一条明确的虚拟屏蔽工作；真实作品级提交也是通过这条状态
+      // 进入滚动重判路径。等待一次名单变更扫描，避免夹具把初始化竞态当成
+      // 滚动监听结果。
+      window.OB.Store.addIdentities(['weibo:uid:100002'], '滚动回放屏蔽作者', '人工合成滚轮回归');
+      await sleepInPage(120);
+      // 回收器在滚动时可能先把一条未命中的物理行换成名单内作者，
+      // 再由滚动事件驱动页面重判。只保留人工合成身份，不依赖平台接口。
+      list.innerHTML = '<div class="item1"><div class="item1in"><div class="con1"><div class="text"><a href="/u/100001" usercard="100001">滚动复用的已屏蔽作者</a><span>滚动复用正文</span></div><div class="info"><div class="opt"></div></div></div></div></div>';
+      const before = window.OB.diagnostics ? window.OB.diagnostics.weiboVisibleBlockScans || 0 : 0;
+      window.dispatchEvent(new Event('scroll'));
+      await sleepInPage(120);
+      const item = list.querySelector('.item1');
+      return {
+        scans: (window.OB.diagnostics ? window.OB.diagnostics.weiboVisibleBlockScans || 0 : 0) - before,
+        blocked: !!item && item.getAttribute('data-ob-blocked') === '1',
+        height: item ? item.getBoundingClientRect().height : -1,
+        diagnostics: window.OB.diagnostics ? {
+          scans: window.OB.diagnostics.weiboVisibleBlockScans || 0,
+          items: window.OB.diagnostics.weiboVisibleBlockItems || 0,
+          virtualSyncs: window.OB.diagnostics.virtualSyncs || 0,
+          virtualBlockedRows: window.OB.diagnostics.virtualLastBlockedRows || 0,
+        } : null,
+        lifecycle: window.OB.lifecycle ? {
+          page: window.OB.lifecycle.pageStatus(),
+          scanner: window.OB.lifecycle.scannerStatus(),
+        } : null,
+      };
+    });
+    const detailVisibleRescanPass = detailVisibleRescan && !detailVisibleRescan.error
+      && detailVisibleRescan.scans > 0
+      && detailVisibleRescan.blocked
+      && detailVisibleRescan.height === 0;
+    if (detailVisibleRescanPass) {
+      report.pass.push('详情页滚动复用回放：已有屏蔽名单的视口物理行在滚动帧内重新判定并隐藏');
+    } else report.fail.push('详情页滚动复用即时重判失败：' + JSON.stringify(detailVisibleRescan));
     await detailPage.close();
 
     const detailOrderPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

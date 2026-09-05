@@ -108,6 +108,9 @@
         return;
       }
       if (node.nodeType !== 1 && node.nodeType !== 11) return;
+      // B 站 Lit 组件把大量布局 CSS 放在评论节点的 ShadowRoot 内；
+      // 摘要只应读取用户可见文本，不能把 style/script/template 源码混进面板。
+      if (node.nodeType === 1 && /^(STYLE|SCRIPT|NOSCRIPT|TEMPLATE)$/i.test(node.tagName)) return;
       if (node.shadowRoot) walk(node.shadowRoot);
       for (const child of node.childNodes || []) walk(child);
     };
@@ -378,8 +381,25 @@
   }
 
   // 沿 composedPath（含影子宿主）找到第一个匹配适配器的条目
-  function findItem(target, adapter) {
-    const path = (target && target.composedPath) ? target.composedPath() : [target];
+  function findItem(targetOrEvent, adapter) {
+    // 事件目标在开放 Shadow DOM 中会被浏览器重定向为宿主元素；只有从
+    // Event.composedPath() 才能取得真正命中的评论节点。保留元素参数路径
+    // 兼容快捷入口等非事件调用。
+    const event = targetOrEvent && typeof targetOrEvent.composedPath === 'function' ? targetOrEvent : null;
+    const target = event ? event.target : targetOrEvent;
+    const path = event ? event.composedPath() : (() => {
+      const out = [];
+      let node = target && target.nodeType === 1 ? target : target && (target.parentElement || target.parentNode);
+      for (let guard = 0; node && guard < 64; guard++) {
+        out.push(node);
+        if (node.parentElement) node = node.parentElement;
+        else {
+          const root = node.getRootNode && node.getRootNode();
+          node = (root && root.host) || null;
+        }
+      }
+      return out;
+    })();
     for (const n of path) {
       if (!n || n.nodeType !== 1 || !n.matches) continue;
       for (const sel of adapter.selectors) {
@@ -578,7 +598,7 @@
   const DEFAULT_SETTINGS = {
     enabled: true,
     hideMode: 'collapse',        // 'collapse' | 'disappear'
-    showHoverButton: true,
+    showHoverButton: true,       // 平台专用悬浮入口（当前为抖音弹幕跟随按钮）
     douyinAutoSkip: true,
     skipCap: 6,                  // 连续跳过上限，超过则停在遮罩不再自动切
     showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
@@ -2053,15 +2073,6 @@
     }
     #ob-feed-cover small { opacity: 0.7; margin-top: 6px; font-size: 12px; }
 
-    /* 悬浮拉黑按钮 */
-    .ob-block-btn {
-      display: inline-flex !important; align-items: center; gap: 3px; cursor: pointer;
-      font-size: 12px; color: #c0392b !important; border: 1px solid #e0b4b0;
-      border-radius: 4px; padding: 1px 6px; margin-left: 6px; user-select: none;
-      background: #fff5f4 !important; vertical-align: middle; line-height: 1.4;
-    }
-    .ob-block-btn:hover { background: #ffe9e7 !important; }
-
     /* 抖音弹幕跟随浮层：挂在弹幕节点内，随滚动弹幕一起移动 */
     .ob-dy-dm-block {
       position: absolute !important; left: 6px !important; top: 50% !important;
@@ -2816,6 +2827,7 @@
       douyinAutoNodesInspected: 0,
       douyinDanmakuCollections: 0,
       douyinDanmakuItems: 0,
+      douyinDanmakuCancelledScans: 0,
       scannerFullScans: 0,
       scannerIncrementalScans: 0,
       scannerItemsProcessed: 0,
@@ -4460,7 +4472,7 @@
   }
 
   // ====================================================================
-  // 4. 拉黑入口 UI（右键菜单 + 悬浮按钮 + 确认气泡 + 撤销 toast）
+  // 4. 拉黑入口 UI（平台右键/快捷入口 + 确认气泡 + 撤销 toast）
   // ====================================================================
   function buildContextMenu(x, y, info, onBlock) {
     let ctx = $('#ob-ctx');
@@ -4491,6 +4503,48 @@
     return '';
   }
 
+  // 微博自身在楼中楼关闭后会把焦点重新放回评论 textarea；如果随后用户按
+  // ArrowUp/ArrowDown，按键会被输入框当作光标移动而不是页面滚动。插件弹窗
+  // 收尾时只在微博页面把焦点交还给 body，且仅处理本次收尾前已经存在的焦点，
+  // 不抢走用户在延迟窗口内主动点击的新输入控件。
+  let pageFocusRequest = 0;
+  function focusPageAfterOmniBlock(reason) {
+    if (!/(^|\.)weibo\.(com|cn)$/.test(location.hostname) && location.hostname !== 'm.weibo.cn') return;
+    const request = ++pageFocusRequest;
+    const before = document.activeElement;
+    const focus = () => {
+      if (request !== pageFocusRequest) return;
+      if (document.querySelector('#ob-work-confirm,#ob-confirm')) return;
+      const current = document.activeElement;
+      const currentIsBefore = current === before;
+      const disconnected = !!current && current !== document.body && current !== document.documentElement
+        && current.isConnected === false;
+      const pluginControl = !!(current && current.closest
+        && current.closest('#ob-work-confirm,#ob-confirm'));
+      const editable = !!(current && (current.isContentEditable
+        || current.tagName === 'INPUT' || current.tagName === 'TEXTAREA'));
+      // 用户已经在延迟窗口内主动聚焦其它输入控件时，不再替换其焦点。
+      if (current && !editable && !currentIsBefore && !disconnected && !pluginControl
+        && current !== document.body && current !== document.documentElement) return;
+      if (current && current !== document.body && current !== document.documentElement
+        && current.blur && (currentIsBefore || disconnected || pluginControl || editable)) {
+        try { current.blur(); } catch (error) {}
+      }
+      const target = document.body || document.documentElement;
+      if (!target || !target.focus) return;
+      const hadTabIndex = target.hasAttribute('tabindex');
+      const previousTabIndex = target.getAttribute('tabindex');
+      if (!hadTabIndex) target.setAttribute('tabindex', '-1');
+      try { target.focus({ preventScroll: true }); } catch (error) { try { target.focus(); } catch (ignored) {} }
+      if (!hadTabIndex) target.removeAttribute('tabindex');
+      else if (previousTabIndex == null) target.removeAttribute('tabindex');
+      else target.setAttribute('tabindex', previousTabIndex);
+    };
+    focus();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focus);
+    setTimeout(focus, 80);
+  }
+
   function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { EventLog.record('ui.confirm.rejected', { reasonCode: 'no-reliable-identity' }, { immediate: true }); showToast('无法识别可靠身份'); return; }
@@ -4505,7 +4559,7 @@
     box.querySelector('.ob-sub').textContent = sub;
     box.querySelector('.ob-no').onclick = () => {
       EventLog.record('ui.confirm.cancel', { action: 'block' }, { immediate: true });
-      box.remove(); FloatingDock.release('confirm');
+      box.remove(); FloatingDock.release('confirm'); focusPageAfterOmniBlock('confirm-cancel');
     };
     let rect = { left: window.innerWidth / 2 - 130, top: window.innerHeight / 2 - 60 };
     if (anchorEl && anchorEl.getBoundingClientRect) { const r = anchorEl.getBoundingClientRect(); rect = { left: clamp(r.left, 8, window.innerWidth - 280), top: clamp(r.bottom + 6, 8, window.innerHeight - 160) }; }
@@ -4529,10 +4583,11 @@
         }
       } catch (e) {
         EventLog.recordError('ui.confirm.commit', e);
-        box.remove(); FloatingDock.release('confirm'); showToast('拉黑失败：' + (e && e.message || e)); return;
+        box.remove(); FloatingDock.release('confirm'); focusPageAfterOmniBlock('confirm-error'); showToast('拉黑失败：' + (e && e.message || e)); return;
       }
       box.remove();
       FloatingDock.release('confirm');
+      focusPageAfterOmniBlock('confirm-commit');
       EventLog.record('ui.confirm.commit', {
         action: 'block', keyCount: normalizedKeys.length,
         added: transaction && transaction.result ? Number(transaction.result.added) || 0 : 0,
@@ -4564,32 +4619,6 @@
     setTimeout(() => { if (t.parentNode) t.remove(); }, 5000);
   }
 
-  // 悬浮拉黑按钮（浮层定位，穿透 Shadow DOM 也能显示；原元素内塞不进影子树）
-  let hoverOwner = null;
-  function clearHover() {
-    if (hoverOwner) { hoverOwner.__obHover = false; hoverOwner.__obHoverBtn = null; hoverOwner = null; }
-    const old = document.querySelector('.ob-block-btn');
-    if (old && old.parentNode) old.parentNode.removeChild(old);
-  }
-  function attachHoverButton(adapter, container, info) {
-    if (container.__obHover) return;
-    container.__obHover = true;
-    hoverOwner = container;
-    const btn = document.createElement('div');
-    btn.className = 'ob-block-btn';
-    btn.textContent = '🚫 拉黑';
-    btn.style.position = 'fixed';
-    btn.style.zIndex = '2147483646';
-    const r = (container.getBoundingClientRect ? container.getBoundingClientRect() : { top: 8, right: window.innerWidth - 60 });
-    btn.style.left = Math.max(4, (r.right || window.innerWidth) - 58) + 'px';
-    btn.style.top = Math.max(4, r.top + 4) + 'px';
-    btn.onclick = (e) => { e.stopPropagation(); e.preventDefault(); showConfirm(info.label, info.keys, btn); };
-    document.body.appendChild(btn);
-    container.__obHoverBtn = btn;
-    btn.addEventListener('mouseleave', clearHover);
-  }
-  window.addEventListener('scroll', clearHover, true);
-
   let currentScanner = null;
   // B站弹幕运行时在适配器之后初始化；通过这个窄桥把状态面板查询与网络过滤
   // 解耦，避免在适配器对象构造阶段引用尚未定义的局部函数。
@@ -4604,24 +4633,10 @@
     const adapter = currentAdapter;
     if (!adapter || !adapter.selectors) return;
     // 沿 composedPath 穿透 Shadow DOM 找到命中条目
-    const found = findItem(e.target, adapter);
+    const found = findItem(e, adapter);
     if (!found) return;
     e.preventDefault();   // 仅当命中条目时接管右键
     buildContextMenu(e.clientX, e.clientY, found.info, () => showConfirm(found.info.label, found.info.keys, found.el));
-  }, true);
-
-  // 悬浮按钮：mouseover 时为其挂拉黑按钮（沿 composedPath 穿透 Shadow DOM）
-  document.addEventListener('mouseover', (e) => {
-    if (!Store.getSetting('showHoverButton') || !Store.getSetting('enabled')) return;
-    const adapter = currentAdapter;
-    if (!adapter || !adapter.selectors) return;
-    const found = (e.target && e.target.composedPath) ? findItem(e.target, adapter) : null;
-    // 适配器自带跟随式入口（如抖音弹幕）时，不再叠加通用固定按钮。
-    if (found && adapter.suppressGenericHover && adapter.suppressGenericHover(found.el)) { if (hoverOwner) clearHover(); return; }
-    if (!found || !found.info.keys.length || Index.isBlocked(found.info.keys)) { if (hoverOwner) clearHover(); return; }
-    if (hoverOwner === found.el) return;
-    clearHover();
-    attachHoverButton(adapter, found.el, found.info);
   }, true);
 
   // ====================================================================
@@ -5738,7 +5753,6 @@
         if (item.matches && item.matches(SEL.danmaku)) return extractDanmaku(item);
         return extractGeneric(item);
       },
-      suppressGenericHover: (el) => !!(el && el.matches && el.matches(SEL.danmaku)),
       containerOf: (item) => item,
       onScan: feedTick,
       onDisabled: disableFeed,
@@ -6019,29 +6033,119 @@
       }
       if (!targets.length && root !== document && root.nodeType === 1
         && root.scrollHeight > root.clientHeight + 8) targets.push(root);
+      // 2026-09-04 用户授权 Chrome 真站捕获：微博详情页评论使用
+      // `.vue-recycle-scroller.page-mode.direction-vertical`，列表本身是
+      // `overflow: visible`，实际滚动容器是文档而不是 `#scroller`。只有在
+      // 当前作品 scope 内确实存在该 page-mode 列表时，才把文档加入目标，
+      // 避免把普通信息流的整页滚动误当成作品评论读取。
+      const pageModeList = root !== document
+        && querySelectorAllDeep(root, '.vue-recycle-scroller.page-mode.direction-vertical').length > 0;
+      if (!targets.length && pageModeList && document.scrollingElement
+        && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 8) {
+        targets.push(document.scrollingElement);
+      }
       if (!targets.length && root === document && document.scrollingElement
         && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 8) targets.push(document.scrollingElement);
       return targets;
     }
 
-    async function loadAllCommentRecords(scope, onProgress) {
+    async function loadAllCommentRecords(scope, onProgress, options) {
       if (typeof scope === 'function') { onProgress = scope; scope = document; }
       scope = scope || document;
+      const signal = options && options.signal;
+      throwIfWeiboWorkAborted(signal);
       const targets = weiboCommentScrollTargets(scope);
+      const pageModeList = scope !== document
+        && querySelectorAllDeep(scope, '.vue-recycle-scroller.page-mode.direction-vertical').length > 0;
+      // 楼中楼弹窗的列表会在滚到底部后异步追加回复；固定的三点采样可能在
+      // 请求完成前就关闭弹窗，导致后续回复没有进入作品名单。仅对微博自己的
+      // `woo-modal-main` 使用有界的动态到底扫描，普通评论容器仍保留三点采样。
+      const asyncReplyModal = scope !== document
+        && !!(scope.closest && scope.closest('.woo-modal-main'));
       const original = targets.map((target) => ({ target, top: target.scrollTop, left: target.scrollLeft }));
+      // 详情页 page-mode 虚拟列表会回收离开视口的 DOM；作用域不是 document
+      // 时，collectWeiboCommentRecords() 不走文档缓存，若只取最后一屏就会把
+      // 前面已经观察到的评论丢掉。此次加载只在本次操作内保留规范化快照，
+      // 不延长旧 DOM 节点生命周期，也不改变长期评论缓存的上限策略。
+      const observed = new Map();
+      const remember = (records) => {
+        for (const info of records || []) {
+          if (!info || !info.keys || !info.keys.length) continue;
+          const key = weiboCommentCacheKey(info);
+          const snapshot = { ...info, container: null, root: null };
+          const previous = observed.get(key);
+          if (!previous || (!previous.label && snapshot.label) || (!previous.note && snapshot.note)) {
+            observed.set(key, snapshot);
+          }
+        }
+      };
+      invalidateWeiboCommentCache();
+      remember(collectWeiboCommentRecords(scope));
       let scrolls = 0;
       try {
-        for (let pass = 0; pass < 12 && targets.length; pass++) {
+        const maxPasses = pageModeList ? 4 : 12;
+        for (let pass = 0; pass < maxPasses && targets.length; pass++) {
+          throwIfWeiboWorkAborted(signal);
           for (const target of targets) {
-            const maxTop = Math.max(0, target.scrollHeight - target.clientHeight);
-            for (const top of [0, Math.round(maxTop / 2), maxTop]) {
+            throwIfWeiboWorkAborted(signal);
+            const isPageModeTarget = pageModeList && target === document.scrollingElement;
+            // page-mode 列表不是自己的滚动容器，直接从顶部跳到初始 maxTop
+            // 可能只让回收器生成中间一小段行，且后续懒加载会改变 maxTop。
+            // 采用一次操作内的有限步进扫描，并在每步重新读取高度，兼顾低配置
+            // 机器的开销与作品级读取的覆盖率；普通嵌套容器仍保持原有三点采样。
+            const positions = isPageModeTarget || asyncReplyModal ? null : (() => {
+              const maxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+              return [0, Math.round(maxTop / 2), maxTop];
+            })();
+            let pageModeStep = 0;
+            let pageModeStableBottoms = 0;
+            let replyModalStableBottoms = 0;
+            let previousReplyModalRecords = -1;
+            while (isPageModeTarget || asyncReplyModal
+              ? pageModeStep < (isPageModeTarget ? 16 : 12)
+              : pageModeStep < positions.length) {
+              throwIfWeiboWorkAborted(signal);
+              const beforeMaxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+              const top = isPageModeTarget || asyncReplyModal
+                ? (pageModeStep === 0
+                  ? 0
+                  : Math.min(beforeMaxTop, target.scrollTop + Math.max(560,
+                    Math.round((target.clientHeight || window.innerHeight || 900) * 0.8))))
+                : positions[pageModeStep];
               target.scrollTop = top;
               try { target.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (error) {}
-              await new Promise((resolve) => setTimeout(resolve, 220));
+              // 微博详情页的 `page-mode` 回收器把监听器挂在 window；ScrollEvent
+              // 在原生路径上不会像普通事件一样从 HTML 冒泡到 window，因而仅在
+              // 文档滚动容器上派发事件时不会驱动虚拟行换页。补发一份窗口级
+              // 只读通知，不触碰平台写入控件，也不改变普通嵌套容器路径。
+              if (target === document.scrollingElement) {
+                try { window.dispatchEvent(new Event('scroll')); } catch (error) {}
+              }
+              await waitForWeiboWork(isPageModeTarget || asyncReplyModal ? 420 : 220, signal);
               scrolls++;
               invalidateWeiboCommentCache();
               const records = collectWeiboCommentRecords(scope);
-              if (typeof onProgress === 'function') onProgress({ phase: 'scroll', collected: records.length, scrolls });
+              remember(records);
+              if (typeof onProgress === 'function') await onProgress({ phase: 'scroll', collected: observed.size, scrolls });
+              if (isPageModeTarget) {
+                const afterMaxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+                const atBottom = target.scrollTop >= afterMaxTop - 2;
+                if (atBottom && afterMaxTop <= beforeMaxTop + 8) pageModeStableBottoms++;
+                else pageModeStableBottoms = 0;
+              }
+              if (asyncReplyModal) {
+                const afterMaxTop = Math.max(0, target.scrollHeight - target.clientHeight);
+                const atBottom = target.scrollTop >= afterMaxTop - 2;
+                const recordsStable = records.length === previousReplyModalRecords;
+                if (atBottom && afterMaxTop <= beforeMaxTop + 8 && recordsStable) replyModalStableBottoms++;
+                else replyModalStableBottoms = 0;
+                previousReplyModalRecords = records.length;
+              }
+              pageModeStep++;
+              if (isPageModeTarget && pageModeStableBottoms >= 2) break;
+              // 真站楼中楼的最后一页可能在触底后才完成请求；至少保留约
+              // 2.5 秒的稳定窗口，避免低配置或慢网络下过早关闭弹窗。
+              if (asyncReplyModal && replyModalStableBottoms >= 6) break;
             }
           }
           if (targets.every((target) => target.scrollTop >= Math.max(0, target.scrollHeight - target.clientHeight - 2))) break;
@@ -6050,7 +6154,8 @@
         for (const state of original) { state.target.scrollTop = state.top; state.target.scrollLeft = state.left; }
       }
       invalidateWeiboCommentCache();
-      const records = collectWeiboCommentRecords(scope);
+      remember(collectWeiboCommentRecords(scope));
+      const records = Array.from(observed.values());
       return {
         records,
         partial: true,
@@ -6060,7 +6165,7 @@
 
     function weiboReplyExpandControls(root) {
       const out = []; const seen = new Set();
-      const textPattern = /(?:共\s*\d+\s*条回复|查看[^\n]{0,20}回复|展开[^\n]{0,20}回复)/;
+      const textPattern = /^(?:共\s*\d+\s*条回复|查看[^\n]{0,20}回复|展开[^\n]{0,20}回复)$/;
       for (const node of querySelectorAllDeep(root, 'a,button,[role="button"],div,span')) {
         const text = textOf(node).replace(/\s+/g, ' ').trim();
         if (!text || text.length > 80 || !textPattern.test(text)) continue;
@@ -6070,12 +6175,328 @@
         if (/(?:已展开|收起|没有更多|暂无更多)/.test(text)) continue;
         let control = node;
         if (!(node.matches && node.matches('a,button,[role="button"]'))) {
-          control = node.querySelector && node.querySelector('a,button,[role="button"]');
+          // 外层 `.item1/.item2` 的文本也包含作者名和正文；直接取第一个
+          // 后代链接会把“共 N 条回复”误点成作者主页。只接受自身文本仍
+          // 命中回复模式的交互节点，避免任何平台导航副作用。
+          control = Array.from(node.querySelectorAll
+            ? node.querySelectorAll('a,button,[role="button"]') : [])
+            .find((candidate) => {
+              const candidateText = textOf(candidate).replace(/\s+/g, ' ').trim();
+              return candidateText && candidateText.length <= 80 && textPattern.test(candidateText);
+            }) || null;
         }
         if (!control || seen.has(control) || !isVisible(control)) continue;
         seen.add(control); out.push(control);
       }
       return out;
+    }
+
+    function closeWeiboReplyModal(modal) {
+      if (!modal || !modal.isConnected) return false;
+      // 2026-09-04 用户授权 Chrome 真站捕获：回复弹窗关闭入口为
+      // `.woo-modal-main > .wbpro-layer > .wbpro-layer-tit-opt > i.woo-font--cross`。
+      // 只关闭本次展开控制新打开的微博回复弹窗，不触碰其它平台弹窗或用户已有界面。
+      const close = modal.querySelector('i.woo-font--cross')
+        || modal.querySelector('.wbpro-layer-tit-opt');
+      if (!close) return false;
+      try { close.click(); return true; } catch (error) {
+        EventLog.recordError('work.weibo.reply-close', error, { adapter: 'weibo' });
+        return false;
+      }
+    }
+
+    function captureWeiboDocumentScrollState() {
+      return {
+        htmlStyle: document.documentElement ? document.documentElement.getAttribute('style') : null,
+        bodyStyle: document.body ? document.body.getAttribute('style') : null,
+      };
+    }
+
+    function restoreWeiboDocumentScrollState(state) {
+      if (!state || document.querySelector('.woo-modal-main')) return false;
+      const restore = (node, value) => {
+        if (!node) return;
+        if (value == null) node.removeAttribute('style');
+        else node.setAttribute('style', value);
+      };
+      restore(document.documentElement, state.htmlStyle);
+      restore(document.body, state.bodyStyle);
+      return true;
+    }
+
+    async function waitForWeiboReplyModalClosed(modal) {
+      if (!modal) return true;
+      // 微博关闭楼中楼时可能先做一帧过渡，再把弹窗从详情 wrapper 移除。
+      // 作品级滚动统计必须等这个短暂过渡结束，否则会把弹窗内部的
+      // `_scroll3` 当成作品评论滚动容器，结果只统计到弹窗当前页。
+      for (let attempt = 0; attempt < 12; attempt++) {
+        if (!modal.isConnected || !isVisible(modal)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      return !modal.isConnected || !isVisible(modal);
+    }
+
+    async function closeOwnedWeiboReplyModal(modal, restoreState) {
+      if (!modal || !modal.isConnected) {
+        restoreWeiboDocumentScrollState(restoreState);
+        return true;
+      }
+      closeWeiboReplyModal(modal);
+      await waitForWeiboReplyModalClosed(modal);
+      // 某些真站版本的关闭动画可能被后续虚拟列表更新打断；这个节点是
+      // 本次读取捕获并由插件打开的，超过有界等待仍可见时安全移除它，随后
+      // 再恢复打开前的 html/body style，避免取消后页面继续锁滚动。
+      if (modal.isConnected && isVisible(modal)) {
+        try { modal.remove(); } catch (error) {
+          EventLog.recordError('work.weibo.reply-force-close', error, { adapter: 'weibo' });
+        }
+        await waitForWeiboReplyModalClosed(modal);
+      }
+      restoreWeiboDocumentScrollState(restoreState);
+      return !modal.isConnected || !isVisible(modal);
+    }
+
+    function weiboWorkAbortError() {
+      const error = new Error('微博作品读取已取消');
+      error.name = 'AbortError';
+      return error;
+    }
+
+    function throwIfWeiboWorkAborted(signal) {
+      if (signal && signal.aborted) throw weiboWorkAbortError();
+    }
+
+    function waitForWeiboWork(ms, signal) {
+      const delay = Math.max(0, Number(ms) || 0);
+      if (!signal) return new Promise((resolve) => setTimeout(resolve, delay));
+      return new Promise((resolve, reject) => {
+        let timer = 0;
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          signal.removeEventListener('abort', onAbort);
+        };
+        const finish = () => { cleanup(); resolve(); };
+        const onAbort = () => { cleanup(); reject(weiboWorkAbortError()); };
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+        timer = setTimeout(finish, delay);
+      });
+    }
+
+    async function waitForNewWeiboReplyModal(previous, timeoutMs = 1400, signal) {
+      throwIfWeiboWorkAborted(signal);
+      const find = () => {
+        const current = document.querySelector('.woo-modal-main');
+        return current && current !== previous ? current : null;
+      };
+      const immediate = find();
+      if (immediate) return immediate;
+      const root = document.body || document.documentElement;
+      if (!root || typeof MutationObserver !== 'function') {
+        await waitForWeiboWork(timeoutMs, signal);
+        return find();
+      }
+      return new Promise((resolve) => {
+        let settled = false;
+        let timer = 0;
+        // 取消时不能立即拆掉观察器：微博可能已经排队了一个稍晚挂载的
+        // 楼中楼。保留到有界超时，若弹窗出现就把节点交给调用方 finally
+        // 关闭；否则定时器负责结束观察，不留下常驻资源。
+        const onAbort = () => {
+          const modal = find();
+          if (modal) finish(modal);
+        };
+        const observer = new MutationObserver(() => {
+          const modal = find();
+          if (modal) finish(modal);
+        });
+        const finish = (modal) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          observer.disconnect();
+          if (signal) signal.removeEventListener('abort', onAbort);
+          resolve(modal || null);
+        };
+        if (signal && signal.aborted) { finish(null); return; }
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+        observer.observe(root, { childList: true, subtree: true });
+        timer = setTimeout(() => finish(find()), Math.max(300, Number(timeoutMs) || 1400));
+      });
+    }
+
+    let cancelLateWeiboModalWatch = null;
+    async function closeLateWeiboReplyModals(initialModals, restoreState, waitMs = 1800) {
+      if (cancelLateWeiboModalWatch) cancelLateWeiboModalWatch();
+      const root = document.body || document.documentElement;
+      if (!root || typeof MutationObserver !== 'function') {
+        await waitForWeiboWork(waitMs);
+        return;
+      }
+      const known = initialModals || new Set();
+      return new Promise((resolve) => {
+        let settled = false;
+        let timer = 0;
+        let pending = Promise.resolve();
+        const closeCurrent = () => {
+          const current = Array.from(document.querySelectorAll('.woo-modal-main'))
+            .filter((modal) => !known.has(modal));
+          if (current.length) {
+            pending = Promise.all(current.map((modal) => closeOwnedWeiboReplyModal(modal, restoreState)));
+          } else {
+            restoreWeiboDocumentScrollState(restoreState);
+          }
+        };
+        let cancelWatch = null;
+        const finish = async () => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          observer.disconnect();
+          if (cancelLateWeiboModalWatch === cancelWatch) cancelLateWeiboModalWatch = null;
+          closeCurrent();
+          await pending;
+          restoreWeiboDocumentScrollState(restoreState);
+          resolve();
+        };
+        const observer = new MutationObserver(closeCurrent);
+        cancelWatch = () => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          observer.disconnect();
+          if (cancelLateWeiboModalWatch === cancelWatch) cancelLateWeiboModalWatch = null;
+          resolve();
+        };
+        cancelLateWeiboModalWatch = cancelWatch;
+        observer.observe(root, { childList: true, subtree: true });
+        closeCurrent();
+        timer = setTimeout(() => { finish(); }, Math.max(300, Number(waitMs) || 1800));
+      });
+    }
+
+    function weiboReplyControlKey(control) {
+      const root = rootCommentOf(control);
+      const info = root ? extract(root) : null;
+      // page-mode 会复用控制节点；不要用节点地址作为“已展开”标识。
+      // 优先使用楼标识，缺失时用作者、正文和入口文本组成当前楼的稳定快照。
+      return [
+        info && info.commentId || '',
+        info && info.keys && info.keys.join('|') || '',
+        info && info.note || '',
+        textOf(control),
+      ].join('|').replace(/\s+/g, ' ').trim();
+    }
+
+    async function expandVisibleWeiboReplyControls(scope, state, onProgress, signal) {
+      throwIfWeiboWorkAborted(signal);
+      if (!state || state.clicked >= state.limit) {
+        if (state) state.limitHit = true;
+        return;
+      }
+      const controls = weiboReplyExpandControls(scope);
+      for (const control of controls) {
+        throwIfWeiboWorkAborted(signal);
+        if (!control || (control.closest && control.closest('.woo-modal-main'))) continue;
+        const key = weiboReplyControlKey(control);
+        if (!key || state.attempted.has(key)) continue;
+        state.discovered.add(key);
+        if (state.clicked >= state.limit) {
+          state.limitHit = true;
+          break;
+        }
+        state.attempted.add(key);
+        state.clicked++;
+        const modalBefore = document.querySelector('.woo-modal-main');
+        const pageScrollTop = document.scrollingElement && document.scrollingElement.scrollTop;
+        // 微博打开楼中楼会把滚动锁写到 html/body 的内联 style；程序化
+        // 点击关闭入口后，部分版本只移除弹窗节点而不撤销这组样式。
+        // 保存打开前的精确状态，避免作品级读取结束后整页仍无法滚动。
+        const documentScrollState = captureWeiboDocumentScrollState();
+        let modal = null;
+        try {
+          try { control.click(); } catch (error) {
+            EventLog.recordError('work.weibo.reply-expand', error, { adapter: 'weibo' });
+          }
+          // 旧实现只轮询 12×50ms；低配置或网络抖动时弹窗晚于 600ms
+          // 才挂载，随后会把 html 的滚动锁留在页面上。MutationObserver
+          // 先等结构变化，只有无变化时才走有界超时，不增加常驻轮询。
+          modal = await waitForNewWeiboReplyModal(modalBefore, 1400, signal);
+          throwIfWeiboWorkAborted(signal);
+          if (modal) {
+            // 弹窗自身也可能是虚拟列表；在关闭前按它自己的滚动容器做一次
+            // 有界读取，避免只拿到弹窗首屏的少量回复。
+            const loaded = await loadAllCommentRecords(modal, null, { signal });
+            const modalRecords = Array.isArray(loaded.records) && loaded.records.length
+              ? loaded.records : collectWeiboCommentRecordsActive(modal);
+            for (const record of modalRecords) {
+              state.records.push({
+                ...record,
+                container: null,
+                root: null,
+                workSection: record.level === 'reply' ? 'reply' : 'comment',
+              });
+            }
+          }
+        } finally {
+          // 无论读取成功、抛错、超时还是用户取消，都必须清理本次展开。
+          // 如果弹窗在等待窗口末尾才出现，finally 仍能捕获并关闭它；
+          // 作品级 loader 还会在外层再做一次兜底恢复。
+          if (modal && modal !== modalBefore) await closeOwnedWeiboReplyModal(modal, documentScrollState);
+          else restoreWeiboDocumentScrollState(documentScrollState);
+          // 打开/关闭楼中楼会暂时锁定文档滚动，部分真站版本会把 scrollTop
+          // 重置为 0。恢复到打开前的位置，才能让外层 page-mode 分段扫描继续
+          // 向下推进，而不是在首屏重复读取。
+          if (pageScrollTop != null && document.scrollingElement
+            && document.scrollingElement.scrollTop !== pageScrollTop) {
+            document.scrollingElement.scrollTop = pageScrollTop;
+            try { window.dispatchEvent(new Event('scroll')); } catch (error) {}
+          }
+        }
+        if (typeof onProgress === 'function') onProgress({
+          phase: 'expand',
+          collected: state.records.length,
+          clicked: state.clicked,
+        });
+      }
+      if (controls.length && state.clicked >= state.limit) state.limitHit = true;
+    }
+
+    async function scanWeiboReplyControls(scope, state, onProgress, signal) {
+      throwIfWeiboWorkAborted(signal);
+      const targets = weiboCommentScrollTargets(scope);
+      const pageModeTarget = targets.find((target) => target === document.scrollingElement);
+      if (!pageModeTarget) {
+        await expandVisibleWeiboReplyControls(scope, state, onProgress, signal);
+        return;
+      }
+      const originalTop = pageModeTarget.scrollTop;
+      let stableBottoms = 0;
+      try {
+        // 回复入口随 page-mode 虚拟行一起挂载；单独做一次有界入口扫描，
+        // 避免在评论快照扫描的回调里开关弹窗，破坏虚拟列表的页码推进。
+        for (let step = 0; step < 24 && state.clicked < state.limit; step++) {
+          throwIfWeiboWorkAborted(signal);
+          const beforeMaxTop = Math.max(0, pageModeTarget.scrollHeight - pageModeTarget.clientHeight);
+          const nextTop = step === 0
+            ? originalTop
+            : Math.min(beforeMaxTop, pageModeTarget.scrollTop + Math.max(560,
+              Math.round((pageModeTarget.clientHeight || window.innerHeight || 900) * 0.8)));
+          pageModeTarget.scrollTop = nextTop;
+          try { pageModeTarget.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (error) {}
+          try { window.dispatchEvent(new Event('scroll')); } catch (error) {}
+          await waitForWeiboWork(420, signal);
+          await expandVisibleWeiboReplyControls(scope, state, onProgress, signal);
+          const afterMaxTop = Math.max(0, pageModeTarget.scrollHeight - pageModeTarget.clientHeight);
+          const atBottom = pageModeTarget.scrollTop >= afterMaxTop - 2;
+          if (atBottom && afterMaxTop <= beforeMaxTop + 8) stableBottoms++;
+          else stableBottoms = 0;
+          if (atBottom && stableBottoms >= 1) break;
+        }
+      } finally {
+        pageModeTarget.scrollTop = originalTop;
+        try { window.dispatchEvent(new Event('scroll')); } catch (error) {}
+      }
     }
 
     async function loadThread(item, onProgress) {
@@ -6106,26 +6527,69 @@
       return { records, partial, reason };
     }
 
-    async function loadAllWorkComments(candidate, onProgress) {
+    async function loadAllWorkComments(candidate, onProgress, options) {
       const scope = candidate && candidate.scope || document;
-      const controls = weiboReplyExpandControls(scope);
-      let clicked = 0;
-      for (const control of controls.slice(0, 20)) {
-        try { control.click(); clicked++; } catch (error) { EventLog.recordError('work.weibo.reply-expand', error, { adapter: 'weibo' }); }
-        if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: collectWeiboCommentRecordsActive(scope).length, clicked });
-        await new Promise((resolve) => setTimeout(resolve, 300));
+      const signal = options && options.signal;
+      throwIfWeiboWorkAborted(signal);
+      const documentScrollState = captureWeiboDocumentScrollState();
+      const initialModals = new Set(Array.from(document.querySelectorAll('.woo-modal-main')));
+      const pageScrollTop = document.scrollingElement && document.scrollingElement.scrollTop;
+      const pageScrollLeft = document.scrollingElement && document.scrollingElement.scrollLeft;
+      const expansion = {
+        limit: 32,
+        clicked: 0,
+        limitHit: false,
+        attempted: new Set(),
+        discovered: new Set(),
+        records: [],
+      };
+      try {
+        // 先处理首屏入口；评论快照扫描结束后再单独遍历 page-mode 入口。
+        // 两个阶段不交错开关弹窗，避免微博回收器在弹窗过渡期间丢失页码。
+        await expandVisibleWeiboReplyControls(scope, expansion, onProgress, signal);
+        const loaded = await loadAllCommentRecords(scope, (progress) => {
+          if (typeof onProgress === 'function') onProgress({
+            ...progress,
+            collected: Number(progress && progress.collected || 0) + expansion.records.length,
+          });
+        }, { signal });
+        await scanWeiboReplyControls(scope, expansion, onProgress, signal);
+        // loadAllCommentRecords 可能在 page-mode 虚拟列表滚动期间暂时回收旧行；
+        // 这里必须使用它返回的快照集合，而不是重新只读取滚动结束时的当前屏幕。
+        const records = (Array.isArray(loaded.records) ? loaded.records : collectWeiboCommentRecordsActive(scope)).map((record) => ({
+          ...record,
+          workSection: record.level === 'reply' ? 'reply' : 'comment',
+        })).concat(expansion.records);
+        const reasons = ['微博作品评论只能按当前作品作用域内实际观察到的 DOM 读取'];
+        if (loaded.reason) reasons.push(loaded.reason);
+        const remainingControls = weiboReplyExpandControls(scope)
+          .filter((control) => !expansion.attempted.has(weiboReplyControlKey(control)));
+        if (expansion.limitHit || remainingControls.length) reasons.push('仍有未展开或达到安全上限的回复入口');
+        return { records, partial: true, reason: reasons.join('；') };
+      } finally {
+        // 作品级读取可能在任何阶段被关闭、取消或被 DOM 异常打断；不要把
+        // 本次程序化打开的新弹窗和滚动锁留给用户。已有用户弹窗不属于本次
+        // 读取，保持原样并让 restoreWeiboDocumentScrollState 自己跳过。
+        for (const modal of Array.from(document.querySelectorAll('.woo-modal-main'))) {
+          if (initialModals.has(modal)) continue;
+          await closeOwnedWeiboReplyModal(modal, documentScrollState);
+        }
+        // 取消可能早于平台排队的延迟弹窗；在短暂有界窗口内继续观察并
+        // 关闭新出现的本次读取弹窗，避免它重新写入 html 滚动锁后无人清理。
+        if (signal && signal.aborted) {
+          await closeLateWeiboReplyModals(initialModals, documentScrollState);
+        }
+        restoreWeiboDocumentScrollState(documentScrollState);
+        if (pageScrollTop != null && document.scrollingElement
+          && document.scrollingElement.scrollTop !== pageScrollTop) {
+          document.scrollingElement.scrollTop = pageScrollTop;
+          try { window.dispatchEvent(new Event('scroll')); } catch (error) {}
+        }
+        if (pageScrollLeft != null && document.scrollingElement
+          && document.scrollingElement.scrollLeft !== pageScrollLeft) {
+          document.scrollingElement.scrollLeft = pageScrollLeft;
+        }
       }
-      const loaded = await loadAllCommentRecords(scope, (progress) => {
-        if (typeof onProgress === 'function') onProgress(progress);
-      });
-      const records = collectWeiboCommentRecordsActive(scope).map((record) => ({
-        ...record,
-        workSection: record.level === 'reply' ? 'reply' : 'comment',
-      }));
-      const reasons = ['微博作品评论只能按当前作品作用域内实际观察到的 DOM 读取'];
-      if (loaded.reason) reasons.push(loaded.reason);
-      if (controls.length > 20 || weiboReplyExpandControls(scope).length) reasons.push('仍有未展开或达到安全上限的回复入口');
-      return { records, partial: true, reason: reasons.join('；') };
     }
     // 2026-08-22 真站捕获：根评论是 `.item1 > .item1in > .con1 > .info > .opt`，
     // 楼中楼是 `.item2 > .con2 > .info > .opt`（没有 `.item2in` 中间层）。
@@ -6336,6 +6800,22 @@
       }
     }
 
+    function workScopeOfCard(card) {
+      if (!card || !isCommentRoute()) return card;
+      // 2026-09-04 用户授权 Chrome 真站捕获：详情页的 `article.woo-panel-main`
+      // 只包含帖子正文；同级的 `_box_*` 子树才包含 `.wbpro-form`、`#scroller`
+      // 和评论虚拟行。向上只取“唯一帖子卡片 + 已观察评论行”的最近容器，
+      // 避免把信息流中相邻帖子的评论并入当前作品。
+      let current = card.parentElement;
+      for (let guard = 0; current && current !== document.body && guard < 8; guard++, current = current.parentElement) {
+        const cards = collectWeiboItems(current, SEL.card)
+          .filter((item) => !item.closest(SEL.card) || item.closest(SEL.card) === item);
+        if (cards.length !== 1 || cards[0] !== card) continue;
+        if (collectWeiboItems(current, SEL.comment).length) return current;
+      }
+      return card;
+    }
+
     function workCandidates() {
       const cards = collectWeiboItems(document, SEL.card)
         .filter((item) => !item.closest(SEL.card) || item.closest(SEL.card) === item);
@@ -6345,7 +6825,8 @@
         if (!link || !author.keys.length) return null;
         const postId = commentDataValue(card, ['mid', 'data-mid', 'data-id', 'data-post-id']);
         return {
-          scope: card,
+          card,
+          scope: workScopeOfCard(card),
           anchor: link,
           key: postId ? 'post|' + postId : card,
           title: '当前微博帖子',
@@ -6355,7 +6836,9 @@
 
     function collectWork(candidate) {
       const scope = candidate && candidate.scope || document;
-      const creator = extract(scope);
+      // 作品 scope 在详情页会扩展到评论 wrapper；作者仍必须从帖子卡片自身解析，
+      // 防止 wrapper 内出现其它用户链接时把作者身份混淆。
+      const creator = extract(candidate && candidate.card || scope);
       creator.workSection = 'creator';
       const commentNodes = collectWeiboItems(scope, SEL.comment);
       const records = collectWeiboCommentRecordsActive(scope).map((record) => ({
@@ -6453,6 +6936,77 @@
         .some((node) => node && node.nodeType === 1 && node.matches
           && (node.matches(SEL.comment) || node.matches(SEL.card))));
       if (removed) requestWeiboUiSync(false);
+      // 回收器有时在滚动事件之后才把新评论内容写入物理行；这些变化可能
+      // 晚于滚动帧到达。只要变更发生在虚拟行内，就安排同一条轻量视口重判，
+      // 不把普通正文/热搜 DOM 变化升级为整页扫描。
+      const virtualMutation = (records || []).some((record) => {
+        const target = record && record.target && record.target.nodeType === 1 ? record.target : null;
+        if (target && target.closest && target.closest(VIRTUAL_ROW_SELECTOR)) return true;
+        return Array.from(record && record.addedNodes || []).some((node) => (
+          node && node.nodeType === 1 && node.matches
+          && (node.matches(VIRTUAL_ROW_SELECTOR) || node.querySelector(VIRTUAL_ROW_SELECTOR))
+        ));
+      });
+      if (virtualMutation) requestVisibleWeiboBlockScan();
+    });
+
+    // 微博详情页回收器可能只改写现有 item-view 的内容/位置，不一定在同一帧
+    // 产生可供主 MutationObserver 及时处理的作者属性变化。页面已有屏蔽工作
+    // 时，滚动事件只安排一次 rAF，对视口内的物理行重新执行身份判定；没有
+    // 任何屏蔽容器时不建立这条滚动热路径，避免普通浏览和信息流增加深树扫描。
+    // 这样复用行在下一绘制帧内就会继承当前名单的隐藏状态，同时仍允许回收器
+    // 把未命中的新评论恢复为可见。
+    let weiboVisibleBlockFrame = 0;
+    function scanVisibleWeiboBlocks() {
+      weiboVisibleBlockFrame = 0;
+      if (!PageLifecycle.isVisible() || !blockedContainers.size) return;
+      const adapter = Adapters.weibo;
+      if (!adapter) return;
+      const viewportWidth = Number(window.innerWidth) || 0;
+      const viewportHeight = Number(window.innerHeight) || 0;
+      // 微博当前捕获的回收器在 light DOM 中；滚动热路径不再递归整棵 Shadow DOM，
+      // 只读取物理行及其评论后代，避免低性能机器在快速滚轮时重复深遍历。
+      const rows = Array.from(document.querySelectorAll(VIRTUAL_ROW_SELECTOR));
+      const visited = new Set();
+      let handled = 0;
+      for (const row of rows) {
+        if (!row || inactiveWeiboVirtualRow(row)) continue;
+        const rect = row.getBoundingClientRect();
+        if (!(rect.bottom > 0 && rect.top < viewportHeight
+          && rect.right > 0 && rect.left < viewportWidth)) continue;
+        for (const item of Array.from(row.querySelectorAll(SEL.comment))) {
+          if (visited.has(item)) continue;
+          visited.add(item);
+          let info = null;
+          try { info = adapter.extract(item); } catch (error) {
+            EventLog.recordError('scanner.weibo-visible-extract', error, { adapter: 'weibo', itemTag: item && item.tagName });
+          }
+          const marked = item.hasAttribute && item.hasAttribute('data-ob-blocked');
+          // 未命中的新行无需重复走完整通用处理；带旧标记的复用行仍必须
+          // 经过 handleItem，才能在作者变化后撤销旧隐藏状态。
+          if (!marked && !(info && info.keys && info.keys.length && Index.isBlocked(info.keys))) continue;
+          try { handleItem(adapter, item); handled++; }
+          catch (error) { EventLog.recordError('scanner.weibo-visible', error, { adapter: 'weibo', itemTag: item && item.tagName }); }
+        }
+      }
+      runtimeDiagnostic('weiboVisibleBlockScans');
+      runtimeDiagnostic('weiboVisibleBlockItems', handled);
+    }
+    function requestVisibleWeiboBlockScan() {
+      if (!PageLifecycle.isVisible() || !blockedContainers.size || weiboVisibleBlockFrame) return;
+      if (typeof requestAnimationFrame === 'function') weiboVisibleBlockFrame = requestAnimationFrame(scanVisibleWeiboBlocks);
+      else weiboVisibleBlockFrame = setTimeout(scanVisibleWeiboBlocks, 0);
+    }
+    const onWeiboScrollForBlocks = () => requestVisibleWeiboBlockScan();
+    document.addEventListener('scroll', onWeiboScrollForBlocks, { capture: true, passive: true });
+    window.addEventListener('scroll', onWeiboScrollForBlocks, { passive: true });
+    RuntimeResources.add(() => {
+      document.removeEventListener('scroll', onWeiboScrollForBlocks, true);
+      window.removeEventListener('scroll', onWeiboScrollForBlocks);
+      if (!weiboVisibleBlockFrame) return;
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(weiboVisibleBlockFrame);
+      else clearTimeout(weiboVisibleBlockFrame);
+      weiboVisibleBlockFrame = 0;
     });
 
     function collectWeiboUsers(root) {
@@ -6513,8 +7067,14 @@
   // ---------- 知乎 ----------
   Adapters.zhihu = (function () {
     const SEL = {
-      item: '.ContentItem, .FeedCard, .TopstoryItem, [data-testid="AnswerCard"], .CommentItem, .List-item',
-      comment: '.CommentItem',
+      // 2026-09-05 登录态真站评论弹窗捕获：评论行没有稳定的 `.CommentItem`，
+      // 而是由语义类 `CommentContent` 放在行内内容层，作者链接仍为
+      // `/people/<token>`/`/org/<token>`。`div:has(> div > CommentContent)`
+      // 只匹配包住头像列和内容列的单条行，不把整组评论容器当成用户。
+      commentContent: '[class*="CommentContent"]',
+      commentRow: 'div:has(> div > [class*="CommentContent"])',
+      item: '.ContentItem, .FeedCard, .TopstoryItem, [data-testid="AnswerCard"], .CommentItem, .List-item, [class*="CommentContent"], div:has(> div > [class*="CommentContent"])',
+      comment: '.CommentItem, [class*="CommentContent"], div:has(> div > [class*="CommentContent"])',
       userLink: 'a[href*="/people/"], a[href*="/org/"]',
     };
     function idFromLink(link) {
@@ -6524,27 +7084,87 @@
       if (m) return { token: normId(m[2]) };
       return { token: '' };
     }
-    function findCard(el) {
+    function isAnswerCard(el) {
+      return !!(el && el.matches && el.matches('.ContentItem, .FeedCard, .TopstoryItem, [data-testid="AnswerCard"]'));
+    }
+    function findCommentRow(el) {
       let p = el;
       while (p && p !== document.body) {
-        if (p.matches && p.matches(SEL.item)) return p;
+        // 评论弹窗是独立 portal；若评论被嵌进回答卡，优先保留回答卡的
+        // 原有身份语义，避免把一个被屏蔽评论误判为整条回答。
+        if (p.matches && p.matches(SEL.commentRow) && !isAnswerCard(p)) return p;
+        p = p.parentElement;
+      }
+      return null;
+    }
+    function findCard(el) {
+      const commentRow = findCommentRow(el);
+      if (commentRow) return commentRow;
+      let p = el;
+      while (p && p !== document.body) {
+        if (p.matches && p.matches(SEL.item) && !p.matches(SEL.commentContent)) return p;
         p = p.parentElement;
       }
       return el;
+    }
+    function extract(item) {
+      const container = findCard(item);
+      const link = (container || item).querySelector(SEL.userLink);
+      const { token } = idFromLink(link);
+      const name = textOf(link);
+      const keys = [];
+      appendIdentityKey(keys, 'zhihu:token', token);
+      return { keys, label: name, container };
+    }
+    let lastMenuContext = null;
+    function rememberMenuContext(event) {
+      const path = event && typeof event.composedPath === 'function' ? event.composedPath() : [event && event.target];
+      for (const node of path || []) {
+        const row = findCommentRow(node);
+        if (!row) continue;
+        const info = extract(row);
+        if (info && info.keys && info.keys.length) {
+          lastMenuContext = { ...info, at: Date.now() };
+          return;
+        }
+      }
+    }
+    function menuContextInfo() {
+      // 真实 portal 可能在用户移动鼠标或菜单动画期间延迟挂载；给用户
+      // 留出十几秒点击自建入口的时间，同时仍用时间窗阻止跨菜单复用旧行。
+      if (!lastMenuContext || Date.now() - lastMenuContext.at > 15000) {
+        lastMenuContext = null;
+        return null;
+      }
+      return lastMenuContext;
+    }
+    function isQuickMenuItem(el) {
+      if (!el || el.nodeType !== 1 || el.tagName !== 'DIV' || (el.children && el.children.length)) return false;
+      const text = textOf(el);
+      if (!['屏蔽用户', '举报', '踩评论', '复制'].includes(text)) return false;
+      const parent = el.parentElement;
+      if (!parent || parent.children.length < 2) return false;
+      const siblings = Array.from(parent.children).map((child) => textOf(child));
+      return siblings.includes('屏蔽用户') && siblings.includes('举报') && siblings.includes('复制');
+    }
+    function isQuickMenuMutation(node) {
+      if (!node || node.nodeType !== 1 || node === document.body || node === document.documentElement) return false;
+      // 只检查新插入的小菜单子树；不向 body 级别的大树下钻，避免把
+      // 评论弹窗的普通文本变化重新带入深扫描热路径。
+      if (node.children && node.children.length > 32) return false;
+      try { return Array.from(node.querySelectorAll('div')).some(isQuickMenuItem); }
+      catch (e) { return false; }
     }
     return {
       id: 'zhihu',
       match: (h) => /(^|\.)zhihu\.com$/.test(h.hostname),
       selectors: [SEL.item],
       disappearSelectors: [SEL.comment],
-      extract(item) {
-        const link = item.querySelector(SEL.userLink);
-        const { token } = idFromLink(link);
-        const name = textOf(link);
-        const keys = [];
-        appendIdentityKey(keys, 'zhihu:token', token);
-        return { keys, label: name, container: findCard(item) };
-      },
+      rememberMenuContext,
+      menuContextInfo,
+      isQuickMenuItem,
+      isQuickMenuMutation,
+      extract,
       containerOf: (item) => findCard(item),
     };
   })();
@@ -6597,7 +7217,7 @@
       // 用户数字 ID 位于该节点的 `__vue__.userInfo.id`；链接中的 home/main?id
       // 是不透明 portrait，不能当作 tieba:uid。只把评论项纳入扫描，不猜测首页
       // `.thread-card` 的作者身份。
-      post: 'div.l_post.l_post_bright, div.d_post_content_main, .pb-comment-item',
+      post: 'div.l_post.l_post_bright, div.d_post_content_main, .pb-comment-item, .pb-lzl-item',
       author: 'span.tb_icon_author[data-field], div.d_name[data-field], [data-field]',
     };
     function uidFromField(el) {
@@ -6620,7 +7240,7 @@
     }
     function containerForItem(item) {
       return item.matches(SEL.thread) ? findContainer(item, SEL.thread)
-        : (item.matches && item.matches('.pb-comment-item')) ? item
+        : (item.matches && item.matches('.pb-comment-item, .pb-lzl-item')) ? item
         : (item.closest && item.closest('div.l_post.l_post_bright')) || item;
     }
     function modernVueIdentity(item) {
@@ -6636,28 +7256,80 @@
       }
       return { uid: '', name: '' };
     }
+    function menuContextItem(node) {
+      let p = node;
+      while (p && p !== document.body) {
+        if (p.matches && p.matches('.pb-lzl-item, .pb-comment-item, div.l_post.l_post_bright')) return p;
+        p = p.parentElement;
+      }
+      return null;
+    }
+    function extract(item) {
+      let fieldEl = item.querySelector(SEL.author);
+      if (!fieldEl && item.hasAttribute && item.hasAttribute('data-field')) fieldEl = item;
+      let identity = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
+      if (!identity.uid && item.matches && item.matches('.pb-comment-item, .pb-lzl-item')) {
+        identity = modernVueIdentity(item);
+        if (!identity.name) {
+          const nameNode = item.querySelector('.head-name, .name-info-link');
+          identity.name = normNick(textOf(nameNode));
+        }
+      }
+      const keys = [];
+      appendIdentityKey(keys, 'tieba:uid', identity.uid);
+      const container = containerForItem(item);
+      return { keys, label: identity.name, container, source: fieldEl ? 'data-field' : (identity.uid ? 'dom-vue' : 'dom') };
+    }
+    let lastMenuContext = null;
+    function rememberMenuContext(event) {
+      const path = event && typeof event.composedPath === 'function' ? event.composedPath() : [event && event.target];
+      for (const node of path || []) {
+        const item = menuContextItem(node);
+        if (!item) continue;
+        const info = extract(item);
+        if (info && info.keys && info.keys.length) {
+          lastMenuContext = { ...info, at: Date.now() };
+          return;
+        }
+      }
+    }
+    function menuContextInfo() {
+      if (!lastMenuContext || Date.now() - lastMenuContext.at > 10000) {
+        lastMenuContext = null;
+        return null;
+      }
+      return lastMenuContext;
+    }
+    function isQuickMenuItem(el) {
+      if (!el || el.nodeType !== 1 || el.tagName !== 'DIV' || !el.classList.contains('action-item')) return false;
+      const text = textOf(el);
+      if (text !== '拉黑' && text !== '举报') return false;
+      const parent = el.parentElement;
+      if (!parent || !parent.classList.contains('more-action-card') || parent.children.length < 2) return false;
+      const siblings = Array.from(parent.children).map((child) => textOf(child));
+      // 根评论菜单通常还有“收藏”，楼中楼回复菜单在真站只保留“举报/拉黑”。
+      // 两种形态都必须位于同一个已捕获的 `.more-action-card`，不能把普通
+      // 页面文案当成菜单入口；只要求这两个安全锚点即可覆盖回复菜单。
+      return siblings.includes('举报') && siblings.includes('拉黑');
+    }
+    function isQuickMenuMutation(node) {
+      if (!node || node.nodeType !== 1 || node === document.body || node === document.documentElement) return false;
+      if (node.children && node.children.length > 24) return false;
+      try { return Array.from(node.querySelectorAll('.action-item')).some(isQuickMenuItem); }
+      catch (e) { return false; }
+    }
     return {
       id: 'tieba',
       match: (h) => /(^|\.)tieba\.baidu\.com$/.test(h.hostname),
       // 楼中楼集合不是单条回复；没有可靠的单回复捕获结构时不扫描该集合。
       selectors: [SEL.thread, SEL.post],
       disappearSelectors: [SEL.post],
-      extract(item) {
-        let fieldEl = item.querySelector(SEL.author);
-        if (!fieldEl && item.hasAttribute && item.hasAttribute('data-field')) fieldEl = item;
-        let identity = fieldEl ? uidFromField(fieldEl) : { uid: '', name: '' };
-        if (!identity.uid && item.matches && item.matches('.pb-comment-item')) {
-          identity = modernVueIdentity(item);
-          if (!identity.name) {
-            const nameNode = item.querySelector('.head-name, .name-info-link');
-            identity.name = normNick(textOf(nameNode));
-          }
-        }
-        const keys = [];
-        appendIdentityKey(keys, 'tieba:uid', identity.uid);
-        const container = containerForItem(item);
-        return { keys, label: identity.name, container, source: fieldEl ? 'data-field' : (identity.uid ? 'dom-vue' : 'dom') };
-      },
+      rememberMenuContext,
+      menuContextInfo,
+      isQuickMenuItem,
+      isQuickMenuMutation,
+      quickMenuSelector: '.action-item',
+      extract,
       containerOf: containerForItem,
     };
   })();
@@ -7325,10 +7997,15 @@
     const activate = (e) => {
       e.stopPropagation(); e.preventDefault();
       if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) return;
-      const info = cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl);
+      // 仍连接的评论/菜单节点可能被虚拟列表复用；先按点击时的当前 DOM
+      // 重新识别，避免把旧行身份带到新用户。portal 菜单与评论行分离时，
+      // 当前 DOM 无法沿回评论上下文，再回退到创建/最近扫描时保存的快照，
+      // 以覆盖用户停顿超过上下文 TTL 的安全延迟点击。
+      const liveInfo = cfg.identify ? cfg.identify(anchorEl) : identifyFromAnchor(anchorEl);
+      const info = liveInfo && liveInfo.keys && liveInfo.keys.length ? liveInfo : btn.__obQuickInfo;
       if (!info || !info.keys || !info.keys.length) {
         EventLog.record('ui.quick.rejected', { platform: currentAdapter && currentAdapter.id || 'unknown', reasonCode: 'no-reliable-identity' }, { immediate: true });
-        showToast('⚠️ 无法识别该用户，可试悬浮按钮或右键'); return;
+        showToast('⚠️ 无法识别该用户，请重新打开菜单或试右键'); return;
       }
       EventLog.record('ui.quick.open-confirm', { platform: currentAdapter && currentAdapter.id || 'unknown' }, { immediate: true });
       showConfirm(info.label || '该用户', info.keys, anchorEl, null, null, info.note);
@@ -7430,7 +8107,13 @@
       const t = textOf(el);
       if (!t) return;
       for (const txt of cfg.anchorTexts) {
-        if (t.indexOf(txt) !== -1 && isMenuItem(el)) {
+        const adapterMenuItem = typeof a.isQuickMenuItem === 'function' && a.isQuickMenuItem(el);
+        // 知乎评论菜单的真实项是无 role 的结构化 div；该平台正文/热榜里
+        // 也常出现“被举报/举报中心”等普通链接，不能把它们当成可执行菜单。
+        const recognizedMenuItem = a.id === 'zhihu'
+          ? adapterMenuItem
+          : (isMenuItem(el) || adapterMenuItem);
+        if (t.indexOf(txt) !== -1 && recognizedMenuItem) {
           if (a.id === 'bilibili' && t.indexOf('举报') !== -1) {
             const dmInfo = floatingDanmaku.fresh();
             if (!dmInfo) {
@@ -7445,7 +8128,8 @@
             return;
           }
           // 不向稿件举报等没有发送者上下文的菜单注入无效按钮。
-          const info = cfg.identify ? cfg.identify(el) : identifyFromAnchor(el);
+          const info = cfg.identify ? cfg.identify(el)
+            : (typeof a.menuContextInfo === 'function' && a.menuContextInfo()) || identifyFromAnchor(el);
           if (!info || !info.keys || !info.keys.length) return;
           const parent = el.parentNode;
           if (!parent) return;
@@ -7455,8 +8139,11 @@
           if (!localButton) {
             localButton = makeQuickBtn(cfg.label || '本地拉黑', el, cfg, txt);
             trackButton(localButton);
-            parent.insertBefore(localButton, el.nextSibling);
           } else trackButton(localButton);
+          // 保存本次菜单项解析出的身份；portal 菜单可能延迟点击，也可能
+          // 复用同一节点承载另一条评论，后者由后续扫描覆盖该快照。
+          localButton.__obQuickInfo = info;
+          if (!localButton.isConnected) parent.insertBefore(localButton, el.nextSibling);
           let rootComment = false;
           if (a.commentManager && typeof a.commentManager.isRootComment === 'function') {
             rootComment = !!(info.container && a.commentManager.isRootComment(info.container));
@@ -7477,6 +8164,15 @@
       pruneTracked();
       if (!Store.getSetting('enabled') || !Store.getSetting('showQuickBlock')) { clearInjected(); return; }
       for (const el of querySelectorAllDeep(document, QB_CANDIDATE)) tryInject(el);
+      // 知乎评论弹窗当前版本的菜单项是无 role/class 语义 div，菜单容器类名
+      // 每次构建都会变化。仅在菜单扫描已被点击/Mutation 信号唤醒时，按适配器
+      // 提供的真实结构谓词检查叶子节点，不把 `div` 加入常态观察热路径。
+      if (typeof a.isQuickMenuItem === 'function') {
+        const selector = a.quickMenuSelector || 'div';
+        for (const el of querySelectorAllDeep(document, selector)) {
+          if (a.isQuickMenuItem(el)) tryInject(el);
+        }
+      }
       // 某些 B站登录态弹幕举报窗使用无 role/class 的 div 作为选项。只在已打开菜单根内
       // 检查叶子项，身份仍必须来自当前唯一浮动弹幕 hash，因而不会给普通举报窗乱挂入口。
       for (const root of querySelectorAllDeep(document, QB_MENU_ROOT)) {
@@ -7536,6 +8232,7 @@
       let current = menuNode(node);
       for (let guard = 0; current && guard < 16; guard++) {
         if (current.matches) {
+          if (typeof a.isQuickMenuMutation === 'function' && a.isQuickMenuMutation(current)) return true;
           try {
             if (current.matches(QB_MENU_ROOT + ',#options,bili-comment-menu,[role="menu"]')) return true;
           } catch (e) {}
@@ -7554,14 +8251,18 @@
       const element = menuNode(node);
       if (!element || !element.matches) return false;
       let text = '';
+      let className = '';
       try { text = textOf(element) + ' ' + (attr(element, 'aria-label') || '') + ' ' + (attr(element, 'title') || '') + ' ' + (attr(element, 'data-e2e') || ''); }
       catch (e) { return false; }
+      try { className = attr(element, 'class') || ''; } catch (e) { className = ''; }
+      if (/Dots24|ellipsis|more/i.test(className)) return true;
       return /更多|操作|菜单|评论|more|menu|action/i.test(text)
         && (/^(BUTTON|A)$/.test(element.tagName) || element.getAttribute('role') === 'button'
           || element.hasAttribute('aria-haspopup'));
     };
     document.addEventListener('click', (event) => {
       const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+      if (typeof a.rememberMenuContext === 'function') a.rememberMenuContext(event);
       if (path.some(isMenuTrigger)) requestMenuScan();
     }, true);
     // 菜单打开、键盘聚焦或相关 Shadow DOM 变化时才执行一次扫描；请求处理完
@@ -7775,13 +8476,13 @@
       counts.textContent = '';
       const lines = [
         ['作品作者', result.sectionCounts.creator || 0],
-        ['主评论作者', result.sectionCounts.comment || 0],
-        ['子评论作者', result.sectionCounts.reply || 0],
-        ['弹幕发送者', result.sectionCounts.danmaku || 0],
-        ['去重后用户', result.users.length],
-        ['本次新增候选', result.fresh.length],
-        ['原已屏蔽', result.existing.length],
-        ['无可靠身份', result.unknown],
+        ['已识别主评论作者', result.sectionCounts.comment || 0],
+        ['已识别子评论作者', result.sectionCounts.reply || 0],
+        ['已识别弹幕发送者', result.sectionCounts.danmaku || 0],
+        ['可屏蔽用户（去重）', result.users.length],
+        ['本次新增身份', result.fresh.length],
+        ['原已屏蔽身份', result.existing.length],
+        ['当前可见但无可靠身份', result.unknown],
       ];
       for (const [label, count] of lines) {
         const item = document.createElement('div'); item.className = 'ob-work-count'; item.textContent = workCountLine(label, count); counts.appendChild(item);
@@ -7790,7 +8491,8 @@
     if (warning) {
       warning.textContent = result.complete
         ? '已确认当前适配器的读取范围结束。'
-        : '本次结果不是平台意义上的绝对全量；确认后只会屏蔽已经可靠识别到的用户。'
+        : '平台显示的评论总数不等于已识别作者数；未加载、虚拟回收或没有可靠身份的评论不会被猜测屏蔽。'
+          + '\n确认后只会屏蔽已经可靠识别到的用户。'
           + (result.reason ? '\n原因：' + result.reason : '');
       warning.style.display = loading ? 'none' : 'block';
     }
@@ -7800,9 +8502,36 @@
     }
   }
 
+  function resolveLiveWorkCandidate(adapter, candidate) {
+    if (!adapter || !adapter.workScope || typeof adapter.workScope.list !== 'function' || !candidate) return candidate;
+    try {
+      const candidates = adapter.workScope.list() || [];
+      // 微博详情评论是异步挂载的：作品卡片对象不变，但候选的 scope 会从
+      // 卡片本身升级为同级详情 wrapper。点击按钮时重新取一次当前候选，
+      // 避免按钮闭包还握着“评论尚未挂载”的早期快照。
+      const sameCard = candidate.card
+        ? candidates.filter((item) => item && item.card === candidate.card)
+        : [];
+      const upgraded = sameCard.find((item) => item.scope && item.scope !== item.card);
+      if (upgraded) return upgraded;
+      const sameScope = candidates.find((item) => item && item.scope === candidate.scope);
+      if (sameScope) return sameScope;
+      const sameKey = candidate.key != null
+        ? candidates.find((item) => item && item.key != null && item.key === candidate.key)
+        : null;
+      return sameKey || sameCard[0] || candidate;
+    } catch (error) {
+      EventLog.recordError('work.current-candidate', error, { adapter: adapter.id });
+      return candidate;
+    }
+  }
+
+  let activeWorkAbortController = null;
   async function openWorkBlock(adapter, candidate) {
     if (!adapter || !adapter.workScope || !candidate) return;
+    candidate = resolveLiveWorkCandidate(adapter, candidate);
     if (!candidate.scope || candidate.scope.isConnected === false) { EventLog.record('action.work.rejected', { adapter: adapter.id, reasonCode: 'scope-detached' }, { immediate: true }); showToast('当前作品已离开页面'); return; }
+    if (activeWorkAbortController) activeWorkAbortController.abort();
     const old = document.getElementById('ob-work-confirm');
     FloatingDock.release('work-block');
     if (old) old.remove();
@@ -7810,6 +8539,12 @@
     let result = workResultFrom(adapter, candidate);
     let cancelled = false;
     let loading = false;
+    const workAbortController = typeof AbortController === 'function' ? new AbortController() : null;
+    const workSignal = workAbortController ? workAbortController.signal : null;
+    activeWorkAbortController = workAbortController;
+    const releaseWorkOperation = () => {
+      if (activeWorkAbortController === workAbortController) activeWorkAbortController = null;
+    };
     const box = document.createElement('div');
     box.id = 'ob-work-confirm';
     box.innerHTML = `<div class="ob-work-box" role="dialog" aria-modal="true" aria-labelledby="ob-work-title"><div class="ob-work-head"><h2 class="ob-work-title" id="ob-work-title"></h2><button class="ob-work-close" type="button" aria-label="关闭">×</button></div><div class="ob-work-status"></div><div class="ob-work-counts"></div><div class="ob-work-warning"></div><div class="ob-work-row"><button class="ob-work-no" type="button">取消</button><button class="ob-work-ok" type="button">屏蔽已识别用户</button></div></div>`;
@@ -7818,8 +8553,10 @@
     const close = (reason) => {
       if (cancelled && !box.isConnected) return;
       cancelled = true;
+      if (workAbortController) workAbortController.abort();
+      releaseWorkOperation();
       EventLog.record('action.work.cancel', { adapter: adapter.id, reason: reason || 'user' }, { immediate: true });
-      box.remove(); FloatingDock.release('work-block');
+      box.remove(); FloatingDock.release('work-block'); focusPageAfterOmniBlock('work-' + (reason || 'user'));
     };
     box.querySelector('.ob-work-close').onclick = () => close('close-button');
     box.querySelector('.ob-work-no').onclick = () => close('cancel-button');
@@ -7847,7 +8584,10 @@
           creator: result.sectionCounts.creator || 0, comments: result.sectionCounts.comment || 0,
           replies: result.sectionCounts.reply || 0, danmaku: result.sectionCounts.danmaku || 0,
         }, { immediate: true });
+        if (workAbortController) workAbortController.abort();
+        releaseWorkOperation();
         box.remove(); FloatingDock.release('work-block');
+        focusPageAfterOmniBlock('work-commit');
         showToast((persisted ? '已屏蔽当前作品的 ' : '已在本页屏蔽但未确认落盘：') + result.users.length + ' 位已识别用户'
           + (result.partial ? '（结果可能不完整）' : '') + (persisted ? '' : '，请重试或导出备份'),
           addedKeys.length ? () => {
@@ -7882,7 +8622,7 @@
           scrolls: Number(progress && progress.scrolls) || 0,
         });
         renderWorkResult(box, result, true, progress || null);
-      });
+      }, { signal: workSignal });
       if (cancelled) return;
       result = workResultFrom(adapter, candidate, loaded);
       EventLog.record('action.work.load.finish', {
@@ -7891,7 +8631,10 @@
       loading = false;
       renderWorkResult(box, result, false, null);
     } catch (error) {
-      if (cancelled) return;
+      if (cancelled || (workSignal && workSignal.aborted) || error && error.name === 'AbortError') {
+        focusPageAfterOmniBlock('work-load-cancelled');
+        return;
+      }
       EventLog.recordError('action.work.load', error, { adapter: adapter.id });
       loading = false;
       result.partial = true;
@@ -7962,11 +8705,14 @@
           const button = document.createElement('button'); button.type = 'button'; button.className = 'ob-work-block'; button.textContent = '🚫 屏蔽作品';
           button.title = '本地屏蔽当前作品的作者、评论、子评论和可确认弹幕发送者';
           button.setAttribute('aria-label', '屏蔽当前作品用户');
-          button.onclick = (event) => { event.stopPropagation(); event.preventDefault(); openWorkBlock(adapter, candidate); };
+          button.onclick = (event) => { event.stopPropagation(); event.preventDefault(); openWorkBlock(adapter, state.candidate); };
           portal.appendChild(button); document.body.appendChild(portal);
-          state = { key, anchor: candidate.anchor, scope: candidate.scope, portal };
+          state = { key, candidate, anchor: candidate.anchor, scope: candidate.scope, portal };
           states.set(key, state);
         } else {
+          // 评论表面可能在帖子卡片之后才挂载；入口存在期间必须使用最新候选，
+          // 否则按钮闭包会一直持有没有评论 scope 的早期快照。
+          state.candidate = candidate;
           state.anchor = candidate.anchor; state.scope = candidate.scope;
         }
         position(state);
@@ -8750,9 +9496,15 @@
   let douyinDanmakuTool = null;
   let douyinDanmakuManager = null;
   let douyinDanmakuManagerKeyHandler = null;
+  // 弹幕时间轴扫描可能跨越多个面板生命周期；关闭管理器时由当前会话
+  // 注销它，避免面板消失后仍继续暂停/拖动播放器。
+  let cancelDouyinDanmakuScan = null;
 
   function closeDouyinDanmakuManager(reason) {
     const wasOpen = !!douyinDanmakuManager;
+    if (cancelDouyinDanmakuScan) {
+      try { cancelDouyinDanmakuScan(reason || 'manager-close'); } catch (e) {}
+    }
     if (douyinDanmakuManagerKeyHandler) document.removeEventListener('keydown', douyinDanmakuManagerKeyHandler);
     douyinDanmakuManagerKeyHandler = null;
     if (douyinDanmakuManager) douyinDanmakuManager.remove();
@@ -8792,6 +9544,30 @@
       // 两者都是同一页面作品的身份信息完善/降级，不应取消正在进行的时间轴任务。
       return a === b || a.indexOf('|video:') < 0 || b.indexOf('|video:') < 0;
     };
+    const cancelScan = (reason = 'manager-close') => {
+      const run = scanRun;
+      if (!run) return false;
+      run.cancelled = true;
+      const currentKey = readVideoKey();
+      const sameScope = sessionGeneration === run.generation
+        && isSameVideoKeyScope(currentKey, run.key);
+      // 扫描会暂停并拖动播放器。只要仍在同一作品，就在取消的瞬间把播放头
+      // 和播放状态交还给页面；若作品已切换，则不触碰新播放器。
+      if (sameScope && run.video && run.video.isConnected) {
+        try { run.video.currentTime = run.originalTime; } catch (e) {}
+        if (run.wasPlaying) {
+          try { const playing = run.video.play(); if (playing && playing.catch) playing.catch(() => {}); } catch (e) {}
+        }
+      }
+      scanRunning = false;
+      scanRun = null;
+      runtimeDiagnostic('douyinDanmakuCancelledScans');
+      EventLog.record('ui.douyin-danmaku.scan.cancel', {
+        reason: String(reason || 'manager-close').slice(0, 48), sameScope,
+      }, { immediate: true });
+      return true;
+    };
+    cancelDouyinDanmakuScan = cancelScan;
     const resetForVideo = (nextVideoKey) => {
       const nextGeneration = typeof adapter.videoSessionGeneration === 'function'
         ? Number(adapter.videoSessionGeneration()) || 0 : playerIdentityGeneration;
@@ -9049,10 +9825,17 @@
       }
       let requestedKey = readVideoKey();
       const requestedGeneration = sessionGeneration;
-      const run = { key: requestedKey, generation: requestedGeneration, cancelled: false };
-      scanRun = run;
       const originalTime = Number(video.currentTime) || 0;
       const wasPlaying = !video.paused && !video.ended;
+      const run = {
+        key: requestedKey,
+        generation: requestedGeneration,
+        cancelled: false,
+        video,
+        originalTime,
+        wasPlaying,
+      };
+      scanRun = run;
       const sampleCount = Math.min(60, Math.max(6, Math.ceil(duration / 15)));
       let completed = 0;
       scanRunning = true;
@@ -11912,7 +12695,7 @@
           <label><input type="radio" name="ob-mode" value="collapse" checked> 折叠成灰条（默认，可追溯）</label>
           <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>
           <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
-          <label><input type="checkbox" id="ob-hover" checked> 显示悬浮拉黑按钮</label>
+          <label><input type="checkbox" id="ob-hover" checked> 显示平台专用悬浮入口（如抖音弹幕）</label>
           <label><input type="checkbox" id="ob-quick" checked> 显示"本地拉黑"入口（含B站弹幕工具）</label>
           <label><input type="checkbox" id="ob-bulk" checked> 显示批量拉黑入口（含弹幕勾选批量）</label>
           <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
@@ -12295,11 +13078,10 @@
     panel.querySelector('#ob-enabled').onchange = (e) => {
       Store.setSetting('enabled', e.target.checked);
       logSettingChange('enabled', e.target.checked);
-      if (!e.target.checked) clearHover();
       refreshQuickBlock(); refreshBulkBlock();
       if (currentScanner) currentScanner.schedule();
     };
-    panel.querySelector('#ob-hover').onchange = (e) => { Store.setSetting('showHoverButton', e.target.checked); logSettingChange('showHoverButton', e.target.checked); if (!e.target.checked) clearHover(); };
+    panel.querySelector('#ob-hover').onchange = (e) => { Store.setSetting('showHoverButton', e.target.checked); logSettingChange('showHoverButton', e.target.checked); };
     panel.querySelector('#ob-quick').onchange = (e) => { Store.setSetting('showQuickBlock', e.target.checked); logSettingChange('showQuickBlock', e.target.checked); refreshQuickBlock(); };
     panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); logSettingChange('showBulkBlock', e.target.checked); refreshBulkBlock(); };
     panel.querySelector('#ob-skip').onchange = (e) => { Store.setSetting('douyinAutoSkip', e.target.checked); logSettingChange('douyinAutoSkip', e.target.checked); };

@@ -45,6 +45,12 @@ const cases = [
     body: '<div class="CommentItem"><a href="/people/comment-author">知乎评论作者</a></div>',
   },
   {
+    id: 'zhihu', name: 'zhihu-comment-content-live-shape', url: 'https://www.zhihu.com/question/1', selector: '.CommentContent', expected: 'zhihu:token:comment-live-author', expectVanished: true,
+    // 人工合成：2026-09-05 登录态真站评论弹窗捕获；`CommentContent` 是
+    // 语义内容节点，外层评论行只通过两层 div 关系确定，不固化 css-* 类名。
+    body: '<div class="comment-row"><div class="avatar-col"><a href="/people/comment-live-author">头像</a></div><div class="content-col"><div class="comment-head"><a href="/people/comment-live-author">评论作者</a></div><div class="CommentContent css-captured">评论正文</div></div></div>',
+  },
+  {
     id: 'tieba', url: 'https://tieba.baidu.com/f?kw=test', selector: '.l_post', expected: 'tieba:uid:987654321', expectVanished: true,
     body: '<div class="l_post l_post_bright"><span class="tb_icon_author" data-field="{&quot;author&quot;:{&quot;user_id&quot;:&quot;987654321&quot;,&quot;user_name&quot;:&quot;贴吧作者&quot;}}"></span></div>',
   },
@@ -269,6 +275,198 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       } else report.fail.push(label + ': ' + JSON.stringify(result));
       await page.close();
     }
+
+    // 知乎评论弹窗菜单：真实捕获的菜单项是无 role 的语义 div，且菜单通过
+    // portal 延迟插入；点击评论行的 Dots 图标后应复用该行身份注入本地入口。
+    const zhihuMenuPage = await browser.newPage();
+    const zhihuMenuFixture = `<!doctype html><html><body>
+      <div class="comment-row">
+        <div class="avatar-col"><a href="/people/menu-comment-author">头像</a></div>
+        <div class="content-col"><div class="comment-head"><a href="/people/menu-comment-author">评论作者</a><svg class="ZDI--Dots24" id="comment-dots"></svg></div><div class="CommentContent css-captured">评论正文</div></div>
+      </div>
+    </body></html>`;
+    await zhihuMenuPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: zhihuMenuFixture }));
+    await zhihuMenuPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await zhihuMenuPage.goto('https://www.zhihu.com/question/1', { waitUntil: 'domcontentloaded' });
+    await zhihuMenuPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    const zhihuMenu = await zhihuMenuPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const dots = document.querySelector('#comment-dots');
+      dots.addEventListener('click', () => {
+        setTimeout(() => {
+          const menu = document.createElement('div');
+          menu.className = 'portal-menu';
+          for (const text of ['屏蔽用户', '举报', '踩评论', '复制']) {
+            const item = document.createElement('div'); item.textContent = text; menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+        }, 0);
+      });
+      dots.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+      const contextAfterClick = window.OB.adapters.zhihu.menuContextInfo();
+      await pause(900);
+      const button = document.querySelector('.ob-quick');
+      const info = window.OB.adapters.zhihu.extract(document.querySelector('.CommentContent'));
+      let confirm = false;
+      if (button) {
+        // 菜单打开后用户可能停顿数秒；回归确保上下文不会在旧的 5 秒窗口内
+        // 过早失效，且仍会在更长时间后清理。
+        await pause(5200);
+        button.click();
+        await pause(100);
+        confirm = document.body.innerText.includes('确认拉黑');
+      }
+      const menuItems = Array.from(document.querySelectorAll('.portal-menu > div'));
+      const context = window.OB.adapters.zhihu.menuContextInfo();
+      return { injected: !!button, quickCount: document.querySelectorAll('.ob-quick').length, text: button && button.innerText, confirm, keys: info.keys, menu: !!document.querySelector('.portal-menu'), menuItem: menuItems[1] && window.OB.adapters.zhihu.isQuickMenuItem(menuItems[1]), contextAfterClick: contextAfterClick && contextAfterClick.keys, context: context && context.keys };
+    });
+    if (zhihuMenu.injected && zhihuMenu.quickCount === 1 && zhihuMenu.text === '🚫 本地拉黑' && zhihuMenu.confirm && zhihuMenu.keys.includes('zhihu:token:menu-comment-author') && zhihuMenu.menu) {
+      report.pass.push('zhihu-quick-menu: delayed portal menu reuses comment identity and injects local block');
+    } else report.fail.push('zhihu-quick-menu: ' + JSON.stringify(zhihuMenu));
+    await zhihuMenuPage.close();
+
+    // 通用右键命中：事件目标落在条目内部的正文 span 时，仍应沿父链找到
+    // 现代贴吧评论项；旧实现只检查 target 自身，会在真站静默失效。
+    const tiebaNestedContextPage = await browser.newPage();
+    const tiebaNestedFixture = `<!doctype html><html><body>
+      <div class="pb-comment-item" id="tieba-comment"><div class="comment-content"><span id="tieba-comment-text">正文</span></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654399, name: 'nested-user', name_show: '嵌套作者' } };</script></div>
+    </body></html>`;
+    await tiebaNestedContextPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: tiebaNestedFixture }));
+    await tiebaNestedContextPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await tiebaNestedContextPage.goto('https://tieba.baidu.com/p/1', { waitUntil: 'domcontentloaded' });
+    await tiebaNestedContextPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    const tiebaNested = await tiebaNestedContextPage.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      const target = document.querySelector('#tieba-comment-text');
+      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 40, clientY: 40, button: 2 }));
+      const ctx = document.getElementById('ob-ctx');
+      return { shown: !!ctx, text: ctx ? ctx.innerText : '', key: window.OB.adapters.tieba.extract(document.querySelector('#tieba-comment')).keys };
+    });
+    if (tiebaNested.shown && tiebaNested.text.includes('嵌套作者') && tiebaNested.key.includes('tieba:uid:987654399')) {
+      report.pass.push('tieba-nested-context: nested comment target climbs to Vue identity and opens local menu');
+    } else report.fail.push('tieba-nested-context: ' + JSON.stringify(tiebaNested));
+    await tiebaNestedContextPage.close();
+
+    // 贴吧新版详情页的原生评论菜单是 portal `.more-action-card`，每个操作项
+    // 是带 SVG/span 子节点的 `.action-item`，不能按“无子节点文本叶子”判断。
+    // 人工合成该真站结构，验证点击三个点后能复用评论 Vue 身份注入本地入口。
+    const tiebaMenuPage = await browser.newPage();
+    const tiebaMenuFixture = `<!doctype html><html><body>
+      <div class="pb-comment-item" id="tieba-menu-comment"><div class="comment-content"><span>正文</span></div><div class="comment-actions"><button class="ellipsis_comment" id="tieba-comment-more" aria-label="更多"></button></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654400, name: 'menu-user', name_show: '菜单作者' } };</script></div>
+      <div class="pb-comment-item" id="tieba-reply-host"><div class="pb-lzl-item" id="tieba-reply-comment"><div class="comment-content"><span>楼中楼回复</span></div><div class="comment-actions"><button class="ellipsis_comment" id="tieba-reply-more" aria-label="更多"></button></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654401, name: 'reply-user', name_show: '回复作者' } };</script></div></div>
+    </body></html>`;
+    await tiebaMenuPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: tiebaMenuFixture }));
+    await tiebaMenuPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await tiebaMenuPage.goto('https://tieba.baidu.com/p/1', { waitUntil: 'domcontentloaded' });
+    await tiebaMenuPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    const tiebaMenu = await tiebaMenuPage.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const mountMenu = (texts) => {
+        setTimeout(() => {
+          const menu = document.createElement('div');
+          menu.className = 'more-action-card';
+          for (const text of texts) {
+            const item = document.createElement('div'); item.className = 'action-item';
+            const icon = document.createElement('svg'); const label = document.createElement('span'); label.textContent = text;
+            item.append(icon, label); menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+        }, 0);
+      };
+      const trigger = document.querySelector('#tieba-comment-more');
+      trigger.addEventListener('click', () => mountMenu(['收藏', '举报', '拉黑']));
+      const replyTrigger = document.querySelector('#tieba-reply-more');
+      replyTrigger.addEventListener('click', () => mountMenu(['举报', '拉黑']));
+      trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, clientX: 40, clientY: 40, button: 0 }));
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
+      await pause(900);
+      const local = document.querySelector('.more-action-card .ob-quick');
+      const actionItems = Array.from(document.querySelectorAll('.more-action-card > .action-item'));
+      const predicate = actionItems.map((item) => window.OB.adapters.tieba.isQuickMenuItem(item));
+      const context = window.OB.adapters.tieba.menuContextInfo();
+      let confirm = false;
+      if (local) {
+        // 模拟用户打开菜单后停顿超过 10 秒；按钮应使用创建时绑定的身份快照，
+        // 而不是因 portal 上下文 TTL 到期而退化为“无法识别用户”。
+        await pause(11200);
+        local.click(); await pause(100); confirm = document.body.innerText.includes('确认拉黑');
+      }
+      const rootConfirmKey = document.body.innerText.includes('tieba:uid:987654400');
+      document.querySelector('.ob-no')?.click();
+      document.querySelector('.more-action-card')?.remove();
+      replyTrigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, clientX: 40, clientY: 40, button: 0 }));
+      replyTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
+      await pause(900);
+      const replyLocal = document.querySelector('.more-action-card .ob-quick');
+      const replyItems = Array.from(document.querySelectorAll('.more-action-card > .action-item'));
+      const replyPredicate = replyItems.map((item) => window.OB.adapters.tieba.isQuickMenuItem(item));
+      const replyContext = window.OB.adapters.tieba.menuContextInfo();
+      let replyConfirm = false;
+      if (replyLocal) {
+        replyLocal.click(); await pause(100); replyConfirm = document.body.innerText.includes('确认拉黑');
+      }
+      const replyConfirmKey = document.body.innerText.includes('tieba:uid:987654401');
+      return {
+        local: !!local,
+        quickCount: document.querySelectorAll('.more-action-card .ob-quick').length,
+        text: local && local.innerText,
+        predicate,
+        menuContext: context && context.keys,
+        confirm,
+        confirmHasKey: rootConfirmKey,
+        replyLocal: !!replyLocal,
+        replyQuickCount: document.querySelectorAll('.more-action-card .ob-quick').length,
+        replyText: replyLocal && replyLocal.innerText,
+        replyPredicate,
+        replyContext: replyContext && replyContext.keys,
+        replyConfirm,
+        replyConfirmHasKey: replyConfirmKey,
+      };
+    });
+    if (tiebaMenu.local && tiebaMenu.quickCount === 1 && tiebaMenu.text === '🚫 本地拉黑'
+      && tiebaMenu.predicate.filter(Boolean).length === 2
+      && tiebaMenu.menuContext && tiebaMenu.menuContext.includes('tieba:uid:987654400')
+      && tiebaMenu.confirm && tiebaMenu.confirmHasKey) {
+      report.pass.push('tieba-quick-menu: native action-item menu reuses Vue identity and injects one local block entry');
+    } else report.fail.push('tieba-quick-menu: ' + JSON.stringify(tiebaMenu));
+    if (tiebaMenu.replyLocal && tiebaMenu.replyQuickCount === 1 && tiebaMenu.replyText === '🚫 本地拉黑'
+      && tiebaMenu.replyPredicate.filter(Boolean).length === 2
+      && tiebaMenu.replyContext && tiebaMenu.replyContext.includes('tieba:uid:987654401')
+      && tiebaMenu.replyConfirm && tiebaMenu.replyConfirmHasKey) {
+      report.pass.push('tieba-reply-menu: two-item 举报/拉黑 portal menu injects local block entry with reply Vue identity');
+    } else report.fail.push('tieba-reply-menu: ' + JSON.stringify(tiebaMenu));
+    await tiebaMenuPage.close();
+
+    // 人工合成 B 站评论夹具使用开放 Shadow DOM；浏览器会把事件 target 重定向到
+    // `bili-comments` 宿主，右键命中必须读取 Event.composedPath() 才能找到
+    // 内层 `bili-comment-renderer`。该回归覆盖真实页面的事件边界。
+    const biliShadowContextPage = await browser.newPage();
+    const biliShadowFixture = `<!doctype html><html><body><script>
+      const comment = document.createElement('bili-comment-renderer');
+      comment.setAttribute('data-mid', '987654401');
+      const root = comment.attachShadow({ mode: 'open' });
+      root.innerHTML = '<style>:host { color: red }</style><div id="content"><span id="bili-comment-text">B站评论正文</span><a href="//space.bilibili.com/test">B站评论作者</a></div>';
+      const host = document.createElement('bili-comments');
+      const hostRoot = host.attachShadow({ mode: 'open' }); hostRoot.appendChild(comment);
+      document.body.appendChild(host);
+    </script></body></html>`;
+    await biliShadowContextPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: biliShadowFixture }));
+    await biliShadowContextPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await biliShadowContextPage.goto('https://www.bilibili.com/video/test', { waitUntil: 'domcontentloaded' });
+    await biliShadowContextPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
+    const biliShadow = await biliShadowContextPage.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      const target = document.querySelector('bili-comments')?.shadowRoot?.querySelector('bili-comment-renderer')?.shadowRoot?.querySelector('#bili-comment-text');
+      target?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 44, clientY: 44, button: 2 }));
+      const ctx = document.getElementById('ob-ctx');
+      const info = window.OB.adapters.bilibili.extract(document.querySelector('bili-comments')?.shadowRoot?.querySelector('bili-comment-renderer'));
+      return { shown: !!ctx, text: ctx?.innerText || '', keys: info.keys, note: info.note, target: target?.tagName || '' };
+    });
+    if (biliShadow.shown && biliShadow.text.includes('B站评论作者') && biliShadow.keys.includes('bili:uid:987654401')
+      && biliShadow.note.includes('B站评论正文') && !biliShadow.note.includes(':host')) {
+      report.pass.push('bilibili-shadow-context: Event.composedPath climbs redirected target to comment renderer and opens local menu');
+    } else report.fail.push('bilibili-shadow-context: ' + JSON.stringify(biliShadow));
+    await biliShadowContextPage.close();
 
     // 抖音弹幕 UI：跟随浮层、点击拉黑、无身份边界与作者弹幕映射（人工合成真实捕获结构）。
     const dyDmPage = await browser.newPage();
@@ -592,6 +790,13 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const users = window.OB.collectUsers(document);
       const buttons = Array.from(document.querySelectorAll('.ob-weibo-comment-block'));
       const duplicateQuickCount = comments.reduce((count, item) => count + item.querySelectorAll('.ob-quick').length, 0);
+      // 微博评论保留平台专用按钮，不再注入跨平台 body 悬浮按钮；在旧实现中
+      // 对评论行本身派发 mouseover 会创建 `.ob-block-btn`，因此该断言能锁住本次删除。
+      comments[0]?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, composed: true }));
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const genericHoverButtonCount = document.querySelectorAll('.ob-block-btn').length;
+      const inlineButtonsAfterHover = comments.every((item) => !!item.querySelector('.ob-weibo-comment-block'));
+      document.querySelectorAll('.ob-block-btn').forEach((button) => button.remove());
       const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
       // 「共 N 条回复」展开行也匹配 .item2，但没有作者身份，不能出现入口。
       const expandRow = Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2'))
@@ -661,6 +866,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
         containersAreRows: infos.every((info, index) => info && info.container === comments[index]),
         collectedKeys: users.flatMap((info) => info.keys),
         buttonCount: buttons.length,
+        genericHoverButtonCount,
+        inlineButtonsAfterHover,
         authorButtonCount: authorButtons.length,
         duplicateQuickCount,
         bulkText: bulk && bulk.textContent,
@@ -703,6 +910,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboDetail.containersAreRows
       && expectedWeiboKeys.every((key) => weiboDetail.collectedKeys.includes(key))
       && weiboDetail.buttonCount === 3
+      && weiboDetail.genericHoverButtonCount === 0
+      && weiboDetail.inlineButtonsAfterHover
       && weiboDetail.authorButtonCount === 1
       && weiboDetail.authorConfirm && weiboDetail.authorNamed && weiboDetail.authorBlocked && weiboDetail.authorRestored
       && weiboDetail.duplicateQuickCount === 0
@@ -710,7 +919,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && /微博\/评论作者\(4\)/.test(weiboDetail.bulkText || '')
       && weiboDetail.confirmText.includes('回复作者乙')
       && weiboDetail.blockedReply && weiboDetail.firstVisible && weiboDetail.replyHidden && weiboDetail.outerPostVisible) {
-      report.pass.push('weibo-detail-comments: captured item1 plus referenced item2 single and bulk local blocking');
+      report.pass.push('weibo-detail-comments: captured item1 plus referenced item2 single/bulk blocking; no generic hover entry');
     } else report.fail.push('weibo-detail-comments: ' + JSON.stringify(weiboDetail));
     if (weiboDetail.legacyButtonPresent && weiboDetail.legacyConfirm && weiboDetail.legacyBlocked
       && weiboDetail.wrapperCollapsed && weiboDetail.modalButtonPresent && weiboDetail.modalConfirm

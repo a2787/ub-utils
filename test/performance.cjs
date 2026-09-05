@@ -132,7 +132,12 @@ function resetDiagnostics(page) {
       // 日志分片上限回归：用延迟写入一次性制造略超上限的人工事件，确认只保留
       // 最近 MAX_EVENTS_PER_DAY 条；这条断言也保护 trimAndWriteShard 不退回逐条 shift。
       const logCap = await page.evaluate(() => {
-        const day = new Date().toISOString().slice(0, 10);
+        // EventLog 按运行环境本地日期分片；不能用 UTC 的 toISOString()，
+        // 否则在东八区凌晨会把刚写入的事件查到前一天而误报“裁剪为空”。
+        const now = new Date();
+        const day = now.getFullYear() + '-'
+          + String(now.getMonth() + 1).padStart(2, '0') + '-'
+          + String(now.getDate()).padStart(2, '0');
         for (let index = 0; index < 50005; index++) {
           window.OB.logs.record('test.performance.log-cap', { safeCount: index }, {
             force: true, deferFlush: true, at: Date.now(),
