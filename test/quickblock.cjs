@@ -94,7 +94,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
   const comments = document.getElementById('comments');
   const commentsRoot = comments.attachShadow({mode:'open'});
   const commentsStyle = document.createElement('style'); commentsStyle.textContent = 'bili-comment-thread-renderer{display:block;min-height:24px;margin:0;padding:0}'; commentsRoot.appendChild(commentsStyle);
-  function makeComment(mid, uname) {
+  function makeComment(mid, uname, menuLabels) {
     const thread = document.createElement('bili-comment-thread-renderer');
     thread.id = 'comment-' + mid;
     const threadRoot = thread.attachShadow({mode:'open'});
@@ -105,7 +105,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     const menu = document.createElement('bili-comment-menu'); menu.__data = { member: { mid: String(mid), uname } };
     const menuRoot = menu.attachShadow({mode:'open'});
     const list = document.createElement('ul'); list.id = 'options';
-    for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
+    for (const label of (menuLabels || ['加入黑名单', '举报'])) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
     menuRoot.appendChild(list); root.append(link, menu); threadRoot.appendChild(renderer);
     return thread;
   }
@@ -131,6 +131,13 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
   const third = makeComment(333, 'Carol');
   commentsRoot.append(first, second, third);
   makeReply(third, 444, 'ReplyUser');
+  // 人工合成：2026-09-05 专用 Chrome 真站捕获的评论菜单使用“硬核会员举报”，
+  // 单独保留该菜单项以锁住它不能误入 B站弹幕举报分支的回归边界。
+  window.__appendReportOnlyComment = () => {
+    const thread = makeComment(555, 'ReportOnly', ['硬核会员举报']);
+    commentsRoot.appendChild(thread);
+    return thread;
+  };
   window.__commentRenderer = (mid) => commentsRoot.querySelector('#comment-' + mid).shadowRoot.querySelector('bili-comment-renderer');
   window.__replyRenderer = (mid) => third.shadowRoot.querySelector('bili-comment-replies-renderer').shadowRoot.querySelector('#reply-' + mid);
 </script>
@@ -449,6 +456,32 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (menu.tag === 'LI' && menu.text.includes('本地拉黑') && menu.count === 2 && threadMenu.count === 1)
       report.pass.push('QB-B 真实 bili-comment-menu #options 菜单注入一个本地拉黑和一个楼回复入口');
     else report.fail.push('QB-B 评论菜单注入失败：' + JSON.stringify(menu));
+
+    const reportOnlyMenu = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const thread = window.__appendReportOnlyComment();
+      window.OB.setupQuickBlock();
+      await pause(1300);
+      const renderer = thread.shadowRoot.querySelector('bili-comment-renderer');
+      const list = renderer.shadowRoot.querySelector('bili-comment-menu').shadowRoot.querySelector('#options');
+      const local = list.querySelector('.ob-quick:not(.ob-thread-quick)');
+      const threadButton = list.querySelector('.ob-thread-quick');
+      thread.remove();
+      return {
+        reportText: list.querySelector('li').textContent,
+        localText: local && local.textContent,
+        localCount: list.querySelectorAll('.ob-quick:not(.ob-thread-quick)').length,
+        threadCount: list.querySelectorAll('.ob-thread-quick').length,
+        localIdentity: local && local.__obQuickInfo && local.__obQuickInfo.keys,
+        threadKey: threadButton && threadButton.getAttribute('data-thread-key'),
+      };
+    });
+    if (reportOnlyMenu.reportText.includes('硬核会员举报') && String(reportOnlyMenu.localText || '').includes('本地拉黑')
+      && reportOnlyMenu.localCount === 1 && reportOnlyMenu.threadCount === 1
+      && Array.isArray(reportOnlyMenu.localIdentity) && reportOnlyMenu.localIdentity.includes('bili:uid:555')
+      && reportOnlyMenu.threadKey === '举报')
+      report.pass.push('QB-B-REPORT 真站捕获的“硬核会员举报”评论菜单仍注入本地拉黑和楼回复入口');
+    else report.fail.push('QB-B-REPORT 评论举报项回归失败：' + JSON.stringify(reportOnlyMenu));
 
     // 人工合成：B站接口请求 ps=20，但服务端实际按 page.size=10 返回三页子回复。
     // 旧逻辑只比较 replies.length < REPLY_PAGE_SIZE，会在第一页误认为已经结束，

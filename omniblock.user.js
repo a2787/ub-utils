@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.46.0
+// @version       0.46.1
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容。名单纯本地、不上传、无数量上限。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -51,7 +51,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.46.0-signed-session-index-conflict-tieba-vue';
+  const RUNTIME_BUILD = '0.46.1-bili-comment-menu-report';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -7950,6 +7950,13 @@
     return out;
   }
 
+  // 真站评论菜单由 BILI-COMMENT-MENU 的 Shadow DOM 承载；其中的“硬核会员举报”
+  // 与弹幕举报共用“举报”文本，但仍有评论上下文，不能被弹幕 hash 分支提前拦截。
+  function isBilibiliCommentMenuItem(el) {
+    if (!el || el.nodeType !== 1) return false;
+    return ancestorChain(el).some((node) => node && node.tagName === 'BILI-COMMENT-MENU');
+  }
+
   function identifyFromAnchor(anchor) {
     const a = currentAdapter; if (!a) return null;
     if (a.id === 'bilibili') {
@@ -8114,7 +8121,7 @@
           ? adapterMenuItem
           : (isMenuItem(el) || adapterMenuItem);
         if (t.indexOf(txt) !== -1 && recognizedMenuItem) {
-          if (a.id === 'bilibili' && t.indexOf('举报') !== -1) {
+          if (a.id === 'bilibili' && t.indexOf('举报') !== -1 && !isBilibiliCommentMenuItem(el)) {
             const dmInfo = floatingDanmaku.fresh();
             if (!dmInfo) {
               trackAnchor(el);
