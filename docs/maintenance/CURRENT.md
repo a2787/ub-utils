@@ -1,19 +1,18 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-05
-状态来源：0.46.2 B站子评论菜单与楼回复入口候选；0.46.0 仍是公开版本，历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.46.2 B站子评论菜单与楼回复入口已发布；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.46.2`（本地候选）
+- 当前 userscript：`0.46.2`（已发布）
 - 构建：`0.46.2-bili-subcomment-menu-layout`
-- 当前公开版本：`0.46.0`
-- 当前公开功能提交：`75ba0f7c7c54a056f0e41e9ae39ddd5a6340e770`
+- 当前公开版本：`0.46.2`
+- 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 最近验证的源码快照：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
-- 当前候选源码 SHA-256：`93213c92e66afd56a08fb2261b302c07217904b5389424d08451f29c4424e885`
-- 候选状态：功能提交 `acd3b0a`、文档提交 `930c426` 已推送至 `origin/master`；0.46.2 未创建 tag 或 Release。
-- 公开状态：`v0.46.0` 已创建并推送 tag、分支和 GitHub Release；其公开功能与候选分开记录。
-- 当前公开 tag/Release：[`v0.46.0`](https://github.com/a2787/ub-utils/releases/tag/v0.46.0)。
+- 当前候选源码 SHA-256：`93213c92e66afd56a08fb2261b302c07217904b5389424d08451f29c4424e885`（v0.46.2 发布快照）
+- 发布状态：功能提交 `acd3b0a`、版本文档与发布回写已推送至 `origin/master`；`v0.46.2` tag 与 Release 已创建。
+- 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 本轮已落实
 
@@ -107,7 +106,7 @@
 - `real-site verified`：2026-09-05 专用 Chrome 复核知乎评论弹窗（16 条）、“本地拉黑”和“拉黑全部(16)”取消闭环；贴吧现代菜单延迟点击仍识别 Vue 数字身份，批量入口 3 人确认后取消且滚动保留；B站评论/子评论/批量、弹幕工具与悬浮入口及楼层隐藏恢复可见。
 - `structure regression`：快捷入口按点击时当前 DOM 优先、portal 断链才回退快照；`node test/quickblock.cjs` 33/33，修复虚拟列表复用菜单的过期身份。
 - `real-site verified`：2026-09-05 微博作品读取取消后立即关闭，`html/body` 样式恢复、焦点回到 `BODY`；方向键和脚本滚动均可继续。评论管理器搜索命中 1/66 后批量取消、作者快捷入口取消均未留下本地隐藏。
-- 当前状态：0.46.2 B站候选已推送至 `origin/master`，未创建 tag 或 Release；当前用户 Chrome 的候选后置安装仍受浏览器安全策略阻断，需安装候选后刷新页面再观察。
+- 当前状态：0.46.2 B站版本已发布；当前用户 Chrome 的后置安装仍受浏览器安全策略阻断，需安装版本后刷新页面再观察。
 
 ## 2026-09-05 跨平台通用悬浮入口移除候选（OB-UI-001）
 
@@ -134,7 +133,7 @@
 - `structure regression`：`node test/quickblock.cjs` 36/36；新增 `QB-B-LAYOUT` 验证「🧵 屏蔽回复」单行且保留完整 title/aria-label，新增 `QB-B-REPLY-MENU` 验证真实 `#more` 点击后按子评论 `bili:uid` 注入本地入口且不注入楼按钮；控制台/页面错误为 0。上一版源码重放的两项新增断言均失败。
 - `real-site verified`：2026-09-05 隔离未登录 `bilibili.com/video/...` 页面运行 `node test/real-bilibili-probe.cjs --verify-local --verify-sub-comment`，候选运行标记为 0.46.2；真实发现 1 个子评论渲染器且身份解析成功，子评论菜单本地入口数量为 1，主评论楼入口为「🧵 屏蔽回复」，单条/子评论/整楼屏蔽与撤销通过，错误为 0。
 - `blocked`：当前用户 Chrome 未按本轮候选重新加载 0.46.2；浏览器安全策略阻止自动化打开 `chrome://extensions` 刷新已安装脚本，因此没有把用户当前实例的候选后置观察写成通过，候选隔离测试也未写入真实名单。
-- 当前状态：功能与测试提交为 `acd3b0a`、文档提交为 `930c426`，已推送至 `origin/master`；未创建 tag 或 Release。
+- 发布回写：功能与测试提交 `acd3b0a`、候选文档提交 `930c426` 和发布回写均已推送；`v0.46.2` tag 与 GitHub Release 已创建，详见 [Release](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 证据
 
@@ -163,8 +162,8 @@ node test/dev-browser.cjs build
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-专用 Chrome 当前保留一个 B站视频回归标签，菜单复现页未执行平台写入；当前用户会话仍运行公开的 0.46.0。
-浏览器安全策略阻止本轮从 `chrome://extensions` 刷新候选，后续安装 0.46.2 后需刷新目标平台页面；0.46.2 尚未创建 tag 或 Release。
+专用 Chrome 当前保留一个 B站视频回归标签，菜单复现页未执行平台写入；当前用户会话仍运行此前安装的 0.46.0。
+浏览器安全策略阻止本轮从 `chrome://extensions` 刷新候选，后续安装 0.46.2 后需刷新目标平台页面；0.46.2 tag 与 Release 已创建。
 
 ## 下一项最有价值的验证
 
