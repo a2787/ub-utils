@@ -24,7 +24,14 @@ AGENTS.md
 ├── docs/maintenance/PLAN.md               ← 唯一活动计划与状态机
 ├── docs/architecture/ARCHITECTURE.md      ← 运行时架构与资源边界
 ├── docs/decisions/                         ← 不可频繁变化的单项架构决策
-│   └── 0001-maintenance-control-plane.md
+│   ├── 0001-maintenance-control-plane.md
+│   └── 0002-ai-screening-gateway-boundary.md
+├── gateway/                                ← 本地 LiteLLM 网关向导、Compose 与生命周期脚本
+│   ├── README.md
+│   ├── config.example.json
+│   ├── docker-compose.yml
+│   └── runtime/                             ← 本机生成物，含凭据，始终被 Git 忽略
+├── 启动网关.cmd                             ← 双击调用 PowerShell 7 启动本地网关
 ├── docs/maintenance/HISTORY_INDEX.md      ← 历史事实按需索引
 │   ├── docs/maintenance/plans/             ← 已关闭计划的短归档
 │   └── docs/maintenance/LEGACY-HISTORY.md ← 重组前只读完整历史
@@ -32,6 +39,8 @@ AGENTS.md
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口
 └── docs/changelog/
     ├── INDEX.md                           ← 版本条目路由
+    ├── v0.48.0.md                         ← 当前本地候选：AI 多平台采集与网关启动
+    ├── v0.47.0.md                         ← 历史本地候选：AI 第一阶段
     ├── v0.46.0.md                         ← 当前版本完整发布说明
     └── LEGACY-HISTORY.md                  ← 重组前只读完整变更日志
 
@@ -47,12 +56,14 @@ AGENTS.md
 | 平台适配或真实站点验证 | 上述活动节点 | 对应 `test/real-*.cjs`、平台回放、相关历史条目 |
 | 性能、日志、生命周期 | 上述活动节点 | `test/performance.cjs`、运行时相关测试、性能历史 |
 | 用户可见功能 | 上述活动节点、`README.md` | 当前版本 changelog 条目、受影响测试 |
+| AI 网关配置或路由 | 上述活动节点、`docs/decisions/0002-ai-screening-gateway-boundary.md` | `gateway/README.md`、`gateway/scripts/`、`test/gateway-smoke.cjs`、`启动网关.cmd` |
 | 发布或回滚 | 上述活动节点、`CHANGELOG.md`、`docs/changelog/INDEX.md` | 对应版本条目和发布历史 |
 | 仅文档治理 | `AGENTS.md`、本文件、`MAINTENANCE_WORKFLOW.md` | 受影响索引，不读取平台历史 |
 
 ## 文档所有权
 
 - 规则的唯一正文：`AGENTS.md` 和 `docs/MAINTENANCE_WORKFLOW.md`。两者发生冲突时，先在同一轮明确修订并同步。
+- 已明确授权且范围清楚的本地可回滚修复，计划完成后直接执行；重新确认只适用于维护流程中列出的安全红线或范围扩张。
 - 活动计划的唯一正文：`docs/maintenance/PLAN.md`；架构边界的唯一正文：`docs/architecture/ARCHITECTURE.md`。
 - 当前事实的唯一正文：`docs/maintenance/CURRENT.md`。根 `MAINTENANCE.md` 只是入口索引。
 - 安装用户行为：`README.md`；版本发布摘要：根 `CHANGELOG.md` 与对应 `docs/changelog/vX.Y.Z.md`。

@@ -1,7 +1,9 @@
 # OmniBlock 拉黑不上限（6 平台统一本地黑名单）
 
 一个浏览器用户脚本：**一份本地黑名单，在 6 个平台已适配的内容条目中隐藏指定用户**。
-无数量上限，名单与浏览数据只保存在本机、不会上传；脚本还会在独立的本机存储键里自动保留
+无数量上限，名单与浏览数据只保存在本机、不会上传；AI 功能关闭时脚本不会发送页面内容，
+明确启用 AI 后仅会把当前页截断后的评论/弹幕文本发送到用户配置的本机 loopback 网关。
+脚本还会在独立的本机存储键里自动保留
 最近 5 份名单快照（可关闭、可恢复上一份）。主动点击“检查更新”时会请求
 GitHub；在 B站弹幕工具里主动点击 `UID?` 时，会匿名请求 B站用户卡片接口校验数字候选。
 Tampermonkey 自身的例行更新请求取决于它的更新设置。
@@ -87,8 +89,8 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
 
 开发验收不再把当前页面源码临时注入当作“安装成功”。实际用户运行仍由 Tampermonkey 负责；维护者的
 专用调试浏览器则使用由当前源码生成的本地 MV3 开发扩展。扩展在每个匹配的新文档的 `document-start`
-自动加载 userscript，并通过本地 `chrome.storage` 桥接 GM 存储，因此新建页面、刷新页面和切换平台都能
-使用同一份本地状态。
+自动加载 userscript，并通过本地 `chrome.storage` 桥接 GM 存储；loopback AI POST 由扩展 service worker
+发起，避免 HTTPS 平台页面直接跨源请求本机 HTTP 网关。因此新建页面、刷新页面和切换平台都能使用同一份本地状态。
 
 一次性准备固定专用 Chrome profile：
 
@@ -117,6 +119,43 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 不会注入源码、读取 Cookie 或点击 B 站/抖音/微博的举报、拉黑、关注等平台写入控件。`node test/dev-extension.cjs`
 则使用隔离临时 profile 和兼容 Chromium 浏览器打开人工合成页面做 `structure regression`；它证明自动加载
 和存储桥接，不替代真实站点验收。旧的直接注入方式仅保留给隔离夹具和公开只读探针，不能作为专用浏览器安装证据。
+
+### 工作区候选 v0.48.0 - AI 多平台采集与一键网关启动 - 2026-09-07（未公开发布）
+
+当前候选构建标识为 `0.48.0-ai-batched-content-cleanup`；当前公开版本仍为 `0.46.2`。
+
+- B站原有 AI 评论/弹幕采集、无身份候选只读和人工多选审核继续保留；本候选把同一能力扩展到抖音当前页面已经观察到的评论和弹幕。
+- 抖音评论使用页面已有的 `douyin:secuid` 身份，带可靠 `douyin:uid`/`douyin:secuid` 的弹幕可以在审核后进入现有名单链路；无法确认身份的弹幕只显示正文，不能执行屏蔽。AI 不会为了收集内容自动展开评论、滚动页面或调用抖音私有接口。
+- 抖音弹幕正文缓存按当前活动视频会话隔离。精选/推荐流即使 URL 不变，只要播放器身份发生变化也会清空旧候选并重新观察；普通弹幕属性变化不会触发重复模型请求。
+- 日常启动网关可以直接双击仓库根目录的 [`启动网关.cmd`](启动网关.cmd)。它只调用 PowerShell 7 的 `gateway\\start.ps1`，不包含 API Key，不修改注册表或系统服务；设置页也会显示这个启动入口。
+- AI 仍默认关闭，结果仍必须人工确认；网关只接受 loopback 地址。分析会把当前已经观察到的内容全部纳入，按每批最多 80 条、每批总文本预算分批顺序请求；设置页显示总数、批次进度和最终合并结果，不再把单批上限误报为全页截断。客户端与持久化开发扩展桥统一留出 60 秒预算以覆盖本地网关一次 18 秒请求及一次重试；如果桥接没有回调，仍会由 watchdog 在有限时间内显示失败，不会无限停留在“正在分析”。持久化开发扩展桥接降级时会立即提示刷新扩展和当前页面，loopback 地址有效但本地请求失败时会明确区分为网关/桥接问题。抖音评论/弹幕正文会去掉末尾平台控件词（如“喜欢”“举报”“回复”“分享”“展开 N 条回复”等组合），正文自身出现这些词时保留。完整的本地配置、启动、健康检查和安全边界见 [本地 AI 网关 README](gateway/README.md)。
+
+本候选的抖音 AI 夹具、B站 AI 回归、适配器/弹幕/评论管理器回归和网关启动文件静态门禁均须按当前维护流程逐项通过；真实站点限制仍以 [当前维护状态](docs/maintenance/CURRENT.md) 为准。
+
+### 工作区候选 v0.47.0 - AI 智能屏蔽第一阶段 - 2026-09-06（历史本地候选，未公开发布）
+
+当前候选构建标识为 `0.47.0-ai-screening-phase1`；当前公开版本仍为 `0.46.2`。
+
+- 设置面板新增「启用 AI 智能屏蔽（按预设规则自动分析当前页）」；默认关闭。可保存多条自然语言预设规则，
+  也可临时输入本页面附加规则并点击「分析本页」。第一阶段只采集 B 站当前页已经观察到的评论/弹幕，
+  不把尚未出现或无法可靠归属的内容猜进来；其他平台暂不启用 AI 采集器。
+- AI 返回的命中项会进入人工审核弹窗，默认勾选有可靠身份的候选，支持逐项取消后再确认；没有可靠身份的项目只可查看，
+  不提供可执行的本地屏蔽入口。确认后才复用现有本地名单链路，AI 不会直接写入名单。
+- AI 请求只发送预设/页面规则、内容类型、临时项目编号和截断后的正文，不发送 UID、`mid`、弹幕 hash、作者主页、完整 URL、Cookie
+  或本地 API Key。身份可靠性与内容判定分开：即使模型建议屏蔽，也必须在本地审核并且有现有规范身份才能执行。
+- 脚本只接受 `http://localhost`、`127.0.0.1` 或 `::1` 的本机网关。多 provider 配置、API Key、重试/自动切换、限流/cooldown
+  和跨页面记忆由外部网关负责；优先复用 LiteLLM Proxy，OpenClaw 仅在实际提供窄 JSON 接口且无需修改 V2 时作为可选适配，
+  用户脚本不在本地重复实现 provider router。
+- 仓库已附带 `gateway\` 网关向导、Docker Compose、配置校验、健康检查和停止脚本；本地 LiteLLM 容器与人工 mock provider
+  的 429 fallback 已通过 smoke test；DeepSeek V4 的 thinking mode 由向导按默认 `disabled` 写入 LiteLLM deployment，
+  以适配插件的 20 秒客户端请求边界。当前已在专用 Chrome 真实页面完成官方 provider 联调，但商汤 provider、额度和相关记忆仍标记为 `blocked`，
+  因此本候选没有公开发布。
+- 第一次配置请在 PowerShell 7 中运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File .\gateway\setup.ps1`，然后双击根目录的
+  `启动网关.cmd`（也可运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File .\gateway\start.ps1`）；插件内只需填写
+  `http://127.0.0.1:4000/v1/chat/completions` 和 `omni-default`。完整说明见 [本地 AI 网关 README](gateway/README.md)。
+
+完整用户变化、验证标签、数据边界和当前限制见 [v0.47.0 版本条目](docs/changelog/v0.47.0.md)、
+[AI 网关边界 ADR](docs/decisions/0002-ai-screening-gateway-boundary.md) 与 [当前维护状态](docs/maintenance/CURRENT.md)。
 
 ### v0.46.0 - 受控生命周期、签名开发桥与分帧性能预算 - 2026-08-30
 
@@ -440,9 +479,14 @@ node test/work-block.cjs           # 三平台作品作用域、作者/评论/�
 node test/run.cjs                 # 基础 Shadow DOM / 设置回归
 node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
 node test/quickblock.cjs          # B站楼中楼、弹幕分组、列表分段、浮动弹幕坐标命中、UID 候选、批量范围面板、PAKKU 与 XHR 回归
-node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器共 22 项结构回归
+node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器结构回归
 node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
 node test/danmaku-auto.cjs       # B站/抖音关键词正则自动弹幕规则与 PAKKU 共存结构回归
+node test/ai-screening.cjs       # B站 AI 规则、loopback、脱敏请求和人工审核回归
+node test/ai-platforms.cjs       # 抖音评论/弹幕 AI 采集、会话隔离和请求去重回归
+node test/ai-watchdog.cjs        # GM/XHR 无回调时有限超时回归
+node test/ai-bridge.cjs          # 持久化开发扩展桥接降级快速失败回归
+node test/probe-hygiene.cjs      # 真实探针 document-start 注入清理回归
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
 node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=90 # 专用 Chrome 登录态只读探针
 node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked

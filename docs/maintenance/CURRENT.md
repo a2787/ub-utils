@@ -1,17 +1,17 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-09-05
-状态来源：0.46.2 B站子评论菜单与楼回复入口已发布；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+更新时间：2026-09-07
+状态来源：0.48.0 AI 多平台候选；公开版本仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.46.2`（已发布）
-- 构建：`0.46.2-bili-subcomment-menu-layout`
+- 当前 userscript：`0.48.0`（本地候选）
+- 构建：`0.48.0-ai-batched-content-cleanup`
 - 当前公开版本：`0.46.2`
 - 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 最近验证的源码快照：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
-- 当前候选源码 SHA-256：`93213c92e66afd56a08fb2261b302c07217904b5389424d08451f29c4424e885`（v0.46.2 发布快照）
-- 发布状态：功能提交 `acd3b0a`、版本文档与发布回写已推送至 `origin/master`；`v0.46.2` tag 与 Release 已创建。
+- 当前候选源码 SHA-256：`ccb79efbce877ed95c9b2387f3979a57047dd169bbd46e8280f02be6287f76ad`
+- 发布状态：0.48.0 尚未提交、push、创建 tag 或 Release；公开的 0.46.2 仍保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 本轮已落实
@@ -22,8 +22,7 @@
 - B站/微博作者、快速菜单、作品和批量入口改为活动信号触发的一次性防抖；非当前平台不创建活动作者循环。
 - EventLog 缓存日期分片字符数；Store/EventLog 与可选诊断分别报告 persist/flush、mutation、扫描和微博布局耗时。
 - 设置页显示主名单人物、身份和序列化体积，并在 2 MiB/3 MiB 区间提供软预警；不自动删数据，也不增加人数硬限制。
-- 通用页面生命周期、共享 MutationObserver、增量脏节点和 Shadow DOM 遍历复用。
-- 后台标签页暂停非必要工作，恢复前台时补同步；一次性 timeout 循环避免重入和失控唤醒。
+- 通用生命周期、共享 MutationObserver、脏节点/Shadow DOM 遍历复用；后台暂停非必要工作，恢复前台补同步，一次性 timeout 避免重入。
 - 抖音活动播放器/视频会话缓存，自动弹幕规则按当前观察节点处理，避免逐条弹幕递归深扫。
 - 抖音弹幕管理器关闭时取消进行中的时间轴扫描，并恢复关闭前播放头与播放状态，避免面板消失后继续拖动播放器。
 - B站弹幕 progress/CRC/例外索引、评论管理器和微博评论缓存设置数量上限，只保存必要元数据。
@@ -33,8 +32,28 @@
 - Store 增加惰性 key→人物身份索引；批量导入/作品级批量屏蔽复用索引，外部标签页变化遇到未确认本地写入时报告冲突并保留当前内存状态。
 - 评论管理器和楼中楼读取增加页面/面板 generation 与 AbortController 会话边界；关闭、SPA 路由切换或节点回收后的旧结果只安全丢弃，不重新渲染或提交名单。
 - 贴吧登录态现代详情页仅增加已捕获的 `.pb-comment-item` + Vue `userInfo.id` 数字身份路径；不透明 `home/main?id` 和首页 `.thread-card` 作者不被猜测。
-- 持久 MV3 开发扩展、跨页面 GM 存储桥接和无源码注入双新页探针。
-- `test/installed-browser-probe.cjs` 使用直接页面级 CDP，规避 Chrome 148 浏览器级 CDP handshake 超时误判。
+
+## 2026-09-06 AI 智能屏蔽第一阶段（OB-AI-001）
+
+- `structure regression`：AI 7/7；gateway mock smoke 通过；run20/20、state9/9、B站36/36、自动弹幕7/7、评论3/3、作品3/3、性能8/8、适配28/28、微博13/13、扩展5/5，均无错误。
+- `real-site verified`：2026-09-06 专用 Chrome 的 `bilibili.com/video/...` 显示 0.47.0 AI 区块，AI 关闭未发请求。启用后官方 DeepSeek V4 Flash 经本机 LiteLLM 完成 45/80 条样本及页面附加规则分析，显示“本轮分析完成”；登录状态未判定，未读 Cookie、未点平台写入，未确认候选。隔离只读探针退出码 0：2 根/3 子/5 菜单，3 个子菜单有入口，主评论隐藏/恢复 1 次；根评论分页 partial。
+- `blocked`：商汤未配置；多 provider fallback、额度、cooldown 和记忆未联调。未关闭 DeepSeek V4 thinking 时曾超 20 秒，现由 `thinkingMode=disabled` 解决；本地 mock 已验证 429 fallback。OpenClaw 未接入，V2 未改。
+
+## 2026-09-06 AI 多平台采集与一键网关启动（OB-AI-002）
+
+- 范围：保留 B站 AI 评论/弹幕统一采集，新增抖音当前页面已观察评论/弹幕采集、活动视频会话隔离和根目录双击启动文件；不自动展开/滚动、不调用抖音私有接口、不引入 Native Messaging，不改 V2。
+- `structure regression`：`node --check omniblock.user.js`、`node test/ai-screening.cjs` 8/8、`node test/ai-platforms.cjs` 5/5、`node test/gateway-smoke.cjs` 完整 Docker smoke、`node test/run.cjs` 20/20、`node test/state.cjs` 9/9、`node test/quickblock.cjs` 36/36、`node test/danmaku-auto.cjs` 7/7、`node test/comment-manager.cjs` 3/3、`node test/work-block.cjs` 3/3、`node test/performance.cjs` 8/8、`node test/dev-extension.cjs` 5/5、`node test/adapters.cjs` 28/28、`node test/douyin.cjs` 2/2 均通过，控制台/页面错误为 0。网关 mock 验证健康、OpenAI 兼容入口、429 fallback、Key/YAML 分离；静态门禁和 2026-09-07 直接运行 `cmd.exe /c "启动网关.cmd"` 均确认包装器只调用 PowerShell 7、不含凭据，且健康检查通过。
+- `real-site verified`：2026-09-06 匿名隔离 B站只读探针实际加载 `bilibili.com/video/...` 候选 0.48.0；观察到 2 个根评论、4 个子评论、6 个评论菜单，4 个子评论身份解析成功，评论管理器 6 行，弹幕管理器 23 组/21 个发送者，浮动弹幕 2 条，评论/楼/弹幕入口隐藏恢复通过，错误为 0；根评论分页仍为 partial。未点击平台写入控件，未读取 Cookie。
+- `real-site verified`：2026-09-06 同一专用 Chrome 的开发扩展刷新后，新建 B站页面实际运行 `0.48.0-ai-batched-content-cleanup`；设置页出现 AI 区块、loopback 状态和 `启动网关.cmd` 说明，已有开启设置触发实际审核框（80 条单批、62 条候选），本轮关闭审核框，未确认候选或点击平台写入控件。
+- `real-site verified`：2026-09-07 用户授权的专用 Chrome 抖音登录态实际运行 0.48.0；当前视频观察到 15 条带发送者身份弹幕、10 条评论，评论/弹幕管理器搜索与批量确认撤销、弹幕悬浮入口和自动规则隐藏恢复均通过，页面错误为 0；未点平台写入控件。
+- `blocked`：2026-09-07 同 URL 换片发生真实视频会话键变化，但换片后页面虽有 30 个弹幕 DOM 节点，管理器暂时无可稳定读取的新行，跨视频隔离线上证据仍 blocked；匿名入口验证码阻断保留，未以此判定代码失败。
+- 候选边界：本轮没有执行商汤“日日新”配置、真实免费额度耗尽、长期 quota/cooldown 或真实 provider fallback 联调；官方 DeepSeek 的历史联调属于 OB-AI-001，不升级为本项商汤证据。未公开发布。
+
+## 2026-09-07 AI 分析 watchdog、全量分批、抖音正文清洗与超时预算（OB-AI-003~007）
+
+- `structure regression`：watchdog 1/1、探针清理 1/1、抖音 AI 6/6、全量分批 2/2、开发扩展 5/5、桥接降级失败 1/1；userscript 与 service worker 60 秒预算断言通过，页面/控制台错误为 0。
+- `real-site verified`：2026-09-07 用户授权专用 Chrome 抖音登录态刷新候选扩展后，当前页观察到 245 条内容；“分析本页”进入 4 批并完成 245/245，审核态 8 条候选，桥接为 `ready`，网关收到 4 次 POST 且均为 HTTP 200，`lastError` 为空，控件尾缀命中 0；未点平台写入控件。
+- `blocked`：抖音验证码；换片新行不足；商汤未联调。2026-09-07 Docker engine 已恢复（Model Runner 关闭）；health/models 200、compose healthy；目录保留，数据卷未动。
 
 ## 2026-08-29 文档治理重组（本轮）
 
@@ -116,55 +135,37 @@
 - 当前证据：`structure regression`：`node test/adapters.cjs` 28/28，微博悬停路径通用按钮为 0、专用按钮保留，抖音弹幕专用入口通过；其余受影响回归（run20/quick33/weibo13/work3/danmaku7/perf8）通过。`real-site verified`：2026-09-05 用户授权登录态专用 Chrome 的 `weibo.com/...` 详情页刷新候选后实际悬停评论行，通用按钮 0，保留 21 个「本地拉黑」和 17 个「屏蔽该楼回复」；用户随后体验悬停、滚动及专用按钮并明确确认无问题，未点击平台写入控件。`blocked`：同轮探针无可测顶层虚拟列表 spacer，与本入口无关。功能提交为 `75ba0f7`，发布快照为 `ba8628e`，已随 `v0.46.0` 发布。
 - 浏览器状态：专用 Chrome 只保留一个 `weibo.com/...` 测试标签；本轮未点击平台写入控件，测试浮层和设置面板已清理。
 
-## 2026-09-05 B站评论举报菜单回归（OB-COVERAGE-001）
-
-- 范围：修复 B站视频评论 `BILI-COMMENT-MENU` 中「硬核会员举报」误走弹幕举报分支的问题；不改变 `bili:uid` 解析、整楼入口或弹幕 hash 安全边界。
-- `real-site verified`：用户专用 Chrome 现有 B站视频会话（未执行登录操作、未读取 Cookie）打开三点菜单，0.46.0 实际显示 `复制评论链接`、`加入黑名单`、`硬核会员举报`，本地入口计数为 0；只读复现，未点击平台写入控件。
-- `structure regression`：`node test/quickblock.cjs` 34/34，新增 `QB-B-REPORT` 对仅有「硬核会员举报」的人工合成菜单要求本地入口、整楼入口和 `bili:uid`；控制台/页面错误为 0，原弹幕举报测试保持通过。
-- `real-site verified`：2026-09-05 隔离未登录 `bilibili.com/video/...` 注入 0.46.1 候选，自动发现真实页面的 2 个根评论、3 个菜单和 1 个楼中楼；首个菜单含本地入口，整楼/恢复和批量入口通过，错误为 0。
-- `blocked`：浏览器安全策略阻止在当前用户 Chrome 打开 `chrome://extensions` 刷新已安装脚本，未在同一用户会话加载候选；候选未写入真实名单，安装 0.46.1 后需刷新视频页。
-- 同轮 `node test/maintenance-check.cjs` 的本地子项均通过；综合结果按 `blocked` 收口，自动发现的 B站页面在该次加载中遇到管理器/API 竞态，抖音验证码和微博 spacer 也继续受外部条件限制。
-- 当前状态：源码与回归已本地提交 `7f46eca`；未 push、未创建 tag 或 Release。
-
-## 2026-09-05 B站楼回复入口与子评论菜单（OB-COVERAGE-001）
-
-- 范围：把 B站主评论菜单的楼操作改为适配原生宽度的四字文案，并为真实子评论三点菜单补充有界触发扫描；不改变 `bili:uid` 解析、主评论楼操作分页或弹幕举报 hash 安全边界。
-- `real-site verified`：2026-09-05 用户专用 Chrome 的现有 B站视频会话（登录状态沿用当前会话，本轮未执行登录操作、未读取 Cookie）观察到根评论的「屏蔽该楼回复」在原生菜单中换行；打开带楼中楼的子评论三点菜单只看到平台原生项，没有「本地拉黑」。只读操作，未点击平台写入控件。
-- `structure regression`：`node test/quickblock.cjs` 36/36；新增 `QB-B-LAYOUT` 验证「🧵 屏蔽回复」单行且保留完整 title/aria-label，新增 `QB-B-REPLY-MENU` 验证真实 `#more` 点击后按子评论 `bili:uid` 注入本地入口且不注入楼按钮；控制台/页面错误为 0。上一版源码重放的两项新增断言均失败。
-- `real-site verified`：2026-09-05 隔离未登录 `bilibili.com/video/...` 页面运行 `node test/real-bilibili-probe.cjs --verify-local --verify-sub-comment`，候选运行标记为 0.46.2；真实发现 1 个子评论渲染器且身份解析成功，子评论菜单本地入口数量为 1，主评论楼入口为「🧵 屏蔽回复」，单条/子评论/整楼屏蔽与撤销通过，错误为 0。
-- `blocked`：当前用户 Chrome 未按本轮候选重新加载 0.46.2；浏览器安全策略阻止自动化打开 `chrome://extensions` 刷新已安装脚本，因此没有把用户当前实例的候选后置观察写成通过，候选隔离测试也未写入真实名单。
-- 发布回写：功能与测试提交 `acd3b0a`、候选文档提交 `930c426` 和发布回写均已推送；`v0.46.2` tag 与 GitHub Release 已创建，详见 [Release](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
-
-## 证据
+## 汇总证据
 
 ### `structure regression`
 
-- 0.46.2 候选结构回归：通用 20、核心 9、B站 36、自动弹幕 7、评论管理器 3、作品级 3、性能 8、开发扩展 4、适配器 28、微博回放 13，合计 131/131；
-  `node --check omniblock.user.js`、`node test/docs-check.cjs` 和 `git diff --check` 通过，控制台/页面错误为 0。
-- 0.46.0 的旧平台真实站点细节仍按各自 dated 条目保留；本轮未把未重跑的其他平台线上功能自动升级为 0.46.2 证据。
+- 当前 0.48.0 候选的 AI（B站 8/8、抖音 5/5）、通用、状态、B站、弹幕、评论管理器、作品级、性能、开发扩展、适配器、微博回放回归分别按命令记录；
+  不用“全绿”替代各项数字。语法、docs check 和 diff check 作为同轮门禁。
 
 ### `real-site verified`
 
-- B站 0.46.2 候选的日期、脱敏页面形式、菜单/子评论/作者/整楼结果见上方 `2026-09-05 B站楼回复入口与子评论菜单` 条目；候选隔离页未读取 Cookie，未触发平台写入。
-- 其他平台的登录态结果、页面总量与用户体验均保留在对应 dated 条目；它们不因本次 B站补丁自动升级为 0.46.2 证据。
+- 2026-09-06 匿名隔离 B站探针和专用 Chrome 新页面均实际加载 0.48.0 候选；真实 B站结构结果与 AI 设置/审核框观察见上方 OB-AI-002 条目。
+- 其他平台的日期、页面形式、样本量和用户体验保留在各自 dated 条目；B站匿名评论分页仍只按当轮实际样本记证据。
 
 ### `blocked`
 
-- 当前用户 Chrome 本轮不能刷新 0.46.2：浏览器安全策略阻止打开 `chrome://extensions`；因此同一已安装实例的候选后置观察留给用户安装后执行。
-- B站匿名页根评论分页仍可能显示“部分加载”；抖音验证码/换片、贴吧 opaque 首页作者、微博顶层 spacer 等既有外部限制不受本补丁影响。
+- 抖音匿名入口验证码阻断线上 AI 采集验证；本机 LiteLLM mock 已通过；官方 DeepSeek 已完成历史本地页面联调，商汤、额度、cooldown 和记忆未联调。平台限制不变。
 
 ## 常用命令
 
 ```powershell
 node test/docs-check.cjs
 node test/maintenance-check.cjs
+node test/ai-screening.cjs
+node test/ai-platforms.cjs
+node test/gateway-smoke.cjs
 node test/dev-browser.cjs build
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-专用 Chrome 当前保留一个 B站视频回归标签，菜单复现页未执行平台写入；当前用户会话仍运行此前安装的 0.46.0。
-浏览器安全策略阻止本轮从 `chrome://extensions` 刷新候选，后续安装 0.46.2 后需刷新目标平台页面；0.46.2 tag 与 Release 已创建。
+专用 Chrome 当前已加载本地 0.48.0 候选；本轮未执行平台写入。
+公开的 0.46.2 tag 与 Release 保持不变；0.48.0 未提交、未 push、未创建 tag/Release。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是由用户安装 0.46.2 后在同一 B站视频页刷新并实际点开评论三点菜单；随后再取得稳定的抖音换片目标并区分插件自身扫描/脚本时长与页面 renderer 总量，同时为贴吧现代 `.thread-card` 建立只读身份契约探针。微博顶层 spacer 和 B站根评论分页仍需各自可测样本；后续版本的 CI/CD、tag 和 Release 仍需当轮明确授权。
+下一项最有价值的验证是，在专用 Chrome 以当前已加载视频为起点重放一次稳定换片并取得新管理器行；在此之前保留跨视频隔离 `blocked`，不把匿名验证码页当作平台通过，也不公开发布。

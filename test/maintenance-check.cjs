@@ -1,6 +1,6 @@
 /*
  * OmniBlock 维护闭环：默认由维护者运行，不依赖用户 Tampermonkey 已安装版本。
- * 它会顺序执行静态门禁、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和当前源码注入的三平台真站探针。
+ * 它会顺序执行静态门禁、AI 网关 mock、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和当前源码注入的三平台真站探针。
  * 真实探针仍遵守只读边界；用户浏览器只作为最终环境复核，不是本命令的代码生效前提。
  * 运行：node test/maintenance-check.cjs
  */
@@ -24,7 +24,8 @@ const privacyFiles = [...new Set([...trackedFiles, ...collectMarkdownFiles('docs
   .filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|docs\/.*\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
 for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
-  'test/performance.cjs']) {
+  'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-platforms.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
+  'test/probe-hygiene.cjs']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
 }
 const privacyPatterns = [
@@ -42,11 +43,13 @@ for (const relative of privacyFiles) {
 
 const checks = [
   { label: 'userscript syntax', command: process.execPath, args: ['--check', 'omniblock.user.js'] },
+  { label: 'AI gateway renderer syntax', command: process.execPath, args: ['--check', 'gateway/scripts/render-config.cjs'] },
   { label: 'documentation governance', command: process.execPath, args: ['test/docs-check.cjs'] },
   { label: 'comment manager syntax', command: process.execPath, args: ['--check', 'test/comment-manager.cjs'] },
   { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
   { label: 'work block syntax', command: process.execPath, args: ['--check', 'test/work-block.cjs'] },
   { label: 'installed browser probe syntax', command: process.execPath, args: ['--check', 'test/installed-browser-probe.cjs'] },
+  { label: 'AI platform regression syntax', command: process.execPath, args: ['--check', 'test/ai-platforms.cjs'] },
   { label: 'generic UI/state', command: process.execPath, args: ['test/run.cjs'] },
   { label: 'core state', command: process.execPath, args: ['test/state.cjs'] },
   { label: 'Bilibili', command: process.execPath, args: ['test/quickblock.cjs'] },
@@ -55,6 +58,11 @@ const checks = [
   { label: 'work block', command: process.execPath, args: ['test/work-block.cjs'] },
   { label: 'performance boundaries', command: process.execPath, args: ['test/performance.cjs'] },
   { label: 'persistent development extension', command: process.execPath, args: ['test/dev-extension.cjs'] },
+  { label: 'AI screening', command: process.execPath, args: ['test/ai-screening.cjs'] },
+  { label: 'AI platform collection', command: process.execPath, args: ['test/ai-platforms.cjs'] },
+  { label: 'AI request watchdog', command: process.execPath, args: ['test/ai-watchdog.cjs'] },
+  { label: 'probe hygiene', command: process.execPath, args: ['test/probe-hygiene.cjs'] },
+  { label: 'AI gateway Docker smoke', command: process.execPath, args: ['test/gateway-smoke.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
   { label: 'Bilibili isolated real-site probe', command: process.execPath, args: ['test/real-bilibili-probe.cjs', '--verify-local'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },

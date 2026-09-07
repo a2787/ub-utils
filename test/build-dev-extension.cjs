@@ -36,9 +36,13 @@ const manifest = {
   version,
   description: 'Local-only development runtime for OmniBlock browser validation.',
   permissions: ['storage'],
+  background: { service_worker: 'bridge-service-worker.js' },
   host_permissions: [
     'https://raw.githubusercontent.com/*',
     'https://api.bilibili.com/*',
+    'http://localhost/*',
+    'http://127.0.0.1/*',
+    'http://[::1]/*',
   ],
   content_scripts: [
     { matches, js: ['bridge-isolated.js'], run_at: 'document_start' },
@@ -54,8 +58,9 @@ const isolatedBridge = String.raw`(() => {
   const EXPECTED_SOURCE = 'omniblock-main';
   const MAX_VALUE_CHARS = 4 * 1024 * 1024;
   const MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
+  const MAX_AI_REQUEST_CHARS = 256 * 1024;
+  const MAX_AI_REQUEST_TIMEOUT_MS = 60000;
   const ownWrites = new Map();
-  const xhrControllers = new Map();
   const encoder = new TextEncoder();
   const subtle = globalThis.crypto && globalThis.crypto.subtle;
   const importKey = subtle && subtle.importKey.bind(subtle);
@@ -134,6 +139,67 @@ const isolatedBridge = String.raw`(() => {
     } catch (error) {}
     return '';
   }
+  function normalizeLoopbackAIUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'http:' || url.username || url.password || url.hash
+        || !['localhost', '127.0.0.1', '[::1]'].includes(String(url.hostname || '').toLowerCase())) return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
+  function normalizeAIHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return null;
+    const out = {};
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (!['accept', 'content-type'].includes(lower)) return null;
+      out[lower] = String(headers[key] || '');
+    }
+    if (!out['content-type'] || !out.accept
+      || out['content-type'].toLowerCase() !== 'application/json'
+      || out.accept.toLowerCase() !== 'application/json') return null;
+    return out;
+  }
+  function isAllowedAIRequestData(data) {
+    if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['model', 'temperature', 'messages'].includes(key))
+      || typeof body.model !== 'string' || body.model.length > 120
+      || typeof body.temperature !== 'number' || !Array.isArray(body.messages) || body.messages.length !== 2) return false;
+    if (body.messages.some((message) => !message || typeof message !== 'object'
+      || !['system', 'user'].includes(message.role) || typeof message.content !== 'string'
+      || message.content.length > MAX_AI_REQUEST_CHARS)) return false;
+    let input;
+    try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || !Array.isArray(input.rules) || input.rules.length > 32
+      || !Array.isArray(input.items) || input.items.length > 80) return false;
+    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && typeof item.id === 'string' && item.id.length <= 80
+        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && typeof item.text === 'string' && item.text.length <= 800);
+  }
+  function normalizeAllowedRequest(message) {
+    const method = String(message && message.method || 'GET').toUpperCase();
+    const url = normalizeAllowedUrl(message && message.url);
+    if (method === 'GET' && url && message && message.data == null
+      && (!message.headers || Object.keys(message.headers).length === 0)) {
+      return { url, method, headers: {}, body: undefined, timeout: 15000 };
+    }
+    const aiUrl = normalizeLoopbackAIUrl(message && message.url);
+    const headers = normalizeAIHeaders(message && message.headers);
+    if (method === 'POST' && aiUrl && headers && isAllowedAIRequestData(message && message.data)) {
+      return { url: aiUrl, method, headers, body: message.data, timeout: MAX_AI_REQUEST_TIMEOUT_MS };
+    }
+    return null;
+  }
   function rememberOwn(key, entry) {
     const list = ownWrites.get(key) || [];
     list.push(entry);
@@ -186,39 +252,25 @@ const isolatedBridge = String.raw`(() => {
     }
     if (message.type === 'xhr') {
       const id = String(message.id || '');
-      const url = normalizeAllowedUrl(message.url);
-      const method = String(message.method || 'GET').toUpperCase();
-      if (!id || !url || method !== 'GET' || message.data != null
-        || (message.headers && Object.keys(message.headers).length)) {
+      const request = normalizeAllowedRequest(message);
+      if (!id || !request) {
         post({ type: 'xhr-response', id, ok: false, error: 'request-not-allowed' });
         return;
       }
-      const controller = new AbortController();
-      xhrControllers.set(id, controller);
-      const timeout = Math.max(1000, Math.min(15000, Number(message.timeout) || 10000));
-      const timeoutId = setTimeout(() => controller.abort('timeout'), timeout);
-      fetch(url, {
-        method: 'GET',
-        credentials: 'omit',
-        signal: controller.signal,
-      }).then(async (response) => {
-        const responseText = await response.text();
-        if (responseText.length > MAX_RESPONSE_CHARS) throw new Error('response-too-large');
-        post({ type: 'xhr-response', id, ok: true, status: response.status,
-          statusText: response.statusText, responseText, responseHeaders: '' });
-      }).catch((error) => {
-        const timedOut = controller.signal && controller.signal.reason === 'timeout';
-        post({ type: 'xhr-response', id, ok: false, timeout: timedOut,
-          error: timedOut ? 'request-timeout' : String(error && error.message || error).slice(0, 120) });
-      }).finally(() => {
-        clearTimeout(timeoutId);
-        xhrControllers.delete(id);
+      chrome.runtime.sendMessage({ type: 'omniblock-xhr', id, url: request.url,
+        method: request.method, headers: request.headers, body: request.body,
+        timeout: message.timeout }, (response) => {
+        if (chrome.runtime.lastError) {
+          post({ type: 'xhr-response', id, ok: false, error: 'extension-request-failed' });
+          return;
+        }
+        post(response && response.type === 'xhr-response'
+          ? response : { type: 'xhr-response', id, ok: false, error: 'extension-empty-response' });
       });
       return;
     }
     if (message.type === 'xhr-abort') {
-      const controller = xhrControllers.get(String(message.id || ''));
-      if (controller) controller.abort();
+      chrome.runtime.sendMessage({ type: 'omniblock-xhr-abort', id: String(message.id || '') });
     }
   }
 
@@ -246,6 +298,104 @@ const isolatedBridge = String.raw`(() => {
       }
     }
     if (Object.keys(external).length) post({ type: 'storage-changed', changes: external });
+  });
+})();
+`;
+
+const serviceWorker = String.raw`(() => {
+  'use strict';
+  const MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
+  const MAX_AI_REQUEST_CHARS = 256 * 1024;
+  const MAX_AI_REQUEST_TIMEOUT_MS = 60000;
+  const controllers = new Map();
+
+  function requestKey(sender, id) {
+    const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : 'extension';
+    return String(tabId) + ':' + String(id || '');
+  }
+
+  function normalizeLoopbackUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'http:' || url.username || url.password || url.hash
+        || !['localhost', '127.0.0.1', '[::1]'].includes(String(url.hostname || '').toLowerCase())) return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
+
+  function normalizeHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return null;
+    const out = {};
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (!['accept', 'content-type'].includes(lower)) return null;
+      out[lower] = String(headers[key] || '');
+    }
+    if (!out.accept || !out['content-type']
+      || out.accept.toLowerCase() !== 'application/json'
+      || out['content-type'].toLowerCase() !== 'application/json') return null;
+    return out;
+  }
+
+  function allowedBody(data) {
+    if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['model', 'temperature', 'messages'].includes(key))
+      || typeof body.model !== 'string' || body.model.length > 120
+      || typeof body.temperature !== 'number' || !Array.isArray(body.messages) || body.messages.length !== 2) return false;
+    if (body.messages.some((message) => !message || typeof message !== 'object'
+      || !['system', 'user'].includes(message.role) || typeof message.content !== 'string'
+      || message.content.length > MAX_AI_REQUEST_CHARS)) return false;
+    let input;
+    try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || !Array.isArray(input.rules) || input.rules.length > 32
+      || !Array.isArray(input.items) || input.items.length > 80) return false;
+    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && typeof item.id === 'string' && item.id.length <= 80
+        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && typeof item.text === 'string' && item.text.length <= 800);
+  }
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const id = String(message && message.id || '');
+    if (!id) return false;
+    const key = requestKey(sender, id);
+    if (message.type === 'omniblock-xhr-abort') {
+      const state = controllers.get(key);
+      if (state) state.controller.abort('aborted');
+      return false;
+    }
+    if (message.type !== 'omniblock-xhr' || String(message.method || '').toUpperCase() !== 'POST') return false;
+    const url = normalizeLoopbackUrl(message.url);
+    const headers = normalizeHeaders(message.headers);
+    if (!url || !headers || !allowedBody(message.body)) {
+      sendResponse({ type: 'xhr-response', id, ok: false, error: 'request-not-allowed' });
+      return false;
+    }
+    const controller = new AbortController();
+    const state = { controller, timedOut: false };
+    controllers.set(key, state);
+    const timeout = Math.max(1000, Math.min(Number(message.timeout) || MAX_AI_REQUEST_TIMEOUT_MS, MAX_AI_REQUEST_TIMEOUT_MS));
+    const timeoutId = setTimeout(() => { state.timedOut = true; controller.abort('timeout'); }, timeout);
+    fetch(url, { method: 'POST', credentials: 'omit', headers, body: message.body, signal: controller.signal })
+      .then(async (response) => {
+        const responseText = await response.text();
+        if (responseText.length > MAX_RESPONSE_CHARS) throw new Error('response-too-large');
+        sendResponse({ type: 'xhr-response', id, ok: true, status: response.status,
+          statusText: response.statusText, responseText, responseHeaders: '' });
+      })
+      .catch((error) => sendResponse({ type: 'xhr-response', id, ok: false, timeout: state.timedOut,
+        error: state.timedOut ? 'request-timeout' : String(error && error.message || error).slice(0, 120) }))
+      .finally(() => { clearTimeout(timeoutId); controllers.delete(key); });
+    return true;
   });
 })();
 `;
@@ -344,6 +494,67 @@ const mainBridge = String.raw`(() => {
       }
     } catch (error) {}
     return '';
+  }
+  function normalizeLoopbackAIUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'http:' || url.username || url.password || url.hash
+        || !['localhost', '127.0.0.1', '[::1]'].includes(String(url.hostname || '').toLowerCase())) return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
+  function normalizeAIHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return null;
+    const out = {};
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (!['accept', 'content-type'].includes(lower)) return null;
+      out[lower] = String(headers[key] || '');
+    }
+    if (!out['content-type'] || !out.accept
+      || out['content-type'].toLowerCase() !== 'application/json'
+      || out.accept.toLowerCase() !== 'application/json') return null;
+    return out;
+  }
+  function isAllowedAIRequestData(data) {
+    if (typeof data !== 'string' || data.length > 256 * 1024) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['model', 'temperature', 'messages'].includes(key))
+      || typeof body.model !== 'string' || body.model.length > 120
+      || typeof body.temperature !== 'number' || !Array.isArray(body.messages) || body.messages.length !== 2) return false;
+    if (body.messages.some((message) => !message || typeof message !== 'object'
+      || !['system', 'user'].includes(message.role) || typeof message.content !== 'string'
+      || message.content.length > 256 * 1024)) return false;
+    let input;
+    try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || !Array.isArray(input.rules) || input.rules.length > 32
+      || !Array.isArray(input.items) || input.items.length > 80) return false;
+    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && typeof item.id === 'string' && item.id.length <= 80
+        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && typeof item.text === 'string' && item.text.length <= 800);
+  }
+  function normalizeAllowedRequest(details) {
+    const method = String(details && details.method || 'GET').toUpperCase();
+    const url = normalizeAllowedUrl(details && details.url);
+    if (method === 'GET' && url && details && details.data == null
+      && (!details.headers || Object.keys(details.headers).length === 0)) {
+      return { url, method, headers: {}, data: undefined };
+    }
+    const aiUrl = normalizeLoopbackAIUrl(details && details.url);
+    const headers = normalizeAIHeaders(details && details.headers);
+    if (method === 'POST' && aiUrl && headers && isAllowedAIRequestData(details && details.data)) {
+      return { url: aiUrl, method, headers, data: details.data };
+    }
+    return null;
   }
   function failReady(reason) {
     if (readySettled) return;
@@ -450,16 +661,15 @@ const mainBridge = String.raw`(() => {
   };
   const GM_registerMenuCommand = () => {};
   const GM_xmlhttpRequest = (details) => {
-    const normalizedUrl = normalizeAllowedUrl(details && details.url);
-    const method = String(details && details.method || 'GET').toUpperCase();
-    if (!normalizedUrl || method !== 'GET' || (details && details.data != null)
-      || (details && details.headers && Object.keys(details.headers).length)) {
+    const request = normalizeAllowedRequest(details);
+    if (!request) {
       setTimer(() => { try { if (details && details.onerror) details.onerror(new Error('request-not-allowed')); } catch (error) {} }, 0);
       return { abort() {} };
     }
     const id = 'xhr_' + (++requestSequence);
     xhrCallbacks.set(id, details || {});
-    post({ type: 'xhr', id, url: normalizedUrl, method: 'GET', timeout: details && details.timeout });
+    post({ type: 'xhr', id, url: request.url, method: request.method,
+      headers: request.headers, data: request.data, timeout: details && details.timeout });
     return { abort: () => { xhrCallbacks.delete(id); post({ type: 'xhr-abort', id }); } };
   };
   const GM_openInTab = (url) => {
@@ -482,6 +692,7 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.writeFileSync(path.join(OUTPUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 fs.writeFileSync(path.join(OUTPUT_DIR, 'bridge-isolated.js'), isolatedBridge
   .replaceAll('__OB_BRIDGE_SECRET__', bridgeSecret), 'utf8');
+fs.writeFileSync(path.join(OUTPUT_DIR, 'bridge-service-worker.js'), serviceWorker, 'utf8');
 const runtimeMain = mainBridge
   .replaceAll('__OB_BRIDGE_SECRET__', bridgeSecret)
   .replaceAll('__OB_VERSION__', version)

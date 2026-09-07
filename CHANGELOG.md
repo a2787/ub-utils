@@ -2,6 +2,34 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.48.0 - AI 多平台采集与一键网关启动 - 2026-09-07（本地候选，未公开发布）
+
+- 保留 B站 AI 评论/弹幕采集与人工审核，并接入抖音当前页面已观察到的评论和弹幕；身份无法确认的抖音弹幕只读展示，不提供可执行屏蔽。
+- 抖音弹幕正文按活动视频会话隔离，同 URL 换片会清理旧 AI 记录；普通弹幕属性变化不会触发重复模型请求，不自动展开/滚动或调用私有接口。
+- 根目录新增 [`启动网关.cmd`](启动网关.cmd)，双击即可调用 PowerShell 7 的 `gateway\start.ps1`；不包含 API Key，不修改系统服务/注册表，设置页同步显示说明。
+- B站/抖音发往 loopback 网关的请求继续只含规则、临时项目编号、类型和截短正文，候选须人工确认后才写入现有名单。
+- 修复本地网关 18 秒请求加 1 次重试超过客户端约 20 秒预算的问题；userscript 与持久开发扩展桥统一留出 60 秒请求上限，同时保留无回调 watchdog。
+- AI 现在把当前已观察内容按每批最多 80 条顺序送入网关并合并结果，不再只分析前 80 条；设置页显示批次进度。抖音评论/弹幕 AI 正文会清理末尾“喜欢/举报/回复/分享/展开 N 条回复”等控件词，同时保留正文自身出现的同名词；GM/XHR 桥接无回调时仍会在有限时间内报错。持久开发扩展降级时会快速报告桥接不可用，loopback 地址有效但请求失败时不再附加误导性的地址提示；窄 AI POST 由 service worker 发起，抖音真实探针结束时会清理 document-start 测试注入。
+
+详细用户变化、验证标签、限制和发布边界：[v0.48.0 完整条目](docs/changelog/v0.48.0.md)。
+
+发布状态：当前公开版本仍为 [OmniBlock v0.46.2](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)；候选构建为
+`0.48.0-ai-batched-content-cleanup`，源码/真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+
+## v0.47.0 - AI 智能屏蔽第一阶段 - 2026-09-06（历史本地候选，未公开发布）
+
+- 设置面板新增默认关闭的「启用 AI 智能屏蔽」；支持自然语言预设规则、本页面附加规则和「分析本页」入口。
+- 第一阶段只分析 B 站当前页已观察到的评论/弹幕；AI 命中结果先进入可多选的本地审核框，确认后才复用现有名单写入链路。
+- 只向用户配置的 loopback OpenAI 兼容网关发送截断正文、内容类型、临时项目编号和规则，不发送 UID、弹幕 hash、URL、Cookie 或 API Key；无可靠身份的候选不可执行。
+- provider 多配置、自动切换、限流、cooldown 和记忆由外部 LiteLLM/OpenClaw 等网关负责，userscript 不重复实现 router。
+- 仓库已附带 LiteLLM Docker 网关向导；DeepSeek V4 可由向导将 thinking mode 设为 `disabled`，本地人工 mock 的健康、兼容入口和 429 fallback
+  已通过，官方 DeepSeek provider 已完成本地真实页面联调；商汤 provider、额度和记忆仍为 `blocked`；本候选未 push、未创建 tag/Release。
+
+详细用户变化、验证标签和限制：[v0.47.0 完整条目](docs/changelog/v0.47.0.md)。
+
+发布状态：当前公开版本仍为 [OmniBlock v0.46.2](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)；候选构建为
+`0.47.0-ai-screening-phase1`，源码/真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+
 ## v0.46.2 - B站子评论菜单与楼回复入口修复 - 2026-09-05（已发布）
 
 - 将 B站主评论菜单中的楼操作显示为四字短文案「🧵 屏蔽回复」，保持菜单单行；完整功能语义保留在 title/aria-label「屏蔽该楼回复」。

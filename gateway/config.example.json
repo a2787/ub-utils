@@ -1,0 +1,32 @@
+{
+  "modelAlias": "omni-default",
+  "settings": {
+    "routingStrategy": "simple-shuffle",
+    "requestTimeoutSeconds": 18,
+    "numRetries": 1,
+    "allowedFails": 2,
+    "cooldownSeconds": 60
+  },
+  "providers": [
+    {
+      "id": "free-primary-1",
+      "baseUrl": "https://api.example.invalid/v1",
+      "model": "your-model-name",
+      "apiKey": "REPLACE_WITH_API_KEY",
+      "role": "primary",
+      "rpm": 5,
+      "tpm": 100000,
+      "weight": 1
+    },
+    {
+      "id": "free-fallback-1",
+      "baseUrl": "https://backup.example.invalid/v1",
+      "model": "your-backup-model-name",
+      "apiKey": "REPLACE_WITH_BACKUP_API_KEY",
+      "role": "fallback",
+      "rpm": 5,
+      "tpm": 100000,
+      "weight": 1
+    }
+  ]
+}

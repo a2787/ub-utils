@@ -1,0 +1,17 @@
+services:
+  omniblock-ai-gateway:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.98.0}
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    ports:
+      - "127.0.0.1:${OMNI_GATEWAY_PORT:-4000}:4000"
+    volumes:
+      - ./runtime/litellm.config.yaml:/app/config.yaml:ro
+    env_file:
+      - ./runtime/provider-secrets.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s

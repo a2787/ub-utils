@@ -394,6 +394,10 @@ if (!target || !target.isConnected || !targetRect || targetRect.width <= 0 || ta
   uidKey = targetInfo && targetInfo.keys && targetInfo.keys.find((key) => key.startsWith('douyin:uid:'));
 }
 if (!target || !uidKey) { out.noTarget = true; return out; }
+const findTargetByKey = () => Array.from(document.querySelectorAll('[data-danmu-id],[data-danmaku-id]')).find((el) => {
+  const info = adapter.extract(el);
+  return !!(info && info.keys && info.keys.includes(uidKey));
+}) || null;
 target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
 await pause(120);
 const btn = target.querySelector('.ob-dy-dm-block');
@@ -409,11 +413,25 @@ out.confirmShown = !!confirm;
 out.confirmUid = !!(confirm && (confirm.textContent || '').includes(uidKey));
 if (confirm) confirm.querySelector('.ob-ok').click();
 out.blocked = await waitFor(() => OB.Index.isBlocked(uidKey), 2500);
-out.hidden = await waitFor(() => getComputedStyle(target).display === 'none' || target.getBoundingClientRect().height === 0, 2500);
+out.hidden = await waitFor(() => {
+  const currentTarget = findTargetByKey();
+  if (!currentTarget) {
+    // 抖音会在本地隐藏后回收并重建弹幕节点；只接受同一可靠身份已经
+    // 进入本地阻断状态且原目标确实被回收，不能把“找不到目标”单独当成功。
+    return !!target && !target.isConnected && OB.Index.isBlocked(uidKey);
+  }
+  return !!currentTarget && (getComputedStyle(currentTarget).display === 'none'
+    || currentTarget.getBoundingClientRect().height === 0);
+}, 2500);
 const toast = document.getElementById('ob-toast');
 const undo = toast && toast.querySelector('button');
 if (undo) { undo.click(); await pause(120); }
-out.restored = await waitFor(() => !OB.Index.isBlocked(uidKey) && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0, 2500);
+out.restored = await waitFor(() => {
+  const currentTarget = findTargetByKey();
+  return !OB.Index.isBlocked(uidKey) && !!currentTarget
+    && getComputedStyle(currentTarget).display !== 'none'
+    && currentTarget.getBoundingClientRect().height > 0;
+}, 2500);
 const authorDm = document.querySelector('[data-danmu-id][data-is-danmu-author="true"]');
 out.authorDanmakuCount = document.querySelectorAll('[data-danmu-id][data-is-danmu-author="true"]').length;
 if (authorDm) {
@@ -475,8 +493,15 @@ const changed = await waitFor(() => {
 if (!changed) { out.reason = '点击下一个视频后视频会话键没有变化'; return out; }
 out.nextKey = typeof adapter.videoKey === 'function' ? adapter.videoKey() : location.pathname + location.search;
 out.managerClosed = await waitFor(() => !document.getElementById('ob-douyin-dm-manager'), 2500);
-await waitFor(() => document.getElementById('ob-douyin-dm-tool') && /\\(\\d+\\)/.test(document.getElementById('ob-douyin-dm-tool').textContent || ''), 2500);
-dmTool.click();
+// 换片会重建控制坞，不能继续点击换片前保存的旧节点；重新获取脚本自身
+// 的弹幕工具，避免把探针 stale-DOM 误报成产品未能隔离会话。
+const nextToolReady = await waitFor(() => {
+  const tool = document.getElementById('ob-douyin-dm-tool');
+  return !!tool && /\\(\\d+\\)/.test(tool.textContent || '');
+}, 2500);
+const nextDmTool = document.getElementById('ob-douyin-dm-tool');
+if (!nextToolReady || !nextDmTool) { out.reason = '切换后新的抖音弹幕管理器入口未能挂载'; return out; }
+nextDmTool.click();
 await pause(180);
 manager = document.getElementById('ob-douyin-dm-manager');
 if (!manager) { out.reason = '切换后新弹幕管理器未能打开'; return out; }
@@ -641,6 +666,8 @@ async function runStabilityCheck(send, sessionId) {
   const client = await browserClient();
   let targetId = '';
   let reusedTarget = false;
+  let sessionId = '';
+  let injectedScriptId = '';
   try {
     const pages = await httpJSON('http://127.0.0.1:9222/json/list');
     const openDouyin = pages.find((page) => page.type === 'page' && /douyin\.com/.test(page.url)
@@ -660,10 +687,13 @@ async function runStabilityCheck(send, sessionId) {
     targetId = created.targetId;
     reusedTarget = useCurrentTarget && !!openDouyin;
     const attached = await client.send('Target.attachToTarget', { targetId, flatten: true });
-    const sessionId = attached.sessionId;
+    sessionId = attached.sessionId;
     await client.send('Target.activateTarget', { targetId }).catch(() => {});
     await client.send('Page.enable', {}, sessionId);
-    await client.send('Page.addScriptToEvaluateOnNewDocument', { source: shim + '\n' + userscript + '\nwindow.__OB_TEST__ = window.OB;\n' }, sessionId);
+    const injected = await client.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: shim + '\n' + userscript + '\nwindow.__OB_TEST__ = window.OB;\n',
+    }, sessionId);
+    injectedScriptId = String(injected && injected.identifier || '');
     if (reusedTarget) await client.send('Page.reload', { ignoreCache: true }, sessionId);
     else await client.send('Page.navigate', { url }, sessionId);
     await sleep(4000);
@@ -715,8 +745,9 @@ async function runStabilityCheck(send, sessionId) {
       report.blocked.push('临时标签页未渲染出带发送者身份的抖音弹幕（' + JSON.stringify({ danmakuCount: probe.danmakuCount, withIdentity: probe.withIdentity }) + '）');
     } else {
       const commentFlowExpected = !!probe.commentToolPresent || !!probe.commentEntryOpened;
+      const commentToolbarExpected = !!probe.commentToolPresent;
       const commentFlowFailed = commentFlowExpected && (
-        !probe.commentToolPresent || !probe.commentToolRightColumn
+        (commentToolbarExpected && (!probe.commentToolRightColumn || !probe.commentToolPresent))
         || !probe.commentManagerPresent || !probe.commentManagerStaysOpen
         || !probe.commentSearchPresent || !probe.commentLoadPresent
         || probe.commentSearchWorks === false || !probe.commentBatchEnabled
@@ -775,6 +806,14 @@ async function runStabilityCheck(send, sessionId) {
   } catch (error) {
     report.blocked.push(String(error && error.message || error).slice(0, 500));
   } finally {
+    // The probe may reuse the user's current tab. Remove the document-start
+    // shim before detaching so a later real page cannot inherit the no-op GM
+    // bridge or the test runtime.
+    if (injectedScriptId && sessionId) {
+      await client.send('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: injectedScriptId,
+      }, sessionId).catch(() => {});
+    }
     if (targetId && !reusedTarget) await client.send('Target.closeTarget', { targetId }).catch(() => {});
     client.close();
   }

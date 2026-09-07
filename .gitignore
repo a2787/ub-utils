@@ -39,3 +39,7 @@ test/shot-*.png
 
 # 本地工作日志/助手缓存，不属于本仓库的可交付内容。
 .workbuddy/
+
+# 本地 AI 网关生成物；包含 API Key，不属于可交付源码。
+gateway/runtime/
+gateway/*.local.json

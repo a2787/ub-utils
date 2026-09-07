@@ -1,7 +1,7 @@
 /* 专用开发扩展回归：证明源码不是只在当前标签页一次性注入。
  * 人工合成 B 站/抖音页面，打开三个新文档，验证不同平台/子域都自动加载扩展，
- * chrome.storage 本地桥接能跨页面保存设置，页面脚本不能伪造桥接消息；最后在
- * 缺少隔离桥的人工页面验证启动会有界降级，不会无限重试。
+ * chrome.storage 本地桥接能跨页面保存设置，loopback AI 窄 JSON 请求可经桥接返回，
+ * 页面脚本不能伪造桥接消息；最后在缺少隔离桥的人工页面验证启动会有界降级，不会无限重试。
  * 运行：node test/dev-extension.cjs
  */
 const { execFileSync } = require('child_process');
@@ -23,12 +23,14 @@ const fixtureUrls = [
   'https://www.douyin.com/omniblock-structure-fixture',
 ];
 const fallbackUrl = 'https://example.invalid/omniblock-bridge-timeout-fixture';
+const aiUrl = 'http://127.0.0.1:4000/v1/chat/completions';
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>OmniBlock extension fixture</title></head>
 <body><main data-ob-fixture="artificial"><h1>人工合成扩展回归页面</h1><p>不包含真实作品或账号标识。</p></main></body></html>`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
   const report = { pass: [], fail: [], pageErrors: [] };
+  const aiRequests = [];
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniblock-extension-'));
   let context;
   try {
@@ -45,6 +47,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await context.route('**/*', (route) => {
       const url = route.request().url();
+      if (url === aiUrl) {
+        let body = {};
+        try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
+        let input = {};
+        try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
+        aiRequests.push({ body, input });
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ items: [] }) } }],
+        }) });
+      }
       if (fixtureUrls.some((fixtureUrl) => url.startsWith(fixtureUrl)) || url.startsWith(fallbackUrl)) {
         return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture });
       }
@@ -97,6 +109,33 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('page-1 自动加载当前源码，桥接就绪且 GM 能力未暴露给页面');
     } else {
       report.fail.push('page-1 运行时不完整：' + JSON.stringify(firstState));
+    }
+
+    await first.evaluate((endpoint) => {
+      const host = document.createElement('bili-comments');
+      const hostRoot = host.attachShadow({ mode: 'open' });
+      const renderer = document.createElement('bili-comment-renderer');
+      renderer.__data = { mid: '123', member: { mid: '123', uname: '人工合成 AI 用户' } };
+      const root = renderer.attachShadow({ mode: 'open' });
+      const link = document.createElement('a');
+      link.className = 'user-name'; link.href = 'https://space.bilibili.com/123'; link.textContent = '人工合成 AI 用户';
+      const text = document.createElement('span'); text.className = 'text'; text.textContent = '人工合成评论正文';
+      root.append(link, text); hostRoot.appendChild(renderer); document.body.appendChild(host);
+      window.OB.Store.setSetting('aiGatewayUrl', endpoint);
+      window.OB.Store.setSetting('aiGatewayModel', 'bridge-test');
+      window.OB.Store.setSetting('aiRules', [{ text: '人工合成规则', enabled: true }]);
+      window.OB.Store.setSetting('aiEnabled', true);
+    }, aiUrl);
+    const aiResult = await first.evaluate(async () => window.OB.ai.analyzePage('人工合成页面规则'));
+    const aiBridgeState = await first.evaluate(() => window.OB.ai.status());
+    const aiInput = aiRequests[0] && aiRequests[0].input;
+    const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules) && Array.isArray(aiInput.items)
+      && aiInput.items.length === 1 && Object.keys(aiInput.items[0]).sort().join(',') === 'id,kind,text'
+      && !/uid|mid|hash|keys/i.test(JSON.stringify(aiRequests[0].body)));
+    if (aiResult && aiResult.ok && aiBridgeState.state === 'ready' && aiRequests.length === 1 && aiHasOnlySafeItems) {
+      report.pass.push('page-1 loopback AI 窄 JSON 经持久桥接返回，未携带身份字段');
+    } else {
+      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput }));
     }
 
     await first.evaluate(() => window.OB.Store.setSetting('skipCap', 11));
