@@ -1,17 +1,17 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-07
-状态来源：0.49.0 统一内容屏蔽标签弹窗候选；公开版本仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.49.0 统一内容屏蔽标签弹窗源码已推送；公开 Release 仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.49.0`（本地候选，未推送）
+- 当前 userscript：`0.49.0`（源码已推送到 `origin/master`，未创建 tag/Release）
 - 构建：`0.49.0-content-manager-tabs`
 - 当前公开版本：`0.46.2`
 - 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 最近验证的源码快照：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 当前候选源码 SHA-256：`3bbe07a2e373bc813ef1f4892d3b0b7b4969534f6d5f92fc4375a4f652ebbd48`
-- 发布状态：0.48.0 已推送至 `origin/master`（`be6e653`）；0.49.0 仅本地，未 push/tag/Release；公开的 0.46.2 仍保留原 tag/Release。
+- 发布状态：0.48.0 已推送至 `origin/master`（`be6e653`）；0.49.0 源码已推送，未创建 tag/Release；公开的 0.46.2 仍保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 本轮已落实
@@ -58,7 +58,7 @@
 - `structure regression`：B站 quickblock 36/36、自动弹幕 7/7、跨平台适配器 28/28、统一评论管理器 3/3；AI screening、bridge、batch、autoload 均通过，`node --check omniblock.user.js` 和 `node test/dev-browser.cjs build` 通过，构建标识为 `0.49.0-content-manager-tabs`。
 - 回归根因修复：B站旧弹幕按钮移除后，弹幕管理器不再因旧按钮不存在而提前返回；屏蔽/恢复名单变化会立即重绘嵌入面板。统一入口隐藏时同时关闭评论、弹幕和 AI 子面板。
 - `real-site verified`：2026-09-07 隔离匿名 B站视频页（页面形式 `bilibili.com/video/...`，未登录）实际显示统一「内容屏蔽（评论/弹幕）」入口；三标签均挂载，评论管理器 2 行可读取/搜索/全选，弹幕管理器 16 组/15 位发送者可单条与批量屏蔽后撤销，浮动弹幕本地入口也完成屏蔽/撤销。未读取 Cookie，未点击 B站举报、官方拉黑、关注或发帖控件；根评论分页仍按探针结果标记 partial。
-- `blocked`：2026-09-07 抖音匿名隔离入口落在「验证码中间页」，没有可验证的视频评论/弹幕条目；抖音三标签真站结果需用户另行授权登录态只读探针。候选仍未 push/tag/Release。
+- `blocked`：2026-09-07 抖音匿名隔离入口落在「验证码中间页」，没有可验证的视频评论/弹幕条目；抖音三标签真站结果需用户另行授权登录态只读探针。源码已 push，未创建 tag/Release。
 
 ## 2026-08-29 文档治理重组（本轮）
 
@@ -169,9 +169,9 @@ node test/dev-browser.cjs build
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-专用 Chrome 本轮已加载本地 0.49.0 候选；本轮未执行平台写入。
-公开的 0.46.2 tag 与 Release 保持不变；0.48.0 已推送到 `origin/master`，0.49.0 尚未 push，均未创建新 tag/Release。
+专用 Chrome 本轮已加载 0.49.0；本轮未执行平台写入。
+公开的 0.46.2 tag 与 Release 保持不变；0.48.0 和 0.49.0 均已推送到 `origin/master`，均未创建新 tag/Release。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是用户在实际 B站/抖音页面打开统一弹窗并切换三个标签；若要公开发布，需另获当轮 push/tag/Release 授权，不把匿名验证码页当作平台通过。
+下一项最有价值的验证是用户在实际 B站/抖音页面打开统一弹窗并切换三个标签；若要创建 tag/Release，需另获当轮授权，不把匿名验证码页当作平台通过。

@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.49.0 - 统一内容屏蔽标签弹窗与抖音一键 AI 分析 - 2026-09-07（本地候选，未公开发布）
+## v0.49.0 - 统一内容屏蔽标签弹窗与抖音一键 AI 分析 - 2026-09-07（已推送源码，未创建 tag/Release）
 
 - B站和抖音各自把评论/弹幕入口合并为一个「内容屏蔽（评论/弹幕）」按钮，弹窗内提供「屏蔽评论」「屏蔽弹幕」「AI 屏蔽」三个标签；AI 配置和分析入口从设置页迁移到第三个标签。
 - 抖音 AI 标签页的「加载并分析本页」一次点击依次加载评论、扫描当前视频弹幕时间轴，再把实际观察到的全部记录按批送入 AI，并直接进入原有人工审核框。
@@ -13,7 +13,7 @@
 详细用户变化、验证标签、限制和发布边界：[v0.49.0 完整条目](docs/changelog/v0.49.0.md)。
 
 发布状态：当前公开版本仍为 [OmniBlock v0.46.2](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)；候选构建为
-`0.49.0-content-manager-tabs`，仅保留在本地，未 push、未创建 tag/Release；真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+`0.49.0-content-manager-tabs`，源码已推送到 `origin/master`，未创建 tag/Release；真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
 
 ## v0.48.0 - AI 多平台采集与一键网关启动 - 2026-09-07（已推送候选，未公开发布）
 
