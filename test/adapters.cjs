@@ -685,8 +685,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       result.dmToolPresent = !!dmTool;
       result.dmToolVisible = !!dmTool && getComputedStyle(dmTool).display !== 'none';
       result.dmToolText = dmTool && dmTool.textContent;
-      result.dmToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px' && getComputedStyle(dmTool).bottom === '62px';
-      if (dmTool) dmTool.click();
+      result.dmToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px' && getComputedStyle(dmTool).bottom === '106px';
+      if (dmTool) window.OB.openContentManager(window.OB.adapters.douyin, 'danmaku', dmTool);
       await pause(100);
       const dmManager = document.querySelector('#ob-douyin-dm-manager');
       result.dmManagerPresent = !!dmManager;
@@ -743,7 +743,12 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       }
       await pause(1050);
       result.dmResetText = dmTool && dmTool.textContent;
-      if (dmTool) dmTool.click();
+      if (dmTool) {
+        window.OB.openContentManager(window.OB.adapters.douyin, 'danmaku', dmTool);
+        await pause(100);
+      }
+      const nextDmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+      if (nextDmTab) nextDmTab.click();
       await pause(100);
       const nextDmManager = document.querySelector('#ob-douyin-dm-manager');
       result.dmResetRows = nextDmManager ? nextDmManager.querySelectorAll('.ob-dd-row').length : -1;
@@ -763,10 +768,10 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && dyComments.initialRows >= 1 && dyComments.expandedRows >= 3 && dyComments.expandedAuthors
       && dyComments.commentSearchRows === 1 && dyComments.commentSearchMatch && dyComments.lazyCommentLoaded
       && dyComments.batchSelected && dyComments.allBlocked && dyComments.dmToolPresent && dyComments.dmToolVisible
-      && dyComments.dmToolRightColumn && /\(2\)/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
+       && dyComments.dmToolRightColumn && /内容屏蔽/.test(dyComments.dmToolText || '') && dyComments.dmManagerPresent && dyComments.dmRows === 2
       && dyComments.dmSearchRows === 1 && dyComments.dmSearchMatch && dyComments.dmBatchSelected
       && dyComments.dmBlocked && dyComments.dmHidden && dyComments.dmScanPresent && dyComments.dmTimelineLoaded && dyComments.dmTimelineRestored
-      && /\(1\)/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 1
+       && /内容屏蔽/.test(dyComments.dmResetText || '') && dyComments.dmResetRows === 1
       && dyComments.dmResetOldAbsent && dyComments.dmResetNewPresent) {
       report.pass.push('douyin-comment-tools: portal 举报评论 gets per-comment local block; comment manager expands/batches replies; video danmaku manager dedupes, batches, and resets on video change');
     } else report.fail.push('douyin-comment-tools: ' + JSON.stringify(dyComments));

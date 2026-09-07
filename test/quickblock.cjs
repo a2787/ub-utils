@@ -279,6 +279,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (!tool) return { exists: false };
       const visible = getComputedStyle(tool).display !== 'none';
       tool.click();
+      const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+      if (dmTab) dmTab.click();
       const panel = document.getElementById('ob-dm-manager');
       const empty = panel && panel.querySelector('.ob-dm-empty');
       const retry = panel && panel.querySelector('.ob-dm-retry');
@@ -292,8 +294,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         retry: !!retry && getComputedStyle(retry).display !== 'none',
       };
     });
-    if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('(0)') && emptyDmTool.empty && emptyDmTool.retry)
-      report.pass.push('QB-R 尚未取得弹幕段时，视频页仍显示弹幕屏蔽(0)、空状态和重新读取入口');
+    if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('内容屏蔽') && emptyDmTool.empty && emptyDmTool.retry)
+      report.pass.push('QB-R 尚未取得弹幕段时，视频页仍显示统一内容屏蔽入口、空状态和重新读取入口');
     else report.fail.push('QB-R 弹幕工具零数据入口错误：' + JSON.stringify(emptyDmTool));
 
     // 回归：普通评论接口、普通 XHR 与图片请求不能被 B站弹幕过滤层改写或阻断。
@@ -387,13 +389,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     }, Array.from(SEGMENT));
     await page.waitForFunction(() => {
       const tool = document.getElementById('ob-dm-tool');
-      return !!tool && getComputedStyle(tool).display !== 'none' && /弹幕屏蔽\([1-9]\d*\)/.test(tool.textContent || '');
+      return !!tool && getComputedStyle(tool).display !== 'none' && /内容屏蔽/.test(tool.textContent || '');
     }, null, { timeout: 2500, polling: 100 }).catch(() => {});
     const pakkuFallback = await page.evaluate(() => {
       const tool = document.getElementById('ob-dm-tool');
       if (!tool) return { exists: false };
       const visible = getComputedStyle(tool).display !== 'none';
       tool.click();
+      const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+      if (dmTab) dmTab.click();
       const panel = document.getElementById('ob-dm-manager');
       const rows = panel ? panel.querySelectorAll('.ob-dm-sender').length : 0;
       const close = panel && panel.querySelector('.ob-dm-close');
@@ -422,6 +426,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         if (!tool) return { tool: false };
         tool.click();
         await pause(80);
+        const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (dmTab) dmTab.click();
+        await pause(80);
         const panel = document.getElementById('ob-dm-manager');
         const rows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
         const target = rows.find((row) => row.getAttribute('data-ob-dm-content') === 'hello danmaku');
@@ -433,6 +440,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const restored = !window.OB.Index.isBlocked('bili:dmhash:678f8529');
         const restoredRow = panel && Array.from(panel.querySelectorAll('.ob-dm-sender'))
           .find((row) => row.getAttribute('data-ob-dm-content') === 'hello danmaku');
+        const restoredState = restoredRow && restoredRow.getAttribute('data-ob-dm-state');
+        const restoredButton = !!(restoredRow && restoredRow.querySelector('.ob-dm-single'));
         const uidOnlyTarget = panel && Array.from(panel.querySelectorAll('.ob-dm-sender'))
           .find((row) => row.getAttribute('data-ob-dm-content') === 'uid mapped danmaku');
         const uidOnlyUnblock = uidOnlyTarget && uidOnlyTarget.querySelector('.ob-dm-unblock');
@@ -447,8 +456,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           unblock: !!unblock,
           restored,
           linkedRestored: !window.OB.Index.isBlocked(linkedIdentity),
-          restoredState: restoredRow && restoredRow.getAttribute('data-ob-dm-state'),
-          restoredButton: !!(restoredRow && restoredRow.querySelector('.ob-dm-single')),
+          restoredState,
+          restoredButton,
           uidOnlyUnblock: !!uidOnlyUnblock,
           uidOnlyRestored: !window.OB.Index.isBlocked(uidOnlyIdentity)
             && !window.OB.Index.isBlocked('bili:dmhash:0a6216d9'),
@@ -462,7 +471,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         window.OB.Store.removeIdentities([...keys, linkedIdentity, uidOnlyIdentity]);
       }
     });
-    if (allDmBlocked.toolText && allDmBlocked.toolText.includes('(7)') && allDmBlocked.rows === 6
+    if (allDmBlocked.toolText && allDmBlocked.toolText.includes('内容屏蔽') && allDmBlocked.rows === 6
       && allDmBlocked.allBlockedGray && allDmBlocked.unblock && allDmBlocked.restored
       && allDmBlocked.linkedRestored && allDmBlocked.restoredState === 'active' && allDmBlocked.restoredButton
       && allDmBlocked.uidOnlyUnblock && allDmBlocked.uidOnlyRestored && allDmBlocked.uidOnlyRestoredState === 'active')
@@ -470,10 +479,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     else report.fail.push('QB-S 弹幕已屏蔽展示/取消屏蔽错误：' + JSON.stringify(allDmBlocked));
 
     const count = await page.evaluate(() => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽|内容屏蔽/.test(el.textContent || ''));
       return { text: fab ? fab.textContent : '', users: window.OB.collectUsers(document).map((item) => item.keys[0]) };
     });
-    if (count.text.includes('(4)') && count.users.length === 4 && count.users.includes('bili:uid:444') && !count.users.some((key) => key.includes('9000')))
+    if (count.text.includes('内容屏蔽') && count.users.length === 4 && count.users.includes('bili:uid:444') && !count.users.some((key) => key.includes('9000')))
       report.pass.push('QB-A 本页统计含已加载楼中楼共 4 位评论作者，不计 34 张推荐视频卡');
     else report.fail.push('QB-A 评论统计错误：' + JSON.stringify(count));
 
@@ -977,6 +986,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const launcher = document.getElementById('ob-dm-tool');
       if (!launcher) return { exists: false };
       launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+      if (dmTab) dmTab.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
       const panel = document.getElementById('ob-dm-manager');
       const row = panel && Array.from(panel.querySelectorAll('.ob-dm-sender')).find((item) => item.textContent.includes('repeat danmaku'));
       const button = row && row.querySelector('.ob-dm-single');
@@ -1009,7 +1021,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const dmManagerBatch = await page.evaluate(async () => {
       const launcher = document.getElementById('ob-dm-tool');
       if (!launcher) return { exists: false };
-      if (!document.getElementById('ob-dm-manager')) { launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80)); }
+      if (!document.getElementById('ob-dm-manager')) {
+        launcher.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+        const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (dmTab) dmTab.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
       const panel = document.getElementById('ob-dm-manager');
       const rows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
       const targets = rows.filter((row) => row.textContent.includes('repeat danmaku') || row.textContent.includes('uid mapped danmaku'));
@@ -1464,7 +1481,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await pakkuBeforePage.waitForFunction(() => {
       const tool = document.getElementById('ob-dm-tool');
-      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('(7)');
+      return !!tool && getComputedStyle(tool).display !== 'none' && tool.textContent.includes('内容屏蔽');
     }, null, { timeout: 2500, polling: 100 }).catch(() => {});
     const pakkuBeforeTool = await pakkuBeforePage.evaluate(() => {
       const tool = document.getElementById('ob-dm-tool');
@@ -1472,14 +1489,14 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await pakkuBeforePage.close();
     if (pakkuBefore.blockedRemoved && pakkuBefore.unblockedKept && pakkuBefore.autoRuleAdded && pakkuBefore.autoRemoved
-      && pakkuBefore.autoHashStored && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('(7)'))
+      && pakkuBefore.autoHashStored && pakkuBeforeTool.visible && pakkuBeforeTool.text.includes('内容屏蔽'))
       report.pass.push('QB-Q PAKKU 先安装时，自动规则只过滤命中文案并保存 hash，其他 PAKKU 弹幕链保持可用，管理器保留已屏蔽发送者');
     else report.fail.push('QB-Q PAKKU 先安装兼容失败：' + JSON.stringify({ pakkuBefore, pakkuBeforeTool }));
 
     // 人工合成：统一评论管理器必须保留“当前已加载”路径，并显示作者去重、
     // 示例评论、层级与搜索；旧范围面板分支仍保留在下面，便于旧版结构对照。
     const bulkScopeLoaded = await page.evaluate(async () => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽|内容屏蔽/.test(el.textContent || ''));
       if (!fab) return { exists: false };
       fab.click();
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -1602,7 +1619,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         }
         return { ok: false, status: 404, json: async () => ({ code: -1 }) };
       };
-      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽|内容屏蔽/.test(el.textContent || ''));
       if (!fab) return { exists: false };
       fab.click();
       await new Promise((resolve) => setTimeout(resolve, 80));

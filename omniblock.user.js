@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.48.0
+// @version       0.49.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过本地网关进行 AI 建议筛选。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.48.0-ai-batched-content-cleanup';
+  const RUNTIME_BUILD = '0.49.0-content-manager-tabs';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -2355,6 +2355,47 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     #ob-dm-tool:hover { background: #41414a; }
+    /* B站/抖音统一内容入口：评论、弹幕、AI 共用一个宿主弹窗，避免三个独立浮层互相覆盖。 */
+    #ob-content-manager {
+      position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
+      width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-content-manager .ob-content-box {
+      box-sizing: border-box; width: min(820px, 94vw); max-width: 100%; min-width: 0; max-height: 88vh;
+      display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px;
+      background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-content-manager .ob-content-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    #ob-content-manager .ob-content-head h2 { margin: 0; font-size: 16px; }
+    #ob-content-manager .ob-content-close {
+      flex: 0 0 auto; width: 32px; height: 32px; border: 0; border-radius: 4px; padding: 0;
+      background: transparent; color: #555; cursor: pointer; font-size: 18px; line-height: 32px;
+    }
+    #ob-content-manager .ob-content-close:hover { background: #f1f1f1; }
+    #ob-content-manager .ob-content-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid #e8e8e8; }
+    #ob-content-manager .ob-content-tab {
+      min-height: 34px; border: 0; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0;
+      padding: 6px 12px; background: transparent; color: #666; cursor: pointer; font-size: 13px;
+    }
+    #ob-content-manager .ob-content-tab:hover { background: #f4f4f6; color: #333; }
+    #ob-content-manager .ob-content-tab[aria-selected="true"] { border-bottom-color: #5b6db1; background: #f4f5fb; color: #3f4f91; font-weight: 600; }
+    #ob-content-manager .ob-content-pane { min-width: 0; min-height: 0; overflow: auto; }
+    #ob-content-manager .ob-content-pane[hidden] { display: none !important; }
+    #ob-content-manager .ob-content-pane > #ob-comment-manager[data-ob-embedded="1"],
+    #ob-content-manager .ob-content-pane > #ob-dm-manager[data-ob-embedded="1"],
+    #ob-content-manager .ob-content-pane > #ob-douyin-dm-manager[data-ob-embedded="1"] {
+      position: static; inset: auto; display: block; width: auto; max-width: none; min-width: 0;
+      max-height: none; overflow: visible; background: transparent;
+    }
+    #ob-content-manager #ob-comment-manager[data-ob-embedded="1"] .ob-cm-box,
+    #ob-content-manager #ob-dm-manager[data-ob-embedded="1"] .ob-dm-box,
+    #ob-content-manager #ob-douyin-dm-manager[data-ob-embedded="1"] .ob-dd-box {
+      width: 100%; max-width: none; max-height: none; padding: 0; overflow: visible; box-shadow: none;
+    }
+    #ob-content-manager #ob-comment-manager[data-ob-embedded="1"] .ob-cm-list,
+    #ob-content-manager #ob-dm-manager[data-ob-embedded="1"] .ob-dm-list,
+    #ob-content-manager #ob-douyin-dm-manager[data-ob-embedded="1"] .ob-dd-list { max-height: 53vh; }
+    #ob-content-manager .ob-content-empty { min-height: 180px; display: flex; align-items: center; justify-content: center; padding: 20px; color: #777; text-align: center; }
     #ob-dm-manager {
       position: fixed; inset: 0; z-index: 2147483644; display: flex; align-items: center; justify-content: center;
       width: 100vw; max-width: 100vw; min-width: 0; overflow: hidden; background: rgba(0,0,0,.45); color: #222; font-size: 13px;
@@ -2723,26 +2764,26 @@
     #ob-panel .ob-auto-exemption-remove { flex: 0 0 auto; border: 0; background: transparent; color: #555; cursor: pointer; font-size: 12px; }
     #ob-panel .ob-auto-empty, #ob-panel .ob-auto-status { color: #999; font-size: 11px; line-height: 1.5; }
     #ob-panel .ob-auto-empty { padding: 4px 0; }
-    #ob-panel .ob-ai-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
-    #ob-panel .ob-ai-gateway { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr) auto; gap: 6px; align-items: end; }
-    #ob-panel .ob-ai-gateway label { min-width: 0; color: #555; font-size: 11px; }
-    #ob-panel .ob-ai-gateway input { margin-top: 3px; }
-    #ob-panel .ob-ai-save, #ob-panel .ob-ai-analyze { min-height: 32px; border: 0; border-radius: 6px; padding: 6px 10px; background: #5b6db1; color: #fff; cursor: pointer; white-space: nowrap; }
-    #ob-panel .ob-ai-save:hover, #ob-panel .ob-ai-analyze:hover { background: #4c5d9b; }
-    #ob-panel .ob-ai-rule-add { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
-    #ob-panel .ob-ai-rule-add input { flex: 1 1 auto; min-width: 0; }
-    #ob-panel .ob-ai-rule-add button { flex: 0 0 auto; min-height: 32px; border: 0; border-radius: 6px; padding: 6px 10px; background: #c0392b; color: #fff; cursor: pointer; white-space: nowrap; }
-    #ob-panel .ob-ai-rule-list { display: grid; gap: 4px; margin-top: 8px; }
-    #ob-panel .ob-ai-rule { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 6px; background: #f8f8f9; border-radius: 5px; }
-    #ob-panel .ob-ai-rule input[type="checkbox"] { flex: 0 0 auto; }
-    #ob-panel .ob-ai-rule-text { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #333; }
-    #ob-panel .ob-ai-rule-remove { flex: 0 0 auto; border: 0; background: transparent; color: #c0392b; cursor: pointer; font-size: 12px; }
-    #ob-panel .ob-ai-page { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
-    #ob-panel .ob-ai-page textarea { flex: 1 1 auto; min-width: 0; min-height: 58px; resize: vertical; }
-    #ob-panel .ob-ai-page button { flex: 0 0 auto; align-self: flex-end; }
-    #ob-panel .ob-ai-status { color: #777; font-size: 11px; line-height: 1.5; margin-top: 6px; word-break: break-word; }
-    #ob-panel .ob-ai-status[data-state="error"] { color: #c0392b; }
-    #ob-panel .ob-ai-status[data-state="loading"] { color: #5b6db1; }
+    #ob-panel .ob-ai-intro, #ob-content-manager .ob-ai-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
+    #ob-panel .ob-ai-gateway, #ob-content-manager .ob-ai-gateway { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr) auto; gap: 6px; align-items: end; }
+    #ob-panel .ob-ai-gateway label, #ob-content-manager .ob-ai-gateway label { min-width: 0; color: #555; font-size: 11px; }
+    #ob-panel .ob-ai-gateway input, #ob-content-manager .ob-ai-gateway input { margin-top: 3px; }
+    #ob-panel .ob-ai-save, #ob-panel .ob-ai-analyze, #ob-content-manager .ob-ai-save, #ob-content-manager .ob-ai-analyze { min-height: 32px; border: 0; border-radius: 6px; padding: 6px 10px; background: #5b6db1; color: #fff; cursor: pointer; white-space: nowrap; }
+    #ob-panel .ob-ai-save:hover, #ob-panel .ob-ai-analyze:hover, #ob-content-manager .ob-ai-save:hover, #ob-content-manager .ob-ai-analyze:hover { background: #4c5d9b; }
+    #ob-panel .ob-ai-rule-add, #ob-content-manager .ob-ai-rule-add { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+    #ob-panel .ob-ai-rule-add input, #ob-content-manager .ob-ai-rule-add input { flex: 1 1 auto; min-width: 0; }
+    #ob-panel .ob-ai-rule-add button, #ob-content-manager .ob-ai-rule-add button { flex: 0 0 auto; min-height: 32px; border: 0; border-radius: 6px; padding: 6px 10px; background: #c0392b; color: #fff; cursor: pointer; white-space: nowrap; }
+    #ob-panel .ob-ai-rule-list, #ob-content-manager .ob-ai-rule-list { display: grid; gap: 4px; margin-top: 8px; }
+    #ob-panel .ob-ai-rule, #ob-content-manager .ob-ai-rule { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 6px; background: #f8f8f9; border-radius: 5px; }
+    #ob-panel .ob-ai-rule input[type="checkbox"], #ob-content-manager .ob-ai-rule input[type="checkbox"] { flex: 0 0 auto; }
+    #ob-panel .ob-ai-rule-text, #ob-content-manager .ob-ai-rule-text { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #333; }
+    #ob-panel .ob-ai-rule-remove, #ob-content-manager .ob-ai-rule-remove { flex: 0 0 auto; border: 0; background: transparent; color: #c0392b; cursor: pointer; font-size: 12px; }
+    #ob-panel .ob-ai-page, #ob-content-manager .ob-ai-page { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
+    #ob-panel .ob-ai-page textarea, #ob-content-manager .ob-ai-page textarea { flex: 1 1 auto; min-width: 0; min-height: 58px; resize: vertical; }
+    #ob-panel .ob-ai-page button, #ob-content-manager .ob-ai-page button { flex: 0 0 auto; align-self: flex-end; }
+    #ob-panel .ob-ai-status, #ob-content-manager .ob-ai-status { color: #777; font-size: 11px; line-height: 1.5; margin-top: 6px; word-break: break-word; }
+    #ob-panel .ob-ai-status[data-state="error"], #ob-content-manager .ob-ai-status[data-state="error"] { color: #c0392b; }
+    #ob-panel .ob-ai-status[data-state="loading"], #ob-content-manager .ob-ai-status[data-state="loading"] { color: #5b6db1; }
     #ob-ai-review { position: fixed; inset: 0; z-index: 2147483645; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(0,0,0,.45); color: #222; font-size: 13px; }
     #ob-ai-review .ob-ai-review-box { box-sizing: border-box; width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24); }
     #ob-ai-review .ob-ai-review-head, #ob-ai-review .ob-ai-review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -2766,9 +2807,9 @@
     #ob-ai-review .ob-ai-review-foot .ob-ai-confirm { margin-left: 6px; border-color: #c0392b; background: #c0392b; color: #fff; }
     #ob-ai-review .ob-ai-review-foot .ob-ai-confirm:hover { background: #a93226; }
     @media (max-width: 560px) {
-      #ob-panel .ob-ai-gateway { grid-template-columns: 1fr; }
-      #ob-panel .ob-ai-page { flex-wrap: wrap; }
-      #ob-panel .ob-ai-page button { width: 100%; }
+      #ob-panel .ob-ai-gateway, #ob-content-manager .ob-ai-gateway { grid-template-columns: 1fr; }
+      #ob-panel .ob-ai-page, #ob-content-manager .ob-ai-page { flex-wrap: wrap; }
+      #ob-panel .ob-ai-page button, #ob-content-manager .ob-ai-page button { width: 100%; }
       #ob-ai-review { align-items: flex-end; padding: 0; }
       #ob-ai-review .ob-ai-review-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
     }
@@ -5013,20 +5054,31 @@
       return out;
     }
 
-    async function expandAllCommentReplies(scope = document, onProgress) {
+    function throwIfLoadAborted(signal) {
+      if (!signal || !signal.aborted) return;
+      const error = new Error('抖音内容加载已取消');
+      error.name = 'AbortError';
+      throw error;
+    }
+
+    async function expandAllCommentReplies(scope = document, onProgress, options) {
       if (typeof scope === 'function') { onProgress = scope; scope = document; }
+      const signal = options && options.signal;
       const clicked = new WeakSet();
       let count = 0;
       const maxClicks = 80;
       for (let round = 0; round < 16 && count < maxClicks; round++) {
+        throwIfLoadAborted(signal);
         const controls = commentExpandControls(scope).filter((control) => !clicked.has(control));
         if (!controls.length) break;
         for (const control of controls) {
+          throwIfLoadAborted(signal);
           if (count >= maxClicks) break;
           clicked.add(control);
           try { control.click(); count++; } catch (e) {}
           if (onProgress) onProgress(count);
           await new Promise((resolve) => setTimeout(resolve, 220));
+          throwIfLoadAborted(signal);
         }
       }
       return { clicked: count, users: querySelectorAllDeep(scope, SEL.comment).length, remaining: commentExpandControls(scope).length };
@@ -5061,9 +5113,11 @@
 
     // 抖音评论没有公开、稳定且可安全复用的“全部评论”页面接口；滚动真实列表是唯一不触发
     // 平台写入的通用办法。调用方会在每次滚动后先缓存已识别作者，虚拟行回收后也不会丢失。
-    async function loadMoreCommentItems(scope, onProgress) {
+    async function loadMoreCommentItems(scope, onProgress, options) {
       if (typeof scope === 'function') { onProgress = scope; scope = document; }
+      const signal = options && options.signal;
       scope = scope || document;
+      throwIfLoadAborted(signal);
       const targets = commentScrollTargets(scope);
       const currentCount = () => querySelectorAllDeep(scope, SEL.comment).length;
       if (!targets.length) return { supported: false, scrolls: 0, comments: currentCount() };
@@ -5074,17 +5128,21 @@
       };
       try {
         for (let pass = 0; pass < 24; pass++) {
+          throwIfLoadAborted(signal);
           let grew = false;
           for (const target of targets) {
+            throwIfLoadAborted(signal);
             const maxTop = Math.max(0, target.scrollHeight - target.clientHeight);
             if (maxTop <= 0) continue;
             const before = currentCount();
             const nearTop = pass ? Math.max(0, maxTop - target.clientHeight) : 0;
             const positions = pass ? [nearTop, maxTop] : [0, Math.round(maxTop / 2), maxTop];
             for (const top of positions) {
+              throwIfLoadAborted(signal);
               target.scrollTop = top;
               try { target.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (e) {}
               await new Promise((resolve) => setTimeout(resolve, 260));
+              throwIfLoadAborted(signal);
               scrolls++;
               if (currentCount() > before) grew = true;
               report();
@@ -5110,13 +5168,13 @@
         .filter((info) => info && info.keys && info.keys.length);
     }
 
-    async function loadAllCommentRecords(onProgress) {
+    async function loadAllCommentRecords(onProgress, options) {
       const expansion = await expandAllCommentReplies(document, (clicked) => {
         if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: querySelectorAllDeep(document, SEL.comment).length, clicked });
-      });
+      }, options);
       const loaded = await loadMoreCommentItems(document, (progress) => {
         if (typeof onProgress === 'function') onProgress({ phase: 'scroll', collected: querySelectorAllDeep(document, SEL.comment).length, ...progress });
-      });
+      }, options);
       const records = collectCommentRecords(document);
       const reasons = ['抖音没有稳定公开的评论全量接口，仅按当前页面的明确控件和安全滚动读取'];
       if (!loaded.supported) reasons.push('未找到可安全滚动的评论容器');
@@ -5124,14 +5182,14 @@
       return { records, partial: true, reason: reasons.join('；') };
     }
 
-    async function loadAllWorkComments(candidate, onProgress) {
+    async function loadAllWorkComments(candidate, onProgress, options) {
       const scope = candidate && candidate.scope || document;
       const expansion = await expandAllCommentReplies(scope, (clicked) => {
         if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: querySelectorAllDeep(scope, SEL.comment).length, clicked });
-      });
+      }, options);
       const loaded = await loadMoreCommentItems(scope, (progress) => {
         if (typeof onProgress === 'function') onProgress({ phase: 'scroll', collected: querySelectorAllDeep(scope, SEL.comment).length, ...progress });
-      });
+      }, options);
       const records = collectCommentRecords(scope).map((record) => ({
         ...record,
         workSection: record.level === 'reply' ? 'reply' : 'comment',
@@ -5142,12 +5200,12 @@
       return { records, partial: true, reason: reasons.join('；') };
     }
 
-    async function loadThread(item, onProgress) {
+    async function loadThread(item, onProgress, options) {
       const root = rootCommentOf(item);
       if (!root || !isRootComment(root)) throw new Error('root comment unavailable');
       const expansion = await expandAllCommentReplies(root, (clicked) => {
         if (typeof onProgress === 'function') onProgress({ phase: 'expand', collected: querySelectorAllDeep(root, SEL.comment).length, clicked });
-      });
+      }, options);
       const records = collectCommentRecords(root);
       const partialReasons = ['抖音没有稳定公开的楼中楼全量接口，仅按当前页面的明确展开控件读取'];
       if (expansion.remaining || expansion.clicked >= 80) partialReasons.push('仍有未展开的回复入口');
@@ -5191,6 +5249,7 @@
       if (!activePlayerIdentityObserver) {
         activePlayerIdentityObserver = new MutationObserver((records) => {
           if (!records || !records.length) return;
+          if (!records.some(mutationChangesActivePlayerIdentity)) return;
           runtimeDiagnostic('douyinPlayerIdentityMutations');
           activeVideoIdentityGeneration++;
           invalidateActiveVideoRoot();
@@ -5209,7 +5268,8 @@
       try {
         activePlayerIdentityObserver.observe(root, {
           attributes: true,
-          attributeFilter: ['class', 'data-e2e', 'data-e2e-vid', 'data-video-id', 'data-item-id'],
+          attributeOldValue: true,
+          attributeFilter: ['class', 'data-e2e-vid', 'data-video-id', 'data-item-id'],
         });
         runtimeDiagnostic('douyinPlayerIdentityWatches');
         observedActivePlayerRoots.add(root);
@@ -5289,7 +5349,7 @@
 
     const activePlayerSelector = '.basePlayerContainer, .playerContainer, [data-e2e="video-player"], [data-e2e="feed-active-video"], [data-e2e-vid], [data-video-id], [data-item-id]';
     const activePlayerIdentityAttributes = new Set([
-      'class', 'data-e2e', 'data-e2e-vid', 'data-video-id', 'data-item-id',
+      'class', 'data-e2e-vid', 'data-video-id', 'data-item-id',
     ]);
     const mutationElement = (node) => {
       if (!node) return null;
@@ -5301,12 +5361,26 @@
       if (!element || !element.matches) return false;
       try { return element.matches(activePlayerSelector); } catch (e) { return false; }
     };
+    const identityFromPlayerAttribute = (attributeName, value) => {
+      const text = String(value || '');
+      if (attributeName === 'class') {
+        const match = text.match(/(?:^|\s)video_([0-9]{6,})(?:\s|$)/);
+        return match ? match[1] : '';
+      }
+      return normId(text);
+    };
     const mutationChangesActivePlayerIdentity = (record) => {
       if (!record) return false;
       const target = mutationElement(record.target);
       if (record.type === 'attributes') {
-        return activePlayerIdentityAttributes.has(record.attributeName)
-          && (activeVideoRootCacheRoot === target || matchesActivePlayerRoot(target));
+        if (!activePlayerIdentityAttributes.has(record.attributeName)
+          || (activeVideoRootCacheRoot !== target && !matchesActivePlayerRoot(target))) return false;
+        const previous = identityFromPlayerAttribute(record.attributeName, record.oldValue);
+        const current = videoIdentityFromRoot(target);
+        // 播放、暂停、控件显隐等状态也会改播放器 class；只有 video_<id> 或
+        // 明确 data-* 身份值本身改变，才算真正换片。否则 AI 自动加载的时间轴
+        // 扫描会被播放器自己的状态变更误取消。
+        return previous !== current && !!(previous || current);
       }
       if (record.type !== 'childList') return false;
       return Array.from(record.addedNodes || []).concat(Array.from(record.removedNodes || []))
@@ -9386,7 +9460,7 @@
     if (platform !== 'unknown') EventLog.record('ui.comment-manager.close', { platform, reason: reason || 'user' }, { immediate: true });
   }
 
-  async function openCommentManager(adapter, anchorEl) {
+  async function openCommentManager(adapter, anchorEl, mountTarget) {
     if (commentManagerRoot) { closeCommentManager('toggle'); return; }
     const manager = adapter && adapter.commentManager;
     if (!document.body || !manager || typeof manager.collectRecords !== 'function') {
@@ -9457,6 +9531,8 @@
     panel.id = 'ob-comment-manager';
     panel.setAttribute('data-ob-ui', 'comment-manager');
     panel.setAttribute('data-ob-platform', adapter.id || '');
+    const embedded = !!(mountTarget && mountTarget.nodeType === 1);
+    panel.setAttribute('data-ob-embedded', embedded ? '1' : '0');
     panel.innerHTML = `
       <div class="ob-cm-box" data-ob-ui="comment-manager" role="dialog" aria-modal="true" aria-labelledby="ob-cm-title">
         <div class="ob-cm-head"><h2 id="ob-cm-title">${platformLabel}评论屏蔽</h2><button class="ob-cm-close" type="button" aria-label="关闭">×</button></div>
@@ -9471,7 +9547,8 @@
         <div class="ob-cm-list" data-ob-ui="comment-manager"></div>
         <div class="ob-cm-footer" data-ob-ui="comment-manager"><span class="ob-cm-count"></span><button class="ob-cm-batch" type="button">屏蔽选中(0)</button></div>
       </div>`;
-    document.body.appendChild(panel);
+    if (embedded) mountTarget.appendChild(panel);
+    else document.body.appendChild(panel);
     commentManagerRoot = panel;
     FloatingDock.hold('comment-manager');
     EventLog.record('ui.comment-manager.open', { platform: adapter.id, anchor: !!anchorEl }, { immediate: true });
@@ -9480,8 +9557,9 @@
       && pageSessionGeneration === managerPageGeneration
       && commentManagerRoot === panel && panel.isConnected
       && (!abortController || !abortController.signal.aborted);
-    panel.querySelector('.ob-cm-close').onclick = () => close('button');
-    panel.addEventListener('click', (event) => { if (event.target === panel) close('backdrop'); });
+    panel.querySelector('.ob-cm-close').onclick = () => embedded && contentManagerRoot && contentManagerRoot.contains(panel)
+      ? closeContentManager('button') : close('button');
+    panel.addEventListener('click', (event) => { if (!embedded && event.target === panel) close('backdrop'); });
     commentManagerKeyHandler = (event) => { if (event.key === 'Escape') close('escape'); };
     document.addEventListener('keydown', commentManagerKeyHandler);
 
@@ -9712,6 +9790,117 @@
     loadAllRecords();
   }
 
+  // B站/抖音的评论、弹幕和 AI 入口共用一个宿主弹窗。子管理器仍保留自己的
+  // 数据采集/提交逻辑，只把根节点挂到当前标签页，切换标签时统一销毁旧子面板。
+  let contentManagerRoot = null;
+  let contentManagerAdapter = null;
+  let contentManagerKeyHandler = null;
+  let contentManagerAICleanup = () => {};
+  let contentManagerTab = 'comments';
+
+  function closeContentManager(reason) {
+    const root = contentManagerRoot;
+    const adapter = contentManagerAdapter;
+    if (contentManagerKeyHandler) document.removeEventListener('keydown', contentManagerKeyHandler);
+    contentManagerKeyHandler = null;
+    contentManagerAICleanup();
+    contentManagerAICleanup = () => {};
+    if (root && commentManagerRoot && root.contains(commentManagerRoot)) closeCommentManager(reason || 'content-manager-close');
+    if (root && adapter && typeof adapter.closeDanmakuManager === 'function') {
+      try { adapter.closeDanmakuManager(reason || 'content-manager-close'); } catch (e) {}
+    }
+    if (root) root.remove();
+    contentManagerRoot = null;
+    contentManagerAdapter = null;
+    contentManagerTab = 'comments';
+    FloatingDock.release('content-manager');
+    if (root) EventLog.record('ui.content-manager.close', { platform: adapter && adapter.id || 'unknown', reason: reason || 'user' }, { immediate: true });
+  }
+
+  function switchContentManagerTab(tab) {
+    const root = contentManagerRoot;
+    const adapter = contentManagerAdapter;
+    if (!root || !adapter) return;
+    const allowed = new Set(['comments', 'danmaku', 'ai']);
+    const next = allowed.has(tab) ? tab : 'comments';
+    if (contentManagerTab === next && root.querySelector('[data-ob-content-pane="' + next + '"]')?.childElementCount) return;
+    contentManagerTab = next;
+    contentManagerAICleanup();
+    contentManagerAICleanup = () => {};
+    if (commentManagerRoot && root.contains(commentManagerRoot)) closeCommentManager('tab-switch');
+    if (typeof adapter.closeDanmakuManager === 'function') {
+      try { adapter.closeDanmakuManager('tab-switch'); } catch (e) {}
+    }
+    const tabs = root.querySelectorAll('[data-ob-content-tab]');
+    tabs.forEach((button) => {
+      const selected = button.getAttribute('data-ob-content-tab') === next;
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.tabIndex = selected ? 0 : -1;
+    });
+    const panes = root.querySelectorAll('[data-ob-content-pane]');
+    panes.forEach((pane) => { pane.hidden = pane.getAttribute('data-ob-content-pane') !== next; });
+    const pane = root.querySelector('[data-ob-content-pane="' + next + '"]');
+    if (!pane) return;
+    pane.textContent = '';
+    if (next === 'comments') {
+      void openCommentManager(adapter, null, pane);
+    } else if (next === 'danmaku') {
+      if (typeof adapter.openDanmakuManager === 'function') adapter.openDanmakuManager(pane);
+      else {
+        const empty = document.createElement('div'); empty.className = 'ob-content-empty';
+        empty.textContent = '当前平台没有可用的弹幕管理器'; pane.appendChild(empty);
+      }
+    } else {
+      contentManagerAICleanup = mountAIControls(pane, adapter);
+    }
+    EventLog.record('ui.content-manager.tab', { platform: adapter.id, tab: next }, { immediate: true });
+  }
+
+  function openContentManager(adapter, initialTab, anchorEl) {
+    if (!adapter || !document.body) return;
+    const tab = initialTab || 'comments';
+    if (contentManagerRoot) {
+      if (contentManagerAdapter === adapter) { switchContentManagerTab(tab); return; }
+      closeContentManager('replace');
+    }
+    const root = document.createElement('div');
+    root.id = 'ob-content-manager';
+    root.setAttribute('data-ob-platform', adapter.id || '');
+    root.innerHTML = `
+      <div class="ob-content-box" role="dialog" aria-modal="true" aria-labelledby="ob-content-title">
+        <div class="ob-content-head"><h2 id="ob-content-title">${platformLabelForCommentManager(adapter)}内容屏蔽</h2><button class="ob-content-close" type="button" aria-label="关闭">×</button></div>
+        <div class="ob-content-tabs" role="tablist" aria-label="内容屏蔽类型">
+          <button class="ob-content-tab" type="button" role="tab" data-ob-content-tab="comments" aria-controls="ob-content-pane-comments">屏蔽评论</button>
+          <button class="ob-content-tab" type="button" role="tab" data-ob-content-tab="danmaku" aria-controls="ob-content-pane-danmaku">屏蔽弹幕</button>
+          <button class="ob-content-tab" type="button" role="tab" data-ob-content-tab="ai" aria-controls="ob-content-pane-ai">AI 屏蔽</button>
+        </div>
+        <div class="ob-content-pane" id="ob-content-pane-comments" data-ob-content-pane="comments" role="tabpanel"></div>
+        <div class="ob-content-pane" id="ob-content-pane-danmaku" data-ob-content-pane="danmaku" role="tabpanel" hidden></div>
+        <div class="ob-content-pane" id="ob-content-pane-ai" data-ob-content-pane="ai" role="tabpanel" hidden></div>
+      </div>`;
+    document.body.appendChild(root);
+    contentManagerRoot = root;
+    contentManagerAdapter = adapter;
+    FloatingDock.hold('content-manager');
+    EventLog.record('ui.content-manager.open', { platform: adapter.id, anchor: !!anchorEl }, { immediate: true });
+    root.querySelector('.ob-content-close').onclick = () => closeContentManager('button');
+    root.addEventListener('click', (event) => { if (event.target === root) closeContentManager('backdrop'); });
+    root.querySelectorAll('[data-ob-content-tab]').forEach((button) => {
+      button.onclick = () => switchContentManagerTab(button.getAttribute('data-ob-content-tab'));
+      button.onkeydown = (event) => {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          const tabs = Array.from(root.querySelectorAll('[data-ob-content-tab]'));
+          const index = tabs.indexOf(button);
+          const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+          next.focus(); switchContentManagerTab(next.getAttribute('data-ob-content-tab'));
+        }
+      };
+    });
+    contentManagerKeyHandler = (event) => { if (event.key === 'Escape') closeContentManager('escape'); };
+    document.addEventListener('keydown', contentManagerKeyHandler);
+    switchContentManagerTab(tab);
+  }
+
   const pendingThreadBlocks = new WeakSet();
   async function runThreadBlock(anchorEl, adapter, providedInfo) {
     const manager = adapter && adapter.commentManager;
@@ -9853,6 +10042,7 @@
       }
       scanRunning = false;
       scanRun = null;
+      scanStatus = '弹幕时间轴扫描已取消';
       runtimeDiagnostic('douyinDanmakuCancelledScans');
       EventLog.record('ui.douyin-danmaku.scan.cancel', {
         reason: String(reason || 'manager-close').slice(0, 48), sameScope,
@@ -10099,10 +10289,18 @@
       if (document.readyState !== 'loading') setTimeout(refreshAfterDomReady, 0);
     }
 
-    async function scanDanmakuTimeline() {
+    async function scanDanmakuTimeline(options) {
+      const loadOptions = options && typeof options === 'object' ? options : {};
+      const signal = loadOptions.signal;
+      const onProgress = typeof loadOptions.onProgress === 'function' ? loadOptions.onProgress : null;
       if (scanRunning) {
         EventLog.record('ui.douyin-danmaku.scan.rejected', { reasonCode: 'already-running' });
-        return;
+        return { supported: true, busy: true, completed: 0, sampleCount: 0, cancelled: false };
+      }
+      if (signal && signal.aborted) {
+        const error = new Error('抖音弹幕加载已取消');
+        error.name = 'AbortError';
+        throw error;
       }
       resetForVideo(readVideoKey());
       const scope = typeof adapter.danmakuRoot === 'function' ? adapter.danmakuRoot() : document;
@@ -10113,7 +10311,7 @@
         EventLog.record('ui.douyin-danmaku.scan.rejected', { reasonCode: 'duration-unavailable' }, { immediate: true });
         scanStatus = '播放器尚未提供可扫描的总时长';
         render();
-        return;
+        return { supported: false, busy: false, completed: 0, sampleCount: 0, cancelled: false, reason: scanStatus };
       }
       let requestedKey = readVideoKey();
       const requestedGeneration = sessionGeneration;
@@ -10134,6 +10332,18 @@
       EventLog.record('ui.douyin-danmaku.scan.start', { sampleCount }, { immediate: true });
       scanStatus = '正在扫描弹幕时间轴 0/' + sampleCount + '…';
       render();
+      let abortListener = null;
+      if (signal) {
+        abortListener = () => cancelScan('ai-autoload-cancel');
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
+      const reportProgress = () => {
+        if (!onProgress) return;
+        let collected = 0;
+        try { collected = collectRecords().length; } catch (e) {}
+        onProgress({ phase: 'danmaku', completed, sampleCount, collected, cancelled: false });
+      };
+      reportProgress();
       const sessionIsCurrent = () => {
         const currentKey = readVideoKey();
         if (!isSameVideoKeyScope(currentKey, requestedKey)) {
@@ -10163,6 +10373,7 @@
       try {
         if (wasPlaying) video.pause();
         for (let index = 0; index < sampleCount; index++) {
+          if (signal && signal.aborted) cancelScan('ai-autoload-cancel');
           if (!sessionIsCurrent()) break;
           const time = sampleCount === 1 ? 0 : Math.min(Math.max(0, duration - 0.05), duration * index / (sampleCount - 1));
           await seekAndWait(time);
@@ -10173,36 +10384,54 @@
           completed = index + 1;
           scanStatus = '正在扫描弹幕时间轴 ' + completed + '/' + sampleCount + '…';
           render(available);
+          reportProgress();
         }
       } finally {
         const currentKey = readVideoKey();
+        let cancelled = false;
         if (!isSameVideoKeyScope(currentKey, requestedKey)) {
           resetForVideo(currentKey);
-          return;
+          cancelled = true;
         }
-        if (currentKey !== requestedKey) {
+        if (!cancelled && currentKey !== requestedKey) {
           resetForVideo(currentKey);
           if (currentKey.indexOf('|video:') >= 0) requestedKey = currentKey;
         }
-        if (scanRun !== run || run.cancelled || sessionGeneration !== requestedGeneration) return;
-        try { video.currentTime = Math.min(Math.max(0, originalTime), Math.max(0, duration - 0.05)); } catch (e) {}
-        if (wasPlaying) {
-          try { const playing = video.play(); if (playing && playing.catch) playing.catch(() => {}); } catch (e) {}
+        if (scanRun !== run || run.cancelled || sessionGeneration !== requestedGeneration) cancelled = true;
+        if (!cancelled) {
+          try { video.currentTime = Math.min(Math.max(0, originalTime), Math.max(0, duration - 0.05)); } catch (e) {}
+          if (wasPlaying) {
+            try { const playing = video.play(); if (playing && playing.catch) playing.catch(() => {}); } catch (e) {}
+          }
+          scanRunning = false;
+          scanRun = null;
+          scanStatus = completed
+            ? '已扫描 ' + completed + '/' + sampleCount + ' 个时间点；平台未渲染的弹幕不会被猜测。'
+            : '未完成弹幕时间轴扫描；可稍后重试。';
+          EventLog.record('ui.douyin-danmaku.scan.finish', { completed, sampleCount, cancelled: completed < sampleCount }, { immediate: true });
+          render();
+        } else if (scanRun === run) {
+          scanRunning = false;
+          scanRun = null;
         }
-        scanRunning = false;
-        scanRun = null;
-        scanStatus = completed
-          ? '已扫描 ' + completed + '/' + sampleCount + ' 个时间点；平台未渲染的弹幕不会被猜测。'
-          : '未完成弹幕时间轴扫描；可稍后重试。';
-        EventLog.record('ui.douyin-danmaku.scan.finish', { completed, sampleCount, cancelled: completed < sampleCount }, { immediate: true });
-        render();
+        if (signal && abortListener) signal.removeEventListener('abort', abortListener);
       }
+      const result = { supported: true, busy: false, completed, sampleCount, cancelled: !!(signal && signal.aborted) || completed < sampleCount };
+      if (onProgress) onProgress({ phase: 'danmaku', completed, sampleCount, collected: collectRecords().length, cancelled: result.cancelled });
+      return result;
     }
 
-    function open() {
+    adapter.loadDanmakuTimeline = (onProgress, options) => scanDanmakuTimeline({
+      ...(options || {}), onProgress,
+    });
+    adapter.cancelDanmakuTimeline = (reason) => cancelScan(reason || 'external-cancel');
+
+    function open(mountTarget) {
       if (douyinDanmakuManager || !document.body) return;
       douyinDanmakuManager = document.createElement('div');
       douyinDanmakuManager.id = 'ob-douyin-dm-manager';
+      const embedded = !!(mountTarget && mountTarget.nodeType === 1);
+      douyinDanmakuManager.setAttribute('data-ob-embedded', embedded ? '1' : '0');
       douyinDanmakuManager.innerHTML = `
         <div class="ob-dd-box" role="dialog" aria-modal="true" aria-labelledby="ob-dd-title">
           <div class="ob-dd-head"><h2 id="ob-dd-title">抖音弹幕屏蔽</h2><button class="ob-dd-close" type="button" title="关闭" aria-label="关闭">×</button></div>
@@ -10217,8 +10446,8 @@
       const panel = douyinDanmakuManager;
       FloatingDock.hold('douyin-danmaku-manager');
       EventLog.record('ui.douyin-danmaku.open', {}, { immediate: true });
-      panel.querySelector('.ob-dd-close').onclick = () => closeDouyinDanmakuManager('button');
-      panel.addEventListener('click', (event) => { if (event.target === panel) closeDouyinDanmakuManager('backdrop'); });
+      panel.querySelector('.ob-dd-close').onclick = embedded ? () => closeContentManager('button') : () => closeDouyinDanmakuManager('button');
+      panel.addEventListener('click', (event) => { if (!embedded && event.target === panel) closeDouyinDanmakuManager('backdrop'); });
       const search = panel.querySelector('.ob-dd-search');
       search.value = searchText;
       search.oninput = () => {
@@ -10232,16 +10461,28 @@
       };
       douyinDanmakuManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDouyinDanmakuManager('escape'); };
       document.addEventListener('keydown', douyinDanmakuManagerKeyHandler);
-      document.body.appendChild(panel);
+      if (embedded) mountTarget.appendChild(panel);
+      else document.body.appendChild(panel);
       refreshRequested = true;
       refresh();
     }
+
+    currentAdapter.openDanmakuManager = open;
+    currentAdapter.closeDanmakuManager = closeDouyinDanmakuManager;
+    currentAdapter.danmakuManagerAvailable = () => typeof adapter.isVideoPage === 'function' ? adapter.isVideoPage() : /^\/video\//i.test(location.pathname);
+    currentAdapter.danmakuManagerCount = () => collectRecords().length;
 
     function refresh() {
       const video = typeof adapter.isVideoPage === 'function' ? adapter.isVideoPage() : /^\/video\//i.test(location.pathname);
       if (!document.body) { refreshRequested = true; return; }
       refreshRequested = false;
       const visible = Store.getSetting('enabled') && Store.getSetting('showBulkBlock') && video;
+      if (currentAdapter && currentAdapter.id === 'douyin') {
+        if (douyinDanmakuTool) { douyinDanmakuTool.remove(); douyinDanmakuTool = null; }
+        if (!visible && douyinDanmakuManager) closeDouyinDanmakuManager('hidden');
+        else if (douyinDanmakuManager) render();
+        return;
+      }
       if (!douyinDanmakuTool) {
         if (!document.body) return;
         douyinDanmakuTool = document.createElement('button');
@@ -10486,15 +10727,21 @@
     const forgetModalButton = (button) => { if (button) modalButtons.delete(button); };
     const trackModal = (modal) => { if (modal) markedModals.add(modal); return modal; };
     const forgetModal = (modal) => { if (modal) markedModals.delete(modal); };
+    const isUnifiedContent = () => a.id === 'douyin'
+      || (a.id === 'bilibili' && typeof a.danmakuManagerAvailable === 'function' && a.danmakuManagerAvailable());
     const setFabVisible = (visible) => {
       if (fab) fab.style.setProperty('display', visible ? 'inline-flex' : 'none', 'important');
       FloatingDock.sync();
       // 入口消失（关闭功能、切换页面、原生弹窗打开）时不留悬挂面板。
-      if (!visible) { closeBulkScopePanel('hidden'); closeCommentManager('hidden'); if (a.id === 'douyin') closeDouyinCommentManager(); }
+      if (!visible) {
+        closeBulkScopePanel('hidden'); closeCommentManager('hidden');
+        if (a.id === 'douyin') closeDouyinCommentManager();
+        if (a.id === 'bilibili' || a.id === 'douyin') closeContentManager('hidden');
+      }
     };
     const isOwnBulkPanel = (el) => !!el && (
       el.id === 'ob-bulk-scope'
-      || !!(el.closest && el.closest('#ob-comment-manager,#ob-douyin-comment-manager,#ob-douyin-dm-manager'))
+      || !!(el.closest && el.closest('#ob-comment-manager,#ob-douyin-comment-manager,#ob-douyin-dm-manager,#ob-content-manager'))
     );
     function blocksPageBulkFab(el) {
       // 抖音当前视频详情侧栏使用 `#relatedVideoCard.LookModalFrameFast`，虽然类名含
@@ -10561,7 +10808,8 @@
       return commentRecordsCache;
     }
     function refreshFab(modals) {
-      if (!Store.getSetting('enabled') || !Store.getSetting('showBulkBlock')) { setFabVisible(false); return; }
+      const unifiedContent = isUnifiedContent();
+      if (!Store.getSetting('enabled') || (!Store.getSetting('showBulkBlock') && (!unifiedContent || !Store.getSetting('showQuickBlock')))) { setFabVisible(false); return; }
       let commentMode = false;
       let commentRecords = [];
       let commentRoute = false;
@@ -10580,11 +10828,15 @@
       // 评论管理器的承载面；评论模式下必须保留入口，否则真实评论已加载却永远
       // 看不到“评论屏蔽”按钮。普通无评论的 Modal 仍由 hasOpenModal() 遮挡。
       const modalBlocksFab = hasOpenModal(modals) && !(a.id === 'douyin' && commentMode);
-      if (!n || modalBlocksFab) { setFabVisible(false); return; }
+      const danmakuAvailable = unifiedContent && typeof a.danmakuManagerAvailable === 'function'
+        && a.danmakuManagerAvailable();
+      if (unifiedContent && (!commentMode && !danmakuAvailable || modalBlocksFab)) { setFabVisible(false); return; }
+      if (!unifiedContent && (!n || modalBlocksFab)) { setFabVisible(false); return; }
       if (!fab) {
         fab = document.createElement('button');
         fab.type = 'button'; fab.setAttribute('data-ob-kind', 'page');
         fab.className = 'ob-bulk';
+        if (unifiedContent) fab.id = a.id === 'bilibili' ? 'ob-dm-tool' : 'ob-douyin-dm-tool';
         fab.style.position = 'fixed';
         if (a.id === 'douyin') {
           // 抖音播放器占据左下角；与齿轮、弹幕工具共用右侧固定列。
@@ -10594,6 +10846,10 @@
           fab.style.left = '14px'; fab.style.right = 'auto'; fab.style.bottom = '14px';
         }
         fab.onclick = () => {
+          if (isUnifiedContent()) {
+            EventLog.record('ui.content-fab.open', { platform: a.id }, { immediate: true });
+            openContentManager(a, 'comments', fab); return;
+          }
           if (a.commentManager && (!a.commentManager.available || a.commentManager.available())) {
             EventLog.record('ui.bulk-fab.open-comment-manager', { platform: a.id }, { immediate: true });
             openCommentManager(a, fab); return;
@@ -10619,9 +10875,18 @@
         if (document.body) mountFab();
         else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFab, { once: true });
       }
-      fab.textContent = commentMode
+      if (unifiedContent) fab.id = a.id === 'bilibili' ? 'ob-dm-tool' : 'ob-douyin-dm-tool';
+      else if (fab.id === 'ob-dm-tool' || fab.id === 'ob-douyin-dm-tool') fab.removeAttribute('id');
+      fab.textContent = unifiedContent
+        ? '🚫 内容屏蔽（评论/弹幕）'
+        : commentMode
         ? '🚫 ' + platformLabelForCommentManager(a) + '评论屏蔽(' + n + ')'
         : (a.bulkFabLabel ? a.bulkFabLabel(n) : '🚫 拉黑本页用户(' + n + ')');
+      if (unifiedContent) {
+        const dmCount = typeof a.danmakuManagerCount === 'function' ? Number(a.danmakuManagerCount()) || 0 : 0;
+        fab.title = '打开' + platformLabelForCommentManager(a) + '内容屏蔽：评论、弹幕和 AI';
+        fab.setAttribute('aria-label', fab.title + '（当前弹幕 ' + dmCount + ' 条）');
+      }
       setFabVisible(true);
     }
     function tryModal(modal) {
@@ -12221,10 +12486,12 @@
       next.disabled = dmPage >= pageCount - 1;
     }
 
-    function openDmManager() {
+    function openDmManager(mountTarget) {
       if (dmManager || !document.body) return;
       dmManager = document.createElement('div');
       dmManager.id = 'ob-dm-manager';
+      const embedded = !!(mountTarget && mountTarget.nodeType === 1);
+      dmManager.setAttribute('data-ob-embedded', embedded ? '1' : '0');
       dmManager.innerHTML = `
         <div class="ob-dm-box" role="dialog" aria-modal="true" aria-labelledby="ob-dm-title">
           <div class="ob-dm-head"><h2 id="ob-dm-title">B站弹幕内容</h2><button class="ob-dm-close" type="button" title="关闭" aria-label="关闭">×</button></div>
@@ -12240,8 +12507,8 @@
             <button class="ob-dm-batch" type="button">屏蔽选中(0)</button>
           </div>
         </div>`;
-      dmManager.querySelector('.ob-dm-close').onclick = closeDmManager;
-      dmManager.addEventListener('click', (event) => { if (event.target === dmManager) closeDmManager(); });
+      dmManager.querySelector('.ob-dm-close').onclick = embedded ? () => closeContentManager('button') : closeDmManager;
+      dmManager.addEventListener('click', (event) => { if (!embedded && event.target === dmManager) closeDmManager(); });
       const search = dmManager.querySelector('.ob-dm-search');
       search.value = dmSearch;
       search.oninput = () => { dmSearch = search.value; dmPage = 0; renderDmManager(); };
@@ -12250,11 +12517,21 @@
       dmManager.querySelector('[data-ob-page="next"]').onclick = () => { dmPage++; renderDmManager(); };
       dmManagerKeyHandler = (event) => { if (event.key === 'Escape') closeDmManager(); };
       document.addEventListener('keydown', dmManagerKeyHandler);
-      document.body.appendChild(dmManager);
+      if (embedded) mountTarget.appendChild(dmManager);
+      else document.body.appendChild(dmManager);
       renderDmManager();
     }
 
+    currentAdapter.openDanmakuManager = openDmManager;
+    currentAdapter.closeDanmakuManager = closeDmManager;
+    currentAdapter.danmakuManagerAvailable = () => isVideoPage();
+    currentAdapter.danmakuManagerCount = () => availableDmSenders().length;
+
     function mountDmTool() {
+      if (currentAdapter && currentAdapter.id === 'bilibili') {
+        if (dmTool) { dmTool.remove(); dmTool = null; }
+        return;
+      }
       if (dmTool || !document.body) {
         if (!document.body) setTimeout(mountDmTool, 300);
         return;
@@ -12274,6 +12551,12 @@
       runtimeDiagnostic('biliDmToolRefreshes');
       resetDmSessionIfNeeded();
       mountDmTool();
+      if (currentAdapter && currentAdapter.id === 'bilibili') {
+        // B站现在由统一的“内容屏蔽”弹窗承载弹幕管理器；旧的独立按钮
+        // 被移除后，不能再用 dmTool 是否存在作为刷新短路条件。
+        if (dmManager) renderDmManager();
+        return;
+      }
       if (!dmTool) return;
       const count = availableDmSenders().length;
       const visible = Store.getSetting('enabled') && Store.getSetting('showQuickBlock') && isVideoPage();
@@ -12864,6 +13147,7 @@
     let configSignatureValue = '';
     let generation = 0;
     let activeRequest = null;
+    let activeLoader = null;
     let review = null;
     const subscriptions = [];
     let last = {
@@ -12934,6 +13218,10 @@
 
     function cancelActive(reason) {
       generation++;
+      if (activeLoader) {
+        try { activeLoader.abort(); } catch (e) {}
+        activeLoader = null;
+      }
       if (activeRequest) {
         try { activeRequest.abort(); } catch (e) {}
         activeRequest = null;
@@ -13017,6 +13305,76 @@
           cancel('AI 分析已取消');
         },
       };
+    }
+
+    async function loadDouyinContent(runGeneration) {
+      const adapter = currentAdapter;
+      if (!adapter || adapter.id !== 'douyin') return { supported: false, comments: null, danmaku: null };
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const signal = controller && controller.signal;
+      const loader = {
+        abort() {
+          if (controller) controller.abort();
+          if (typeof adapter.cancelDanmakuTimeline === 'function') {
+            try { adapter.cancelDanmakuTimeline('ai-autoload-cancel'); } catch (e) {}
+          }
+        },
+      };
+      activeLoader = loader;
+      const ensureCurrent = () => {
+        if (stopped || runGeneration !== generation || (signal && signal.aborted)) {
+          const error = new Error('AI 自动加载已取消');
+          error.name = 'AbortError';
+          throw error;
+        }
+      };
+      const report = (phase, progress) => {
+        if (runGeneration !== generation || stopped) return;
+        const collected = Number(progress && (progress.collected != null ? progress.collected : progress.comments)) || 0;
+        const completed = Number(progress && progress.completed) || 0;
+        const sampleCount = Number(progress && progress.sampleCount) || 0;
+        setLast({
+          state: 'loading', source: 'douyin-autoload', loadPhase: phase,
+          loaded: collected, loadCompleted: completed, loadTotal: sampleCount,
+          records: collected, analyzed: 0, batchIndex: 0, batchCount: 0,
+          batched: false, sampled: false, candidates: 0, lastError: '',
+        });
+      };
+      closeCommentManager('ai-autoload');
+      closeDouyinDanmakuManager('ai-autoload');
+      EventLog.record('ai.autoload.start', { platform: 'douyin' }, { immediate: true });
+      try {
+        let comments = null;
+        if (adapter.commentManager && typeof adapter.commentManager.loadAll === 'function') {
+          report('comments', { collected: 0 });
+          comments = await adapter.commentManager.loadAll((progress) => report('comments', progress), { signal });
+          ensureCurrent();
+        }
+        let danmaku = null;
+        if (typeof adapter.loadDanmakuTimeline === 'function') {
+          report('danmaku', { collected: 0, completed: 0, sampleCount: 0 });
+          danmaku = await adapter.loadDanmakuTimeline((progress) => report('danmaku', progress), { signal });
+          ensureCurrent();
+        }
+        EventLog.record('ai.autoload.finish', {
+          platform: 'douyin',
+          commentRecords: Number(comments && comments.records && comments.records.length) || 0,
+          danmakuCompleted: Number(danmaku && danmaku.completed) || 0,
+          danmakuSampleCount: Number(danmaku && danmaku.sampleCount) || 0,
+          danmakuSupported: danmaku ? danmaku.supported !== false : false,
+        }, { immediate: true });
+        return { supported: true, comments, danmaku };
+      } catch (error) {
+        if (runGeneration !== generation || stopped || (signal && signal.aborted)) {
+          const cancelled = new Error('AI 自动加载已取消');
+          cancelled.name = 'AbortError';
+          throw cancelled;
+        }
+        EventLog.recordError('ai.autoload', error, { platform: 'douyin' });
+        throw error;
+      } finally {
+        if (activeLoader === loader) activeLoader = null;
+      }
     }
 
     function messageContent(payload) {
@@ -13174,7 +13532,7 @@
       overlay.setAttribute('aria-label', 'AI 屏蔽建议审核');
       overlay.innerHTML = `<div class="ob-ai-review-box"><div class="ob-ai-review-head"><div><h3>AI 建议屏蔽（${candidates.length}）</h3><div class="ob-ai-review-sub"></div></div><button type="button" class="ob-ai-close" aria-label="关闭">×</button></div><div class="ob-ai-review-list"></div><div class="ob-ai-review-foot"><span class="ob-ai-review-status"></span><div><button type="button" class="ob-ai-cancel">取消</button><button type="button" class="ob-ai-confirm">确认屏蔽所选</button></div></div></div>`;
       const sub = overlay.querySelector('.ob-ai-review-sub');
-      sub.textContent = (source === 'auto' ? '本页自动分析' : '本页附加规则分析') + ' · ' + ruleCount + ' 条规则'
+      sub.textContent = (source === 'auto' ? '本页自动分析' : (source === 'douyin-autoload' ? '抖音加载后分析' : '本页附加规则分析')) + ' · ' + ruleCount + ' 条规则'
         + (batchCount > 1 ? ' · 已分 ' + batchCount + ' 批分析全部已观察内容' : ' · 已分析全部已观察内容')
         + '；确认前不会写入名单。';
       const list = overlay.querySelector('.ob-ai-review-list');
@@ -13240,7 +13598,7 @@
       EventLog.record('ai.review.open', { source, candidateCount: candidates.length, executableCount: candidates.filter((item) => item.record.keys.length).length }, { immediate: true });
     }
 
-    async function run(pageRule, source) {
+    async function run(pageRule, source, options) {
       if (stopped) return { ok: false, error: 'AI 会话已结束' };
       if (Store.getSetting('enabled') === false || Store.getSetting('aiEnabled') !== true) {
         setLast({ state: 'disabled', source, lastError: '请先启用 AI 智能屏蔽' });
@@ -13260,6 +13618,22 @@
         setLast({ state: 'error', source, lastError: '只允许使用 loopback AI 网关地址' });
         return { ok: false, error: '只允许使用 loopback AI 网关地址' };
       }
+      cancelActive('new-analysis');
+      const runGeneration = generation;
+      if (options && options.loadDouyin && currentAdapter.id === 'douyin') {
+        try {
+          await loadDouyinContent(runGeneration);
+        } catch (error) {
+          if (runGeneration !== generation || stopped || error && error.name === 'AbortError') {
+            return { ok: false, error: 'AI 分析已取消' };
+          }
+          const message = String(error && error.message || error).slice(0, 160);
+          setLast({ state: 'error', source, records: 0, analyzed: 0, batchIndex: 0, batchCount: 0,
+            batched: false, sampled: false, candidates: 0, lastError: message });
+          EventLog.record('ai.analysis.error', { source, phase: 'autoload' }, { immediate: true });
+          return { ok: false, error: message };
+        }
+      }
       let collected;
       try { collected = collectRecords(); }
       catch (error) {
@@ -13273,8 +13647,6 @@
       }
       const batches = splitAIBatches(collected.records);
       const batchCount = batches.length;
-      cancelActive('new-analysis');
-      const runGeneration = ++generation;
       const model = normalizeAIGatewayModel(Store.getSetting('aiGatewayModel')) || 'omni-default';
       let analyzed = 0;
       let currentBatch = 0;
@@ -13445,14 +13817,26 @@
       Store.setSetting('aiRules', next); return true;
     }
 
-    function analyzePage(pageRule) {
+    function analyzePage(pageRule, options) {
       if (!String(pageRule || '').trim()) return Promise.resolve({ ok: false, error: '请先填写本页面附加规则' });
       cancelAutoTimer();
-      return run(pageRule, 'page');
+      const loadDouyin = !!(options && options.loadDouyin);
+      return run(pageRule, loadDouyin ? 'douyin-autoload' : 'page', { loadDouyin });
+    }
+
+    function loadAndAnalyzePage(pageRule) {
+      return analyzePage(pageRule, { loadDouyin: true });
+    }
+
+    function cancel(reason) {
+      cancelAutoTimer();
+      cancelActive(reason || 'user');
+      setLast({ state: 'idle', source: '', lastError: '' });
+      return true;
     }
 
     return {
-      start, status, onChange, addRule, removeRule, setRuleEnabled, analyzePage,
+      start, status, onChange, addRule, removeRule, setRuleEnabled, analyzePage, loadAndAnalyzePage, cancel,
       closeReview: () => closeReview('api'),
       validateGatewayUrl: (value) => !!normalizeAIGatewayUrl(value),
       gatewayDefaultUrl: AI_GATEWAY_DEFAULT_URL,
@@ -13545,6 +13929,152 @@
     return PLATFORM_LABELS[group] || group;
   }
 
+  function mountAIControls(root, adapter) {
+    if (!root) return () => {};
+    const aiAdapter = adapter || currentAdapter;
+    root.innerHTML = `
+      <div data-ob-ai-surface="1">
+        <h3 style="margin:0 0 8px;font-size:15px">AI 智能屏蔽</h3>
+        <p class="ob-ai-intro">AI 默认关闭。启用后，当前支持页面会按预设规则分析已观察到的评论/弹幕，并弹出多选审核；抖音点击“分析本页”会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。AI 只把截短后的正文发送到你配置的 loopback 网关；API Key、多个 provider、自动切换、限流和记忆由本地网关管理，本插件不保存 API Key。网关仍需先运行仓库根目录的 <code>启动网关.cmd</code>。</p>
+        <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（按预设规则自动分析当前页）</label>
+        <div class="ob-ai-gateway">
+          <label>本地网关地址<input id="ob-ai-url" type="url" placeholder="http://127.0.0.1:4000/v1/chat/completions"></label>
+          <label>路由/模型名<input id="ob-ai-model" type="text" placeholder="omni-default"></label>
+          <button id="ob-ai-save" class="ob-ai-save" type="button">保存连接设置</button>
+        </div>
+        <div class="ob-ai-rule-add"><input id="ob-ai-rule" type="text" maxlength="500" placeholder="预设规则，例如：不许引战、不许拉踩"><button id="ob-ai-rule-add-button" type="button">添加预设规则</button></div>
+        <div id="ob-ai-rule-list" class="ob-ai-rule-list"></div>
+        <div class="ob-ai-page"><textarea id="ob-ai-page-rule" maxlength="500" placeholder="本页面附加规则，例如：本页只屏蔽广告和剧透"></textarea><button id="ob-ai-analyze" class="ob-ai-analyze" type="button">分析本页</button><button id="ob-ai-cancel" class="ob-ai-save" type="button" style="display:none">取消当前分析</button></div>
+        <div id="ob-ai-status" class="ob-ai-status" aria-live="polite"></div>
+      </div>`;
+
+    const query = (selector) => root.querySelector(selector);
+    const statusText = (status) => {
+      if (!status || !status.enabled) return 'AI 当前关闭；不会自动请求本地网关。';
+      const batchCount = Number(status.batchCount) || 0;
+      const batchHint = batchCount > 1
+        ? '（第 ' + (Number(status.batchIndex) || 1) + '/' + batchCount + ' 批，每批最多 ' + AI_BATCH_SIZE + ' 条）'
+        : (batchCount === 1 ? '（共 1 批）' : '');
+      const progress = status.state === 'loading' && batchCount > 1
+        ? '，已完成 ' + (Number(status.analyzed) || 0) + '/' + status.records + ' 条' : '';
+      if (status.state === 'loading' && status.source === 'douyin-autoload') {
+        if (status.loadPhase === 'comments') return '正在自动加载抖音评论，已观察到 ' + (Number(status.loaded) || 0) + ' 条…';
+        if (status.loadPhase === 'danmaku') {
+          const dmProgress = status.loadTotal ? '，时间轴 ' + (Number(status.loadCompleted) || 0) + '/' + status.loadTotal : '';
+          return '正在自动加载抖音弹幕' + dmProgress + '…';
+        }
+      }
+      if (status.state === 'loading') return '正在分析当前页已观察到的 ' + status.records + ' 条内容' + progress + '…' + batchHint;
+      if (status.state === 'review') return '已分析当前页全部 ' + status.records + ' 条已观察内容，找到 ' + status.candidates + ' 条候选'
+        + (batchCount > 1 ? '，共 ' + batchCount + ' 批' : '') + '，请在审核弹窗中选择后确认。';
+      if (status.state === 'ready') return '本轮已分析当前页全部 ' + status.records + ' 条已观察内容，没有待审核候选。'
+        + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '');
+      if (status.state === 'empty') return status.lastError || '当前页没有可分析的已观察内容。';
+      if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || '本地网关不可用');
+      if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求本地网关。';
+      if (status.lastError) return status.lastError;
+      return '启用后会按预设规则分析当前页，结果必须人工确认。';
+    };
+    const gatewayNote = (status) => status && status.state === 'error' && status.gatewayConfigured
+      ? 'loopback 地址校验已通过；请检查本地网关和浏览器扩展桥接。'
+      : (status && status.gatewayConfigured ? '当前仅允许 loopback 网关。' : '尚未配置有效的 loopback 网关。');
+    const refreshStatus = () => {
+      const statusEl = query('#ob-ai-status');
+      if (!statusEl) return;
+      const status = AI.status();
+      statusEl.dataset.state = status.state || 'idle';
+      statusEl.textContent = statusText(status) + ' ' + gatewayNote(status);
+    };
+    const refreshRules = () => {
+      const list = query('#ob-ai-rule-list');
+      if (!list) return;
+      list.textContent = '';
+      const rules = sanitizeAIRules(Store.getSetting('aiRules'));
+      if (!rules.length) {
+        const empty = document.createElement('div'); empty.className = 'ob-ai-status'; empty.textContent = '尚未设置 AI 预设规则；自动分析不会启动。';
+        list.appendChild(empty); return;
+      }
+      for (const rule of rules) {
+        const row = document.createElement('div'); row.className = 'ob-ai-rule';
+        const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = rule.enabled;
+        toggle.title = rule.enabled ? '停用规则' : '启用规则';
+        toggle.addEventListener('change', () => {
+          AI.setRuleEnabled(rule.id, toggle.checked);
+          EventLog.record('settings.ai-rule.toggle', { enabled: toggle.checked }, { immediate: true });
+          refreshRules(); refreshStatus();
+        });
+        const text = document.createElement('span'); text.className = 'ob-ai-rule-text'; text.textContent = rule.text; text.title = rule.text;
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'ob-ai-rule-remove'; remove.textContent = '删除';
+        remove.addEventListener('click', () => {
+          AI.removeRule(rule.id);
+          EventLog.record('settings.ai-rule.remove', {}, { immediate: true });
+          refreshRules(); refreshStatus();
+        });
+        row.append(toggle, text, remove); list.appendChild(row);
+      }
+    };
+
+    const enabled = query('#ob-ai-enabled');
+    const urlInput = query('#ob-ai-url');
+    const modelInput = query('#ob-ai-model');
+    const ruleInput = query('#ob-ai-rule');
+    const analyze = query('#ob-ai-analyze');
+    const cancel = query('#ob-ai-cancel');
+    const settings = Store.settings();
+    enabled.checked = settings.aiEnabled === true;
+    urlInput.value = settings.aiGatewayUrl || AI.gatewayDefaultUrl;
+    modelInput.value = settings.aiGatewayModel || '';
+    const douyinAutoload = !!(aiAdapter && aiAdapter.id === 'douyin');
+    if (douyinAutoload) {
+      analyze.textContent = '加载并分析本页';
+      analyze.title = '自动加载抖音评论和当前视频弹幕，再分析实际观察到的全部内容';
+    }
+    const stopAIWatch = AI.onChange(refreshStatus);
+    enabled.onchange = (event) => {
+      const value = !!event.target.checked;
+      Store.setSetting('aiEnabled', value);
+      EventLog.record('settings.ai-enabled.toggle', { enabled: value }, { immediate: true });
+      refreshStatus();
+    };
+    query('#ob-ai-save').onclick = () => {
+      const url = String(urlInput.value || '').trim();
+      if (!AI.validateGatewayUrl(url)) {
+        const statusEl = query('#ob-ai-status');
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = '网关地址只允许使用 loopback（http://localhost、127.0.0.1 或 ::1）。'; }
+        return;
+      }
+      Store.setSetting('aiGatewayUrl', url || AI.gatewayDefaultUrl);
+      Store.setSetting('aiGatewayModel', normalizeAIGatewayModel(modelInput.value));
+      EventLog.record('settings.ai-gateway.save', { modelPresent: !!normalizeAIGatewayModel(modelInput.value) }, { immediate: true });
+      refreshStatus(); showToast('AI 本地网关设置已保存');
+    };
+    const addRule = () => {
+      const result = AI.addRule(ruleInput.value);
+      EventLog.record('settings.ai-rule.add', { ok: !!result.ok }, { immediate: true });
+      if (!result.ok) { showToast(result.error); return; }
+      ruleInput.value = ''; refreshRules(); refreshStatus();
+    };
+    query('#ob-ai-rule-add-button').onclick = addRule;
+    ruleInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addRule(); } });
+    if (cancel) cancel.onclick = () => AI.cancel('user');
+    analyze.onclick = async () => {
+      const pageRule = String(query('#ob-ai-page-rule').value || '').trim();
+      if (!Store.getSetting('aiEnabled')) { showToast('请先勾选“启用 AI 智能屏蔽”'); return; }
+      analyze.disabled = true;
+      if (cancel) cancel.style.display = 'inline-block';
+      let result;
+      try { result = await AI.analyzePage(pageRule, { loadDouyin: douyinAutoload }); }
+      finally {
+        analyze.disabled = false;
+        if (cancel) cancel.style.display = 'none';
+        refreshStatus();
+      }
+      if (!result.ok && result.error) showToast(result.error);
+    };
+    refreshRules(); refreshStatus();
+    return () => { stopAIWatch(); };
+  }
+
   function openOptions() {
     let panel = $('#ob-panel');
     if (panel) {
@@ -13628,18 +14158,7 @@
           <div class="ob-auto-status" id="ob-auto-douyin-status"></div>
         </div>
 
-        <h3>AI 智能屏蔽（本地网关）</h3>
-        <p class="ob-ai-intro">AI 默认关闭。启用后，打开支持的页面会按预设规则分析当前已观察到的评论/弹幕，并弹出多选审核；点击“分析本页”可临时追加一条规则。确认前不会写入名单。AI 只把截短后的正文发送到你配置的 loopback 网关；API Key、多个 provider、自动切换、限流和记忆由本地 LiteLLM/OpenClaw 等网关管理，本插件不保存 API Key。启动网关请双击仓库根目录的 <code>启动网关.cmd</code>；设置页不直接启动宿主机进程。</p>
-        <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（按预设规则自动分析当前页）</label>
-        <div class="ob-ai-gateway">
-          <label>本地网关地址<input id="ob-ai-url" type="url" placeholder="http://127.0.0.1:4000/v1/chat/completions"></label>
-          <label>路由/模型名<input id="ob-ai-model" type="text" placeholder="omni-default"></label>
-          <button id="ob-ai-save" class="ob-ai-save" type="button">保存连接设置</button>
-        </div>
-        <div class="ob-ai-rule-add"><input id="ob-ai-rule" type="text" maxlength="500" placeholder="预设规则，例如：不许引战、不许拉踩"><button id="ob-ai-rule-add-button" type="button">添加预设规则</button></div>
-        <div id="ob-ai-rule-list" class="ob-ai-rule-list"></div>
-        <div class="ob-ai-page"><textarea id="ob-ai-page-rule" maxlength="500" placeholder="本页面附加规则，例如：本页只屏蔽广告和剧透"></textarea><button id="ob-ai-analyze" class="ob-ai-analyze" type="button">分析本页</button></div>
-        <div id="ob-ai-status" class="ob-ai-status" aria-live="polite"></div>
+         <p class="ob-settings-ai-note">AI 智能屏蔽已移到 B站/抖音「内容屏蔽」弹窗的「AI 屏蔽」标签页；在对应页面打开内容屏蔽即可配置网关、规则和分析。</p>
 
         <h3>名单（点击删除）</h3>
         <div class="ob-list" id="ob-list"></div>
@@ -13672,9 +14191,8 @@
       gear.setAttribute('aria-expanded', 'true');
     }
     let stopLogWatch = () => {};
-    let stopAIWatch = () => {};
     const closePanel = () => {
-      stopLogWatch(); stopAIWatch(); panel.remove(); FloatingDock.release('settings');
+      stopLogWatch(); panel.remove(); FloatingDock.release('settings');
       const currentGear = document.getElementById('ob-gear');
       if (currentGear) currentGear.setAttribute('aria-expanded', 'false');
       EventLog.record('ui.settings.close', {}, { immediate: true });
@@ -13805,114 +14323,6 @@
       add.onclick = submit;
       pattern.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
     });
-
-    function aiStatusText(status) {
-      if (!status || !status.enabled) return 'AI 当前关闭；不会自动请求本地网关。';
-      const batchCount = Number(status.batchCount) || 0;
-      const batchHint = batchCount > 1
-        ? '（第 ' + (Number(status.batchIndex) || 1) + '/' + batchCount + ' 批，每批最多 ' + AI_BATCH_SIZE + ' 条）'
-        : (batchCount === 1 ? '（共 1 批）' : '');
-      const progress = status.state === 'loading' && batchCount > 1
-        ? '，已完成 ' + (Number(status.analyzed) || 0) + '/' + status.records + ' 条' : '';
-      if (status.state === 'loading') return '正在分析当前页已观察到的 ' + status.records + ' 条内容' + progress + '…' + batchHint;
-      if (status.state === 'review') return '已分析当前页全部 ' + status.records + ' 条已观察内容，找到 ' + status.candidates + ' 条候选'
-        + (batchCount > 1 ? '，共 ' + batchCount + ' 批' : '') + '，请在审核弹窗中选择后确认。';
-      if (status.state === 'ready') return '本轮已分析当前页全部 ' + status.records + ' 条已观察内容，没有待审核候选。'
-        + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '');
-      if (status.state === 'empty') return status.lastError || '当前页没有可分析的已观察内容。';
-      if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || '本地网关不可用');
-      if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求本地网关。';
-      if (status.lastError) return status.lastError;
-      return '启用后会按预设规则分析当前页，结果必须人工确认。';
-    }
-
-    function aiGatewayStatusNote(status) {
-      if (status && status.state === 'error' && status.gatewayConfigured) {
-        return 'loopback 地址校验已通过；请检查本地网关和浏览器扩展桥接。';
-      }
-      return status && status.gatewayConfigured
-        ? '当前仅允许 loopback 网关。'
-        : '尚未配置有效的 loopback 网关。';
-    }
-
-    function refreshAIStatus() {
-      const statusEl = panel.querySelector('#ob-ai-status');
-      if (!statusEl) return;
-      const status = AI.status();
-      statusEl.dataset.state = status.state || 'idle';
-      statusEl.textContent = aiStatusText(status) + ' ' + aiGatewayStatusNote(status);
-    }
-
-    function refreshAIRules() {
-      const list = panel.querySelector('#ob-ai-rule-list');
-      if (!list) return;
-      list.textContent = '';
-      const rules = sanitizeAIRules(Store.getSetting('aiRules'));
-      if (!rules.length) {
-        const empty = document.createElement('div'); empty.className = 'ob-ai-status'; empty.textContent = '尚未设置 AI 预设规则；自动分析不会启动。';
-        list.appendChild(empty); return;
-      }
-      for (const rule of rules) {
-        const row = document.createElement('div'); row.className = 'ob-ai-rule';
-        const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.checked = rule.enabled;
-        toggle.title = rule.enabled ? '停用规则' : '启用规则';
-        toggle.addEventListener('change', () => {
-          AI.setRuleEnabled(rule.id, toggle.checked);
-          EventLog.record('settings.ai-rule.toggle', { enabled: toggle.checked }, { immediate: true });
-          refreshAIRules(); refreshAIStatus();
-        });
-        const text = document.createElement('span'); text.className = 'ob-ai-rule-text'; text.textContent = rule.text; text.title = rule.text;
-        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'ob-ai-rule-remove'; remove.textContent = '删除';
-        remove.addEventListener('click', () => {
-          AI.removeRule(rule.id);
-          EventLog.record('settings.ai-rule.remove', {}, { immediate: true });
-          refreshAIRules(); refreshAIStatus();
-        });
-        row.append(toggle, text, remove); list.appendChild(row);
-      }
-    }
-
-    stopAIWatch = AI.onChange(refreshAIStatus);
-    panel.querySelector('#ob-ai-enabled').onchange = (event) => {
-      const enabled = !!event.target.checked;
-      Store.setSetting('aiEnabled', enabled);
-      EventLog.record('settings.ai-enabled.toggle', { enabled }, { immediate: true });
-      refreshAIStatus();
-    };
-    panel.querySelector('#ob-ai-save').onclick = () => {
-      const urlInput = panel.querySelector('#ob-ai-url');
-      const modelInput = panel.querySelector('#ob-ai-model');
-      const url = String(urlInput && urlInput.value || '').trim();
-      if (!AI.validateGatewayUrl(url)) {
-        const statusEl = panel.querySelector('#ob-ai-status');
-        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = '网关地址只允许使用 loopback（http://localhost、127.0.0.1 或 ::1）。'; }
-        return;
-      }
-      Store.setSetting('aiGatewayUrl', url || AI.gatewayDefaultUrl);
-      Store.setSetting('aiGatewayModel', normalizeAIGatewayModel(modelInput && modelInput.value));
-      EventLog.record('settings.ai-gateway.save', { modelPresent: !!normalizeAIGatewayModel(modelInput && modelInput.value) }, { immediate: true });
-      refresh();
-      showToast('AI 本地网关设置已保存');
-    };
-    const aiRuleInput = panel.querySelector('#ob-ai-rule');
-    const addAIRule = () => {
-      const result = AI.addRule(aiRuleInput.value);
-      EventLog.record('settings.ai-rule.add', { ok: !!result.ok }, { immediate: true });
-      if (!result.ok) { showToast(result.error); return; }
-      aiRuleInput.value = ''; refreshAIRules(); refreshAIStatus();
-    };
-    panel.querySelector('#ob-ai-rule-add-button').onclick = addAIRule;
-    aiRuleInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addAIRule(); } });
-    const aiAnalyze = panel.querySelector('#ob-ai-analyze');
-    aiAnalyze.onclick = async () => {
-      const pageRule = panel.querySelector('#ob-ai-page-rule').value.trim();
-      if (!Store.getSetting('aiEnabled')) { showToast('请先勾选“启用 AI 智能屏蔽”'); return; }
-      aiAnalyze.disabled = true;
-      const result = await AI.analyzePage(pageRule);
-      aiAnalyze.disabled = false;
-      refreshAIStatus();
-      if (!result.ok && result.error) showToast(result.error);
-    };
 
     function renderLogMap(map) {
       return Object.keys(map || {}).sort().map((key) => key + '=' + map[key]).join('，') || '无';
@@ -14055,9 +14465,6 @@
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
       panel.querySelector('#ob-log-enabled').checked = s.logEnabled !== false;
-      panel.querySelector('#ob-ai-enabled').checked = s.aiEnabled === true;
-      panel.querySelector('#ob-ai-url').value = s.aiGatewayUrl || AI.gatewayDefaultUrl;
-      panel.querySelector('#ob-ai-model').value = s.aiGatewayModel || '';
       const backup = Store.backupStatus();
       const backupToggle = panel.querySelector('#ob-local-backup');
       const restoreBackup = panel.querySelector('#ob-restore-backup');
@@ -14083,8 +14490,6 @@
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
       refreshAutoRules();
-      refreshAIRules();
-      refreshAIStatus();
       refreshLogs();
     }
     refresh();
@@ -14188,7 +14593,15 @@
     setupQuickBlock();
     setupBulkBlock();
     setupWorkBlock();
-    if (currentAdapter.id === 'douyin') setupDouyinDanmakuManager();
+    if (currentAdapter.id === 'bilibili' || currentAdapter.id === 'douyin') {
+      // B站弹幕管理器在 setupBilibiliDanmaku 中才把视频能力挂到 adapter；
+      // 统一入口的首次刷新必须放在 setupBulkBlock 之后，避免视频页先显示旧评论入口。
+      refreshBulkBlock();
+    }
+    if (currentAdapter.id === 'douyin') {
+      setupDouyinDanmakuManager();
+      refreshBulkBlock();
+    }
     AI.start();
     // 常驻设置入口（⚙ 按钮）：让设置页不再藏在 Tampermonkey 菜单里
     function mountGear() {
@@ -14217,7 +14630,7 @@
     Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
     setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
     refreshWork: refreshWorkBlock, openWorkBlock,
-    openCommentManager, closeCommentManager, runThreadBlock, mergeCommentRecords,
+    openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,
     ai: AI,
     logs: EventLog,
     danmakuRules: DanmakuRules,

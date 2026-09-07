@@ -90,11 +90,13 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
     await bili.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(bili, 1800);
     const biliState = await bili.evaluate(async () => {
-      const fab = Array.from(document.querySelectorAll('.ob-bulk[data-ob-kind="page"]')).find((el) => /评论屏蔽/.test(el.textContent || ''));
+      const fab = Array.from(document.querySelectorAll('.ob-bulk[data-ob-kind="page"]')).find((el) => /内容屏蔽|评论屏蔽/.test(el.textContent || ''));
       if (!fab) return { fab:false, url:location.href, adapter:!!(window.OB && window.OB.adapters && window.OB.adapters.bilibili), comments:window.OB && window.OB.adapters.bilibili && window.OB.adapters.bilibili.commentManager && window.OB.adapters.bilibili.commentManager.collectRecords().length, available:window.OB && window.OB.adapters.bilibili && window.OB.adapters.bilibili.commentManager && window.OB.adapters.bilibili.commentManager.available(), host:!!document.querySelector('bili-comments'), shadow:!!(document.querySelector('bili-comments') && document.querySelector('bili-comments').shadowRoot), renderers:document.querySelector('bili-comments') && document.querySelector('bili-comments').shadowRoot ? document.querySelector('bili-comments').shadowRoot.querySelectorAll('bili-comment-renderer').length : -1 };
       fab.click(); await new Promise((resolve) => setTimeout(resolve, 120));
+      const contentRoot = document.querySelector('#ob-content-manager');
+      const contentTabs = contentRoot ? contentRoot.querySelectorAll('[data-ob-content-tab]').length : 0;
       const panel = document.querySelector('#ob-comment-manager');
-      if (!panel) return { fab:true, panel:false };
+      if (!panel) return { fab:true, panel:false, contentTabs };
       await new Promise((resolve) => setTimeout(resolve, 500));
       const rows = Array.from(panel.querySelectorAll('.ob-cm-row'));
       const search = panel.querySelector('.ob-cm-search'); search.value='B站子回复作者'; search.dispatchEvent(new Event('input',{bubbles:true}));
@@ -116,7 +118,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
       const partialStatus = panel.querySelector('.ob-cm-status') && panel.querySelector('.ob-cm-status').textContent || '';
       manager.loadAll = savedLoadAll;
       const managerWrites = window.__writes || 0;
-      window.OB.closeCommentManager();
+      window.OB.closeContentManager();
 
       // 异步加载返回前关闭管理器：当前实现必须中止 signal，并丢弃旧结果，
       // 防止路由/面板切换后旧 Promise 再次写入已失效的管理器状态。
@@ -179,7 +181,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
       if (threadUndo) { threadUndo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       const threadRestored = !window.OB.Index.isBlocked('bili:uid:100001') && !window.OB.Index.isBlocked('bili:uid:400001');
       return {
-        fab:true, panel:true, rows:rows.length, rowTexts:rows.map((row)=>row.textContent), hasSample:rows.some((row) => row.textContent.includes('API 根评论')),
+        fab:true, panel:true, contentTabs, rows:rows.length, rowTexts:rows.map((row)=>row.textContent), hasSample:rows.some((row) => row.textContent.includes('API 根评论')),
         hasMeta:rows.some((row) => /主评论/.test(row.textContent || '')), searchRows,
         searchMatch:searchRows === 1 && searchKey === 'bili:uid:400001', searchKey, searchValue:search.value, searchRowText,
         selectedText, managerWrites, writes:window.__writes || 0, confirm:!!confirm, partialStatus,
@@ -189,7 +191,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
         threadButton:!!threadButton, threadConfirmOk, threadBlocked, threadWrites, threadRestored,
       };
     });
-    check(biliState.fab && biliState.panel && biliState.rows === 3 && biliState.hasSample && biliState.hasMeta
+    check(biliState.fab && biliState.panel && biliState.contentTabs === 3 && biliState.rows === 3 && biliState.hasSample && biliState.hasMeta
       && biliState.searchMatch && /3/.test(biliState.selectedText) && biliState.managerWrites === 0 && biliState.confirm
       && /部分加载|分页失败/.test(biliState.partialStatus || '')
       && biliState.pendingPanel && biliState.receivedSignal && biliState.signalAborted

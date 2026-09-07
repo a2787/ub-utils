@@ -73,8 +73,8 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
       status: window.OB.ai.status(),
     };
   });
-  await page.evaluate(() => window.OB.openOptions());
-  await page.waitForSelector('#ob-ai-status', { timeout: 3000 });
+  await page.evaluate(() => window.OB.openContentManager(window.OB.adapters.douyin, 'ai'));
+  await page.waitForSelector('#ob-content-manager #ob-ai-status', { timeout: 3000 });
   const statusText = await page.locator('#ob-ai-status').textContent();
   await browser.close();
 

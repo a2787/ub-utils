@@ -354,7 +354,7 @@ async function pickLocalCommentTarget(candidates) {
         ? window.OB.collectUsers(document).length
         : null;
       if (window.OB && typeof window.OB.refreshBulk === 'function') window.OB.refreshBulk();
-      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
+      const bulk = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /内容屏蔽/.test(el.textContent || ''));
       if (!bulk) return { found: false, text: null, visible: false, userCount, modalCandidates };
       const style = getComputedStyle(bulk);
       return {
@@ -409,11 +409,13 @@ async function pickLocalCommentTarget(candidates) {
       // 也不点击脚本自己的“屏蔽选中”，因此不会污染真实名单。
       result.commentManager = await page.evaluate(async () => {
         const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /评论作者|评论屏蔽/.test(el.textContent || ''));
+        const fab = Array.from(document.querySelectorAll('.ob-bulk')).find((el) => /内容屏蔽/.test(el.textContent || ''));
         if (!fab) return { found: false };
         fab.click(); await pause(150);
+        const contentRoot = document.getElementById('ob-content-manager');
+        const contentTabs = contentRoot ? contentRoot.querySelectorAll('[data-ob-content-tab]').length : 0;
         const panel = document.getElementById('ob-comment-manager');
-        if (!panel) return { found: true, panel: false };
+        if (!panel) return { found: true, panel: false, contentTabs };
         const initialRows = panel.querySelectorAll('.ob-cm-row').length;
         await pause(2200);
         const rows = Array.from(panel.querySelectorAll('.ob-cm-row'));
@@ -443,7 +445,7 @@ async function pickLocalCommentTarget(candidates) {
         const managerRecords = window.OB.adapters.bilibili.commentManager.collectRecords() || [];
         const domReplyCount = managerRecords.filter((item) => item && item.level === 'reply').length;
         const result = {
-          found: true, panel: true, initialRows, rows: rows.length, stayedOpen,
+          found: true, panel: true, contentTabs, initialRows, rows: rows.length, stayedOpen,
           loadAll: !!loadAll, refresh: !!refresh, search: !!search, searchRows, searchMatch,
           allSelected, status: status && status.textContent || '', domReplyCount,
           automaticRead: rows.length > 0 && stayedOpen,
@@ -452,7 +454,7 @@ async function pickLocalCommentTarget(candidates) {
         return result;
       });
       const cm = result.commentManager || {};
-      if (!cm.found || !cm.panel || !cm.stayedOpen || !cm.loadAll || !cm.refresh || !cm.search
+      if (!cm.found || !cm.panel || cm.contentTabs !== 3 || !cm.stayedOpen || !cm.loadAll || !cm.refresh || !cm.search
         || !cm.rows || !cm.searchMatch || !cm.allSelected || !cm.automaticRead) {
         result.errors.push('验证失败：真实页面的统一评论管理器未能自动读取、搜索或保持打开');
       }
@@ -573,13 +575,15 @@ async function pickLocalCommentTarget(candidates) {
     if (VERIFY_DANMAKU_TOOL) {
       await page.waitForFunction(() => {
         const tool = document.getElementById('ob-dm-tool');
-        return !!tool && getComputedStyle(tool).display !== 'none' && /弹幕屏蔽\(\d+\)/.test(tool.textContent || '');
+        return !!tool && getComputedStyle(tool).display !== 'none' && /内容屏蔽/.test(tool.textContent || '');
       }, null, { timeout: 8000, polling: 250 }).catch(() => {});
       result.danmakuTool = await page.evaluate(async () => {
         const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const tool = document.getElementById('ob-dm-tool');
         if (!tool || getComputedStyle(tool).display === 'none') return { found: false };
         tool.click(); await pause(120);
+        const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (dmTab) { dmTab.click(); await pause(120); }
         const panel = document.getElementById('ob-dm-manager');
         const initialRows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
         if (!panel || initialRows.length < 3) return { found: true, panel: !!panel, groupCount: initialRows.length };
@@ -753,6 +757,8 @@ async function pickLocalCommentTarget(candidates) {
         const tool = document.getElementById('ob-dm-tool');
         if (!tool || getComputedStyle(tool).display === 'none') return { found: false };
         tool.click(); await pause(120);
+        const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (dmTab) { dmTab.click(); await pause(120); }
         const panel = document.getElementById('ob-dm-manager');
         if (!panel) return { found: true, panel: false };
         const attempted = [];
@@ -1300,7 +1306,7 @@ async function pickLocalCommentTarget(candidates) {
         || result.floatingDock.afterHover.state !== 'expanded'
         || result.floatingDock.afterHover.gearState !== 'expanded'
         || !result.bulkBeforeInteraction.visible
-        || !/^🚫 (?:B站评论屏蔽|拉黑已加载评论作者)\(\d+\)$/.test(result.bulkBeforeInteraction.text || '')) {
+         || !/^🚫 内容屏蔽（评论\/弹幕）$/.test(result.bulkBeforeInteraction.text || '')) {
         failed.push('已加载评论作者批量入口未出现');
       }
       if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');

@@ -1,37 +1,28 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-07
-状态来源：0.48.0 AI 多平台候选；公开版本仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.49.0 统一内容屏蔽标签弹窗候选；公开版本仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.48.0`（本地候选）
-- 构建：`0.48.0-ai-batched-content-cleanup`
+- 当前 userscript：`0.49.0`（本地候选，未推送）
+- 构建：`0.49.0-content-manager-tabs`
 - 当前公开版本：`0.46.2`
 - 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 最近验证的源码快照：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
-- 当前候选源码 SHA-256：`ccb79efbce877ed95c9b2387f3979a57047dd169bbd46e8280f02be6287f76ad`
-- 发布状态：0.48.0 尚未提交、push、创建 tag 或 Release；公开的 0.46.2 仍保留原 tag/Release。
+- 当前候选源码 SHA-256：`3bbe07a2e373bc813ef1f4892d3b0b7b4969534f6d5f92fc4375a4f652ebbd48`
+- 发布状态：0.48.0 已推送至 `origin/master`（`be6e653`）；0.49.0 仅本地，未 push/tag/Release；公开的 0.46.2 仍保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 本轮已落实
 
-- 开发扩展桥使用构建期随机 HMAC、来源/序列校验、存储和只读 URL 白名单；页面不再获得 `window.GM_*`，ready 最多 8 次后降级。
-- `RuntimeResources`、freeze/resume/BFCache/pagehide 边界和共享 SPA route 信号已落地；扫描器、循环、订阅和抖音播放器观察器有统一 teardown。
-- MutationObserver 回调只排队新增子树；下一帧按 8ms/32 根预算处理，超过 128 根合并为全量请求。三个无效启动补扫已移除。
-- B站/微博作者、快速菜单、作品和批量入口改为活动信号触发的一次性防抖；非当前平台不创建活动作者循环。
-- EventLog 缓存日期分片字符数；Store/EventLog 与可选诊断分别报告 persist/flush、mutation、扫描和微博布局耗时。
-- 设置页显示主名单人物、身份和序列化体积，并在 2 MiB/3 MiB 区间提供软预警；不自动删数据，也不增加人数硬限制。
-- 通用生命周期、共享 MutationObserver、脏节点/Shadow DOM 遍历复用；后台暂停非必要工作，恢复前台补同步，一次性 timeout 避免重入。
-- 抖音活动播放器/视频会话缓存，自动弹幕规则按当前观察节点处理，避免逐条弹幕递归深扫。
-- 抖音弹幕管理器关闭时取消进行中的时间轴扫描，并恢复关闭前播放头与播放状态，避免面板消失后继续拖动播放器。
-- B站弹幕 progress/CRC/例外索引、评论管理器和微博评论缓存设置数量上限，只保存必要元数据。
-- 被动 DOM/扫描日志改为 10 秒窗口聚合；用户操作、屏蔽/恢复、状态转移和错误仍逐条记录。
-- 启动运行锁提前到异步扩展存储恢复栅栏之前建立，持久化失败会返回明确失败状态并抑制备份/provider 的成功后置流程；设置页会提示上次主名单未确认落盘。
-- 事件日志达到单日上限时一次性裁剪最近事件；抖音自动弹幕热路径复用已得到的规则匹配结果，通用条目处理也只计算一次屏蔽判定。
-- Store 增加惰性 key→人物身份索引；批量导入/作品级批量屏蔽复用索引，外部标签页变化遇到未确认本地写入时报告冲突并保留当前内存状态。
-- 评论管理器和楼中楼读取增加页面/面板 generation 与 AbortController 会话边界；关闭、SPA 路由切换或节点回收后的旧结果只安全丢弃，不重新渲染或提交名单。
-- 贴吧登录态现代详情页仅增加已捕获的 `.pb-comment-item` + Vue `userInfo.id` 数字身份路径；不透明 `home/main?id` 和首页 `.thread-card` 作者不被猜测。
+- 开发扩展桥、loopback 网关、存储恢复、生命周期和页面会话均有来源/序列/teardown/AbortController 边界；页面不获得 `window.GM_*`，桥接失败有界降级。
+- 通用扫描、Shadow DOM、作者/批量入口和 EventLog 走共享节流/预算路径；后台页面暂停非必要工作，名单索引、备份和日志写入失败保持可诊断，不自动删数据。
+- B站/抖音弹幕会话与自动规则按当前视频隔离；时间轴管理器关闭、换片或取消时恢复页面播放状态并释放扫描资源。
+- 评论、楼中楼、作品级批量和平台适配器均保留 generation/身份规范化/只读加载边界；旧异步结果不会重新渲染或提交名单。
+- B站和抖音的视频评论/弹幕入口合并为一个「内容屏蔽」按钮，统一弹窗提供评论、弹幕、AI 三个标签；切换标签会销毁旧子管理器并释放对应的 FloatingDock/键盘/扫描资源。
+- AI 网关、模型、规则、分析与审核控件已从设置页迁移到 B站/抖音统一弹窗的「AI 屏蔽」标签；设置页保留迁移提示，loopback 校验、脱敏出站和人工确认边界不变。
+- 贴吧现代详情页只接受已捕获的 `.pb-comment-item` + Vue `userInfo.id` 数字身份；不透明作者参数不被猜测。
 
 ## 2026-09-06 AI 智能屏蔽第一阶段（OB-AI-001）
 
@@ -41,19 +32,33 @@
 
 ## 2026-09-06 AI 多平台采集与一键网关启动（OB-AI-002）
 
-- 范围：保留 B站 AI 评论/弹幕统一采集，新增抖音当前页面已观察评论/弹幕采集、活动视频会话隔离和根目录双击启动文件；不自动展开/滚动、不调用抖音私有接口、不引入 Native Messaging，不改 V2。
-- `structure regression`：`node --check omniblock.user.js`、`node test/ai-screening.cjs` 8/8、`node test/ai-platforms.cjs` 5/5、`node test/gateway-smoke.cjs` 完整 Docker smoke、`node test/run.cjs` 20/20、`node test/state.cjs` 9/9、`node test/quickblock.cjs` 36/36、`node test/danmaku-auto.cjs` 7/7、`node test/comment-manager.cjs` 3/3、`node test/work-block.cjs` 3/3、`node test/performance.cjs` 8/8、`node test/dev-extension.cjs` 5/5、`node test/adapters.cjs` 28/28、`node test/douyin.cjs` 2/2 均通过，控制台/页面错误为 0。网关 mock 验证健康、OpenAI 兼容入口、429 fallback、Key/YAML 分离；静态门禁和 2026-09-07 直接运行 `cmd.exe /c "启动网关.cmd"` 均确认包装器只调用 PowerShell 7、不含凭据，且健康检查通过。
-- `real-site verified`：2026-09-06 匿名隔离 B站只读探针实际加载 `bilibili.com/video/...` 候选 0.48.0；观察到 2 个根评论、4 个子评论、6 个评论菜单，4 个子评论身份解析成功，评论管理器 6 行，弹幕管理器 23 组/21 个发送者，浮动弹幕 2 条，评论/楼/弹幕入口隐藏恢复通过，错误为 0；根评论分页仍为 partial。未点击平台写入控件，未读取 Cookie。
-- `real-site verified`：2026-09-06 同一专用 Chrome 的开发扩展刷新后，新建 B站页面实际运行 `0.48.0-ai-batched-content-cleanup`；设置页出现 AI 区块、loopback 状态和 `启动网关.cmd` 说明，已有开启设置触发实际审核框（80 条单批、62 条候选），本轮关闭审核框，未确认候选或点击平台写入控件。
-- `real-site verified`：2026-09-07 用户授权的专用 Chrome 抖音登录态实际运行 0.48.0；当前视频观察到 15 条带发送者身份弹幕、10 条评论，评论/弹幕管理器搜索与批量确认撤销、弹幕悬浮入口和自动规则隐藏恢复均通过，页面错误为 0；未点平台写入控件。
-- `blocked`：2026-09-07 同 URL 换片发生真实视频会话键变化，但换片后页面虽有 30 个弹幕 DOM 节点，管理器暂时无可稳定读取的新行，跨视频隔离线上证据仍 blocked；匿名入口验证码阻断保留，未以此判定代码失败。
-- 候选边界：本轮没有执行商汤“日日新”配置、真实免费额度耗尽、长期 quota/cooldown 或真实 provider fallback 联调；官方 DeepSeek 的历史联调属于 OB-AI-001，不升级为本项商汤证据。未公开发布。
+- 范围：保留 B站 AI 采集，新增抖音已观察评论/弹幕、活动视频会话隔离和根目录双击启动；当时明确不自动展开/滚动、不调用私有接口、不改 V2。
+- `structure regression`：AI、平台、网关、生命周期、评论/弹幕、性能、扩展、适配器和文档矩阵均按 v0.48.0 记录通过；网关健康、429 fallback、Key/YAML 分离和 `启动网关.cmd` 静态/实际启动门禁通过。
+- `real-site verified`：2026-09-06 B站匿名探针与专用 Chrome 设置/审核框通过；2026-09-07 抖音登录态当前视频 15 条带身份弹幕、10 条评论及管理器/自动规则闭环通过，未点平台写入控件。
+- `blocked`：同 URL 换片后的新行不足、匿名入口验证码；商汤 provider、额度、长期 cooldown/fallback 未联调。
 
 ## 2026-09-07 AI 分析 watchdog、全量分批、抖音正文清洗与超时预算（OB-AI-003~007）
 
 - `structure regression`：watchdog 1/1、探针清理 1/1、抖音 AI 6/6、全量分批 2/2、开发扩展 5/5、桥接降级失败 1/1；userscript 与 service worker 60 秒预算断言通过，页面/控制台错误为 0。
 - `real-site verified`：2026-09-07 用户授权专用 Chrome 抖音登录态刷新候选扩展后，当前页观察到 245 条内容；“分析本页”进入 4 批并完成 245/245，审核态 8 条候选，桥接为 `ready`，网关收到 4 次 POST 且均为 HTTP 200，`lastError` 为空，控件尾缀命中 0；未点平台写入控件。
 - `blocked`：抖音验证码；换片新行不足；商汤未联调。2026-09-07 Docker engine 已恢复（Model Runner 关闭）；health/models 200、compose healthy；目录保留，数据卷未动。
+
+## 2026-09-07 抖音一键加载与 AI 分析闭环（OB-AI-008）
+
+- 范围：抖音设置页一次点击完成评论展开/有限滚动、当前视频弹幕时间轴扫描、实际记录收集、AI 分批和人工审核；不调用私有接口、不执行平台写入、不自动确认候选。
+- `structure regression`：`node test/ai-autoload.cjs` 3/3；覆盖加载后记录全量分析、播放器状态 class 变化不误取消和 AbortSignal 取消；语法、AI/评论/弹幕回归和文档门禁通过。
+- `real-site verified`：2026-09-07 用户授权专用 Chrome 登录态 `douyin.com/video/...` 点击一次后，实际记录 365 条，弹幕时间轴 55/55，5 批完成 365/365，审核框 28 条候选，错误为 0；未确认候选或点击平台写入控件。
+- 修复根因：播放器播放状态 class 不再被当作换片；明确视频身份改变仍取消旧 run。加载/分析可见进度并可取消。
+- `blocked`：匿名入口验证码仍不稳定；商汤 provider、额度和真实 fallback 未纳入本候选。
+- `maintenance-check` 本地矩阵和独立 B站探针重跑通过；综合 `BLOCKED`：一次匿名 B站样本无 `aid`、抖音验证码、微博无 spacer。
+
+## 2026-09-07 统一内容屏蔽标签弹窗（OB-UI-002）
+
+- 范围：B站/抖音各保留一个「内容屏蔽（评论/弹幕）」入口；统一弹窗内以「屏蔽评论」「屏蔽弹幕」「AI 屏蔽」三个标签承载原有功能。AI 控件从设置页移出，但不改变网关、身份键、审核和名单写入边界。
+- `structure regression`：B站 quickblock 36/36、自动弹幕 7/7、跨平台适配器 28/28、统一评论管理器 3/3；AI screening、bridge、batch、autoload 均通过，`node --check omniblock.user.js` 和 `node test/dev-browser.cjs build` 通过，构建标识为 `0.49.0-content-manager-tabs`。
+- 回归根因修复：B站旧弹幕按钮移除后，弹幕管理器不再因旧按钮不存在而提前返回；屏蔽/恢复名单变化会立即重绘嵌入面板。统一入口隐藏时同时关闭评论、弹幕和 AI 子面板。
+- `real-site verified`：2026-09-07 隔离匿名 B站视频页（页面形式 `bilibili.com/video/...`，未登录）实际显示统一「内容屏蔽（评论/弹幕）」入口；三标签均挂载，评论管理器 2 行可读取/搜索/全选，弹幕管理器 16 组/15 位发送者可单条与批量屏蔽后撤销，浮动弹幕本地入口也完成屏蔽/撤销。未读取 Cookie，未点击 B站举报、官方拉黑、关注或发帖控件；根评论分页仍按探针结果标记 partial。
+- `blocked`：2026-09-07 抖音匿名隔离入口落在「验证码中间页」，没有可验证的视频评论/弹幕条目；抖音三标签真站结果需用户另行授权登录态只读探针。候选仍未 push/tag/Release。
 
 ## 2026-08-29 文档治理重组（本轮）
 
@@ -139,12 +144,12 @@
 
 ### `structure regression`
 
-- 当前 0.48.0 候选的 AI（B站 8/8、抖音 5/5）、通用、状态、B站、弹幕、评论管理器、作品级、性能、开发扩展、适配器、微博回放回归分别按命令记录；
+- 当前 0.49.0 候选的统一内容弹窗与 AI 自动加载已分别通过受影响回归；B站 quickblock 36/36、自动弹幕 7/7、跨平台适配器 28/28、评论管理器 3/3；0.48.0 的 AI（B站 8/8、抖音 5/5）、通用、状态、作品级、性能、开发扩展、微博回放分别按命令记录；
   不用“全绿”替代各项数字。语法、docs check 和 diff check 作为同轮门禁。
 
 ### `real-site verified`
 
-- 2026-09-06 匿名隔离 B站探针和专用 Chrome 新页面均实际加载 0.48.0 候选；真实 B站结构结果与 AI 设置/审核框观察见上方 OB-AI-002 条目。
+- 2026-09-06 匿名隔离 B站探针和专用 Chrome 新页面实际加载 0.48.0；2026-09-07 专用 Chrome 抖音登录态实际加载 0.49.0，详见 OB-AI-008。
 - 其他平台的日期、页面形式、样本量和用户体验保留在各自 dated 条目；B站匿名评论分页仍只按当轮实际样本记证据。
 
 ### `blocked`
@@ -158,14 +163,15 @@ node test/docs-check.cjs
 node test/maintenance-check.cjs
 node test/ai-screening.cjs
 node test/ai-platforms.cjs
+node test/ai-autoload.cjs
 node test/gateway-smoke.cjs
 node test/dev-browser.cjs build
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-专用 Chrome 当前已加载本地 0.48.0 候选；本轮未执行平台写入。
-公开的 0.46.2 tag 与 Release 保持不变；0.48.0 未提交、未 push、未创建 tag/Release。
+专用 Chrome 本轮已加载本地 0.49.0 候选；本轮未执行平台写入。
+公开的 0.46.2 tag 与 Release 保持不变；0.48.0 已推送到 `origin/master`，0.49.0 尚未 push，均未创建新 tag/Release。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是，在专用 Chrome 以当前已加载视频为起点重放一次稳定换片并取得新管理器行；在此之前保留跨视频隔离 `blocked`，不把匿名验证码页当作平台通过，也不公开发布。
+下一项最有价值的验证是用户在实际 B站/抖音页面打开统一弹窗并切换三个标签；若要公开发布，需另获当轮 push/tag/Release 授权，不把匿名验证码页当作平台通过。

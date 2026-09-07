@@ -293,10 +293,14 @@ out.managerToolVisible = visible(dmTool);
 out.managerToolText = dmTool && dmTool.textContent;
 out.managerToolPosition = toolbarPosition(dmTool);
 out.managerToolRightColumn = !!dmTool && getComputedStyle(dmTool).right === '14px'
-  && getComputedStyle(dmTool).bottom === '62px';
+  && getComputedStyle(dmTool).bottom === '106px';
 if (dmTool) {
   dmTool.click();
   await pause(120);
+  const contentRoot = document.getElementById('ob-content-manager');
+  out.contentTabCount = contentRoot ? contentRoot.querySelectorAll('[data-ob-content-tab]').length : 0;
+  const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+  if (dmTab) { dmTab.click(); await pause(120); }
   const manager = document.getElementById('ob-douyin-dm-manager');
   out.managerPresent = !!manager;
   out.managerRows = manager ? manager.querySelectorAll('.ob-dd-row').length : 0;
@@ -453,6 +457,8 @@ const closeExisting = document.querySelector('#ob-douyin-dm-manager .ob-dd-close
 if (closeExisting) closeExisting.click();
 dmTool.click();
 await pause(180);
+const initialDmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+if (initialDmTab) { initialDmTab.click(); await pause(120); }
 let manager = document.getElementById('ob-douyin-dm-manager');
 if (!manager) { out.reason = '当前视频弹幕管理器未能打开'; return out; }
 await waitFor(() => manager.querySelectorAll('.ob-dd-row').length > 0, 2500);
@@ -469,6 +475,8 @@ if (oldClose) oldClose.click();
 await waitFor(() => !document.getElementById('ob-douyin-dm-manager'), 1500);
 dmTool.click();
 await pause(180);
+const reopenedDmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+if (reopenedDmTab) { reopenedDmTab.click(); await pause(120); }
 manager = document.getElementById('ob-douyin-dm-manager');
 if (!manager) { if (sentinel.isConnected) sentinel.remove(); out.reason = '加入切换哨兵后旧管理器未能重新打开'; return out; }
 out.sentinelRecorded = await waitFor(() => !!manager.querySelector('[data-key="' + sentinelKey + '"]'), 2500);
@@ -497,12 +505,14 @@ out.managerClosed = await waitFor(() => !document.getElementById('ob-douyin-dm-m
 // 的弹幕工具，避免把探针 stale-DOM 误报成产品未能隔离会话。
 const nextToolReady = await waitFor(() => {
   const tool = document.getElementById('ob-douyin-dm-tool');
-  return !!tool && /\\(\\d+\\)/.test(tool.textContent || '');
+  return !!tool && /内容屏蔽/.test(tool.textContent || '');
 }, 2500);
 const nextDmTool = document.getElementById('ob-douyin-dm-tool');
 if (!nextToolReady || !nextDmTool) { out.reason = '切换后新的抖音弹幕管理器入口未能挂载'; return out; }
 nextDmTool.click();
 await pause(180);
+const nextDmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+if (nextDmTab) { nextDmTab.click(); await pause(120); }
 manager = document.getElementById('ob-douyin-dm-manager');
 if (!manager) { out.reason = '切换后新弹幕管理器未能打开'; return out; }
 await waitFor(() => manager.querySelectorAll('.ob-dd-row').length > 0, 5000);
@@ -753,8 +763,9 @@ async function runStabilityCheck(send, sessionId) {
         || probe.commentSearchWorks === false || !probe.commentBatchEnabled
         || (probe.commentModalScopePresent && !probe.commentModalBulkAbsent)
       );
-      if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
-      || !probe.gearRightColumn
+       if (!probe.managerToolPresent || !probe.managerToolVisible || !probe.managerToolRightColumn
+       || probe.contentTabCount !== 3
+       || !probe.gearRightColumn
       || !probe.managerPresent || !probe.managerRows || !probe.managerSearchPresent
       || !probe.managerScanPresent || probe.managerSearchWorks === false
       || !probe.managerBatchEnabled || !probe.managerBlocked || !probe.managerRestored

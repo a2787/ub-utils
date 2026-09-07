@@ -170,9 +170,14 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
   await page.evaluate(() => window.OB.openOptions());
   await page.waitForSelector('#ob-panel');
+  const settingsHasAI = await page.locator('#ob-panel #ob-ai-enabled').count();
+  if (!settingsHasAI) report.pass.push('AI-12 设置页不再承载 AI 配置控件');
+  else report.fail.push('AI-12 AI 配置控件仍残留在设置页');
+  await page.evaluate(() => { window.OB.openOptions(); window.OB.openContentManager(window.OB.adapters.bilibili, 'ai'); });
+  await page.waitForSelector('#ob-content-manager #ob-ai-status');
   const launcherHint = await page.locator('.ob-ai-intro').textContent();
-  if (/启动网关\.cmd/.test(launcherHint || '') && /不直接启动宿主机进程/.test(launcherHint || '')) report.pass.push('AI-8 设置页说明根目录双击启动网关，未承诺直接启动宿主机进程');
-  else report.fail.push('AI-8 设置页缺少一键启动说明：' + String(launcherHint || '').slice(0, 300));
+  if (/启动网关\.cmd/.test(launcherHint || '') && /loopback 网关/.test(launcherHint || '')) report.pass.push('AI-8 AI 标签页说明根目录双击启动网关并保持 loopback 边界');
+  else report.fail.push('AI-8 AI 标签页缺少一键启动说明：' + String(launcherHint || '').slice(0, 300));
   await page.locator('#ob-ai-url').fill('https://example.invalid/v1/chat/completions');
   await page.locator('#ob-ai-save').click();
   const rejectedGateway = await page.evaluate(() => ({

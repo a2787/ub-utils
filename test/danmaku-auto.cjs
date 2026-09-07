@@ -149,7 +149,10 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         disabledKeepsOriginal: disabledText.includes('AUTO UID candidate') && disabledText.includes('REGEX_123') && disabledText.includes('keep this danmaku'),
         statusBeforeDisable,
         status: window.OB.adapters.bilibili.getAutoDanmakuStatus(),
-        quickHidden: getComputedStyle(document.getElementById('ob-dm-tool') || document.body).display === 'none',
+        quickHidden: (() => {
+          const quickTool = document.getElementById('ob-dm-tool');
+          return !quickTool || getComputedStyle(quickTool).display === 'none';
+        })(),
       };
     });
     if (biliResult.keyword && biliResult.duplicateRejected && biliResult.regex && biliResult.regexMatches && biliResult.autoRemoved
@@ -328,6 +331,9 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         if (!tool) return { tool: false };
         tool.click();
         await pause(80);
+        const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (dmTab) dmTab.click();
+        await pause(80);
         const panel = document.getElementById('ob-douyin-dm-manager');
         const autoRow = panel && Array.from(panel.querySelectorAll('.ob-dd-row'))
           .find((item) => item.textContent.includes('AUTO 新视频弹幕'));
@@ -373,6 +379,9 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         await pause(40);
         const cancelRestoredTime = Math.abs(syntheticVideo.currentTime - 33) < 0.5;
         tool.click();
+        await pause(80);
+        const reopenedTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
+        if (reopenedTab) reopenedTab.click();
         await pause(80);
         const reopenedPanel = document.getElementById('ob-douyin-dm-manager');
         const reopenedScan = reopenedPanel && reopenedPanel.querySelector('.ob-dd-scan');

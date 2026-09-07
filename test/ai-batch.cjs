@@ -104,13 +104,13 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       itemIds: ids.length, uniqueIds: uniqueIds.size,
     }));
   }
-  await page.evaluate(() => window.OB.openOptions());
+  await page.evaluate(() => window.OB.openContentManager(window.OB.adapters.douyin, 'ai'));
   const statusText = await page.locator('#ob-ai-status').textContent().catch(() => '');
   if (!/仅分析前 80 条|只分析前 80 条|仅展示前 80 条/.test(statusText || '')
     && /全部 85 条/.test(statusText || '')) {
-    report.pass.push('AI-BATCH-2 设置页状态不再把每批上限误报为全页截断');
+    report.pass.push('AI-BATCH-2 AI 标签页状态不再把每批上限误报为全页截断');
   } else {
-    report.fail.push('AI-BATCH-2 设置页分批文案异常：' + String(statusText || '').slice(0, 400));
+    report.fail.push('AI-BATCH-2 AI 标签页分批文案异常：' + String(statusText || '').slice(0, 400));
   }
   await browser.close();
   console.log('PASS:', report.pass.join(' | ') || '无');
