@@ -782,7 +782,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     await weiboPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: weiboFixture }));
     await weiboPage.addInitScript({ content: shim('') + '\n' + userscript });
     // 人工合成详情页 URL，仅用于本地夹具路由。
-    await weiboPage.goto('https://weibo.com/fixture-user/fixture-detail', { waitUntil: 'domcontentloaded' });
+    await weiboPage.goto('https://weibo.com/fixture-user/fixture-detail#comment', { waitUntil: 'domcontentloaded' });
     await weiboPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1400));
     const weiboDetail = await weiboPage.evaluate(async () => {
@@ -802,6 +802,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const genericHoverButtonCount = document.querySelectorAll('.ob-block-btn').length;
       const inlineButtonsAfterHover = comments.every((item) => !!item.querySelector('.ob-weibo-comment-block'));
       document.querySelectorAll('.ob-block-btn').forEach((button) => button.remove());
+      if (window.OB.refreshBulk) window.OB.refreshBulk();
+      await new Promise((resolve) => setTimeout(resolve, 240));
       const bulk = document.querySelector('.ob-bulk[data-ob-kind="page"]');
       // 「共 N 条回复」展开行也匹配 .item2，但没有作者身份，不能出现入口。
       const expandRow = Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2'))
@@ -921,7 +923,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboDetail.authorConfirm && weiboDetail.authorNamed && weiboDetail.authorBlocked && weiboDetail.authorRestored
       && weiboDetail.duplicateQuickCount === 0
       && weiboDetail.expandRowGuard
-      && /微博\/评论作者\(4\)/.test(weiboDetail.bulkText || '')
+      && /内容屏蔽（评论\/AI）/.test(weiboDetail.bulkText || '')
       && weiboDetail.confirmText.includes('回复作者乙')
       && weiboDetail.blockedReply && weiboDetail.firstVisible && weiboDetail.replyHidden && weiboDetail.outerPostVisible) {
       report.pass.push('weibo-detail-comments: captured item1 plus referenced item2 single/bulk blocking; no generic hover entry');

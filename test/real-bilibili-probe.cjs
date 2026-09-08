@@ -413,7 +413,9 @@ async function pickLocalCommentTarget(candidates) {
         if (!fab) return { found: false };
         fab.click(); await pause(150);
         const contentRoot = document.getElementById('ob-content-manager');
-        const contentTabs = contentRoot ? contentRoot.querySelectorAll('[data-ob-content-tab]').length : 0;
+        const contentTabNodes = contentRoot ? Array.from(contentRoot.querySelectorAll('[data-ob-content-tab]')) : [];
+        const contentTabs = contentTabNodes.length;
+        const contentTabIds = contentTabNodes.map((tab) => tab.getAttribute('data-ob-content-tab') || '');
         const panel = document.getElementById('ob-comment-manager');
         if (!panel) return { found: true, panel: false, contentTabs };
         const initialRows = panel.querySelectorAll('.ob-cm-row').length;
@@ -445,16 +447,29 @@ async function pickLocalCommentTarget(candidates) {
         const managerRecords = window.OB.adapters.bilibili.commentManager.collectRecords() || [];
         const domReplyCount = managerRecords.filter((item) => item && item.level === 'reply').length;
         const result = {
-          found: true, panel: true, contentTabs, initialRows, rows: rows.length, stayedOpen,
+          found: true, panel: true, contentTabs, contentTabIds, initialRows, rows: rows.length, stayedOpen,
           loadAll: !!loadAll, refresh: !!refresh, search: !!search, searchRows, searchMatch,
           allSelected, status: status && status.textContent || '', domReplyCount,
           automaticRead: rows.length > 0 && stayedOpen,
         };
+        const keywordTab = contentRoot && contentRoot.querySelector('[data-ob-content-tab="keywords"]');
+        result.keywordTab = !!keywordTab;
+        if (keywordTab) {
+          keywordTab.click();
+          await pause(100);
+          result.keywordSurface = !!contentRoot.querySelector('[data-ob-content-pane="keywords"] [data-ob-keyword-surface]');
+        } else {
+          result.keywordSurface = false;
+        }
         const close = panel.querySelector('.ob-cm-close'); if (close) close.click();
+        const contentClose = contentRoot && contentRoot.querySelector('.ob-content-close');
+        if (contentClose) contentClose.click();
         return result;
       });
       const cm = result.commentManager || {};
-      if (!cm.found || !cm.panel || cm.contentTabs !== 3 || !cm.stayedOpen || !cm.loadAll || !cm.refresh || !cm.search
+      const cmTabs = new Set(cm.contentTabIds || []);
+      if (!cm.found || !cm.panel || ![3, 4].includes(cm.contentTabs) || !cmTabs.has('comments') || !cmTabs.has('ai')
+        || !cmTabs.has('keywords') || !cm.keywordTab || !cm.keywordSurface || !cm.stayedOpen || !cm.loadAll || !cm.refresh || !cm.search
         || !cm.rows || !cm.searchMatch || !cm.allSelected || !cm.automaticRead) {
         result.errors.push('验证失败：真实页面的统一评论管理器未能自动读取、搜索或保持打开');
       }
@@ -495,7 +510,10 @@ async function pickLocalCommentTarget(candidates) {
       const apiRootOk = api.code === 0 && api.replies > 0 && api.hasCtime && api.hasMid;
       const apiSubOk = !api.sub || api.sub.skipped
         || (api.sub.code === 0 && api.sub.count > 0 && api.sub.hasCtime && api.sub.hasMid);
-      if (!apiRootOk || !apiSubOk) {
+      if (api.blocked) {
+        result.blocked = result.blocked || [];
+        result.blocked.push('blocked：真实页面没有可读取的数字 aid，无法复核评论 API 分页契约');
+      } else if (!apiRootOk || !apiSubOk) {
         result.errors.push('验证失败：真实评论 API 契约未返回可分页的 mid/ctime 根评论与子回复');
       }
     }
@@ -579,6 +597,15 @@ async function pickLocalCommentTarget(candidates) {
       }, null, { timeout: 8000, polling: 250 }).catch(() => {});
       result.danmakuTool = await page.evaluate(async () => {
         const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const waitForConfirm = async () => {
+          const deadline = Date.now() + 20000;
+          let confirm = document.getElementById('ob-confirm');
+          while (Date.now() < deadline && !confirm) {
+            await pause(100);
+            confirm = document.getElementById('ob-confirm');
+          }
+          return confirm;
+        };
         const tool = document.getElementById('ob-dm-tool');
         if (!tool || getComputedStyle(tool).display === 'none') return { found: false };
         tool.click(); await pause(120);
@@ -592,7 +619,7 @@ async function pickLocalCommentTarget(candidates) {
         const firstHashes = (first.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean);
         const single = first.querySelector('.ob-dm-single');
         single.click(); await pause(100);
-        let confirm = document.getElementById('ob-confirm');
+        let confirm = await waitForConfirm();
         if (!confirm) return { found: true, panel: true, groupCount: initialRows.length, singleConfirm: false };
         confirm.querySelector('.ob-ok').click(); await pause(200);
         const singleBlocked = !!firstHashes.length && firstHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
@@ -613,7 +640,7 @@ async function pickLocalCommentTarget(candidates) {
         const batchReady = batchRows.length === 2 && !!batchHashes.length && batch && !batch.disabled && /2组/.test(batch.textContent || '');
         if (batchReady) batch.click();
         await pause(100);
-        confirm = document.getElementById('ob-confirm');
+        confirm = await waitForConfirm();
         if (confirm) { confirm.querySelector('.ob-ok').click(); await pause(200); }
         const batchBlocked = batchReady && !!confirm && batchHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
         const persons = Object.values(window.OB.Store.persons());
@@ -723,9 +750,18 @@ async function pickLocalCommentTarget(candidates) {
         if (floating.pickShown) {
           floating.transaction = await page.evaluate(async () => {
             const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const waitForConfirm = async () => {
+              const deadline = Date.now() + 20000;
+              let confirm = document.getElementById('ob-confirm');
+              while (Date.now() < deadline && !confirm) {
+                await pause(100);
+                confirm = document.getElementById('ob-confirm');
+              }
+              return confirm;
+            };
             const pick = document.getElementById('ob-dm-pick');
             pick.click(); await pause(150);
-            const confirm = document.getElementById('ob-confirm');
+            const confirm = await waitForConfirm();
             if (!confirm) return { confirm: false };
             // 确认框把标签与身份键放在同一个 `.ob-sub` 文本里，需要从文本中提取。
             const keys = ((confirm.textContent || '').match(/bili:dmhash:[0-9a-f]{1,8}/g) || []);
@@ -1306,7 +1342,7 @@ async function pickLocalCommentTarget(candidates) {
         || result.floatingDock.afterHover.state !== 'expanded'
         || result.floatingDock.afterHover.gearState !== 'expanded'
         || !result.bulkBeforeInteraction.visible
-         || !/^🚫 内容屏蔽（评论\/弹幕）$/.test(result.bulkBeforeInteraction.text || '')) {
+         || !/^🚫 内容屏蔽（评论\/(?:弹幕\/)?AI\/关键词）$/.test(result.bulkBeforeInteraction.text || '')) {
         failed.push('已加载评论作者批量入口未出现');
       }
       if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');

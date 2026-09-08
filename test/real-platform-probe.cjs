@@ -240,6 +240,47 @@ async function pickWeiboDetailTarget(browser, candidates) {
             platform,
           };
         }, { id: target.id, showDetails });
+        if (verifyLocal && (target.id === 'weibo' || target.id === 'zhihu') && result.page && result.page.obReady) {
+          result.contentManager = await page.evaluate(async () => {
+            const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+            if (!fab) return { found: false };
+            const style = getComputedStyle(fab);
+            const rect = fab.getBoundingClientRect();
+            const visible = style.display !== 'none' && style.visibility !== 'hidden'
+              && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+            fab.click();
+            await pause(180);
+            const root = document.getElementById('ob-content-manager');
+            if (!root) return { found: true, visible, panel: false };
+            const tabNodes = Array.from(root.querySelectorAll('[data-ob-content-tab]'));
+            const tabIds = tabNodes.map((tab) => tab.getAttribute('data-ob-content-tab') || '');
+            const tabLabels = tabNodes.map((tab) => (tab.textContent || '').replace(/\s+/g, ' ').trim());
+            const aiTab = root.querySelector('[data-ob-content-tab="ai"]');
+            let aiSurface = false;
+            if (aiTab) {
+              aiTab.click();
+              await pause(120);
+              aiSurface = !!root.querySelector('[data-ob-content-pane="ai"] [data-ob-ai-surface]');
+            }
+            const commentsPane = !!root.querySelector('[data-ob-content-pane="comments"]');
+            const close = root.querySelector('.ob-content-close');
+            if (close) close.click();
+            return {
+              found: true, visible, panel: true, contentTabs: tabNodes.length,
+              tabIds, tabLabels, commentsPane, aiTab: !!aiTab, aiSurface,
+              keywordTab: !!root.querySelector('[data-ob-content-tab="keywords"]'),
+            };
+          });
+          if (target.id === 'weibo' && onDetail && result.page.platform && result.page.platform.commentCount > 0) {
+            const content = result.contentManager || {};
+            if (!content.found || !content.panel || content.contentTabs !== 2
+              || !(content.tabIds || []).includes('comments') || !(content.tabIds || []).includes('ai')
+              || !content.commentsPane || !content.aiTab || !content.aiSurface || content.keywordTab) {
+              result.errors.push('验证失败：微博真实详情页未显示评论/AI统一内容屏蔽弹窗');
+            }
+          }
+        }
         if (target.id === 'weibo' && onDetail && result.page && result.page.work) {
           const work = result.page.work;
           if (work.error) result.errors.push('验证失败：微博作品作用域查询异常：' + work.error);
@@ -325,6 +366,19 @@ async function pickWeiboDetailTarget(browser, candidates) {
             const restoredRow = liveRows().find((item) => keyOf(item) === key) || row;
             const restored = !!undo && !window.OB.Index.isBlocked(key)
               && getComputedStyle(restoredRow).display !== 'none' && restoredRow.getBoundingClientRect().height > 0;
+            const restoredDiagnostics = {
+              undo: !!undo,
+              keyBlocked: window.OB.Index.isBlocked(key),
+              rowFound: !!restoredRow,
+              connected: !!restoredRow && restoredRow.isConnected,
+              display: restoredRow ? getComputedStyle(restoredRow).display : '',
+              visibility: restoredRow ? getComputedStyle(restoredRow).visibility : '',
+              opacity: restoredRow ? getComputedStyle(restoredRow).opacity : '',
+              height: restoredRow ? Math.round(restoredRow.getBoundingClientRect().height) : 0,
+              className: restoredRow ? String(restoredRow.className).slice(0, 120) : '',
+              inlineDisplay: restoredRow && restoredRow.style ? restoredRow.style.display : '',
+              inlineHeight: restoredRow && restoredRow.style ? restoredRow.style.height : '',
+            };
 
             // 顶层评论在当前真站会被 vue-recycle-scroller 放进独立 item-view。
             // 只验证脚本自身入口和本地名单，不触碰微博举报/官方拉黑等写入控件。
@@ -504,7 +558,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
                 };
               }
             }
-            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, topLevelSpacer,
+            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, restoredDiagnostics, topLevelSpacer,
               diagnostics: window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null };
           });
           const local = result.localBlock || {};

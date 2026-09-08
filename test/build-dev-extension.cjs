@@ -325,6 +325,17 @@ const serviceWorker = String.raw`(() => {
     } catch (error) { return ''; }
   }
 
+  function normalizeBiliCardUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'https:' || url.username || url.password || url.hash
+        || url.hostname !== 'api.bilibili.com' || url.pathname !== '/x/web-interface/card') return '';
+      if (Array.from(url.searchParams.keys()).some((key) => key !== 'type' && key !== 'mid')) return '';
+      if (url.searchParams.get('type') !== 'json' || !/^\d{1,20}$/.test(url.searchParams.get('mid') || '')) return '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
+
   function normalizeHeaders(headers) {
     if (!headers || typeof headers !== 'object') return null;
     const out = {};
@@ -373,19 +384,30 @@ const serviceWorker = String.raw`(() => {
       if (state) state.controller.abort('aborted');
       return false;
     }
-    if (message.type !== 'omniblock-xhr' || String(message.method || '').toUpperCase() !== 'POST') return false;
-    const url = normalizeLoopbackUrl(message.url);
-    const headers = normalizeHeaders(message.headers);
-    if (!url || !headers || !allowedBody(message.body)) {
+    if (message.type !== 'omniblock-xhr') return false;
+    const method = String(message.method || '').toUpperCase();
+    const biliUrl = method === 'GET' ? normalizeBiliCardUrl(message.url) : '';
+    const biliHeaders = !message.headers || Object.keys(message.headers).length === 0 ? {} : null;
+    const loopbackUrl = method === 'POST' ? normalizeLoopbackUrl(message.url) : '';
+    const loopbackHeaders = method === 'POST' ? normalizeHeaders(message.headers) : null;
+    const loopbackBodyOk = method === 'POST' && loopbackUrl && loopbackHeaders && allowedBody(message.body);
+    const request = biliUrl && biliHeaders
+      ? { url: biliUrl, method: 'GET', headers: {}, body: undefined, timeout: 15000 }
+      : loopbackBodyOk
+        ? { url: loopbackUrl, method: 'POST', headers: loopbackHeaders, body: message.body, timeout: MAX_AI_REQUEST_TIMEOUT_MS }
+        : null;
+    if (!request) {
       sendResponse({ type: 'xhr-response', id, ok: false, error: 'request-not-allowed' });
       return false;
     }
     const controller = new AbortController();
     const state = { controller, timedOut: false };
     controllers.set(key, state);
-    const timeout = Math.max(1000, Math.min(Number(message.timeout) || MAX_AI_REQUEST_TIMEOUT_MS, MAX_AI_REQUEST_TIMEOUT_MS));
+    const timeout = Math.max(1000, Math.min(Number(message.timeout) || request.timeout, request.timeout));
     const timeoutId = setTimeout(() => { state.timedOut = true; controller.abort('timeout'); }, timeout);
-    fetch(url, { method: 'POST', credentials: 'omit', headers, body: message.body, signal: controller.signal })
+    const fetchOptions = { method: request.method, credentials: 'omit', headers: request.headers, signal: controller.signal };
+    if (request.body !== undefined) fetchOptions.body = request.body;
+    fetch(request.url, fetchOptions)
       .then(async (response) => {
         const responseText = await response.text();
         if (responseText.length > MAX_RESPONSE_CHARS) throw new Error('response-too-large');

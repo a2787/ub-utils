@@ -173,6 +173,30 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   if (afterOrdinaryMutation.count === stableCount) report.pass.push('DY-AI-5 普通弹幕属性变化不会触发重复 AI 请求');
   else report.fail.push('DY-AI-5 普通弹幕变化触发了额外请求：' + JSON.stringify(afterOrdinaryMutation));
 
+  // 人工合成：首轮分析完成后才插入一条新评论；第二次请求只能携带这条
+  // 尚未分析的稳定记录，不能把旧弹幕/评论整批再次发送到网关。
+  await page.evaluate(() => {
+    window.OB.ai.closeReview();
+    const late = document.createElement('div');
+    late.id = 'dy-ai-comment-late'; late.setAttribute('data-e2e', 'comment-item');
+    late.innerHTML = '<a data-e2e="comment-username" href="/user/MS4wLjABLate">晚到评论作者</a><span>晚到评论引战</span>';
+    document.body.appendChild(late);
+  });
+  await sleep(1800);
+  const incremental = await page.evaluate(() => {
+    const bodies = window.__aiBodies || [];
+    const latest = bodies[bodies.length - 1] || {};
+    let input = {};
+    try { input = JSON.parse(latest.messages && latest.messages[1] && latest.messages[1].content || '{}'); } catch (error) {}
+    const rows = Array.from(document.querySelectorAll('#ob-ai-review .ob-ai-candidate-text')).map((node) => node.textContent);
+    return { count: bodies.length, items: input.items || [], rows, status: window.OB.ai.status() };
+  });
+  if (incremental.count === stableCount + 1 && incremental.items.length === 1
+    && /晚到评论引战/.test(incremental.items[0].text || '')
+    && !/引战弹幕甲|引战评论甲/.test(JSON.stringify(incremental.items)))
+    report.pass.push('DY-AI-7 评论晚到首轮分析后只增量发送新记录，不重复消耗旧内容 token');
+  else report.fail.push('DY-AI-7 评论延迟增量分析异常：' + JSON.stringify(incremental));
+
   await browser.close();
   console.log('PASS:', report.pass.join(' | ') || '无');
   console.log('FAIL:', report.fail.join(' | ') || '无');

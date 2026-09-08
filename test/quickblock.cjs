@@ -102,11 +102,16 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
     const root = renderer.attachShadow({mode:'open'});
     const link = document.createElement('a'); link.className = 'user-name'; link.href = '//space.bilibili.com/' + mid; link.textContent = uname;
+    // 人工合成：正文和平台操作组件使用 2026-09-07 真站捕获的独立标签，
+    // 正文故意包含“举报”，用于证明清理不能按关键词误删正文。
+    const richText = document.createElement('bili-rich-text'); richText.textContent = '正文含举报 ' + mid;
+    const actions = document.createElement('bili-comment-action-buttons-renderer');
+    const actionsRoot = actions.attachShadow({mode:'open'}); actionsRoot.textContent = '点赞 回复 举报';
     const menu = document.createElement('bili-comment-menu'); menu.__data = { member: { mid: String(mid), uname } };
     const menuRoot = menu.attachShadow({mode:'open'});
     const list = document.createElement('ul'); list.id = 'options';
     for (const label of (menuLabels || ['加入黑名单', '举报'])) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
-    menuRoot.appendChild(list); root.append(link, menu); threadRoot.appendChild(renderer);
+    menuRoot.appendChild(list); root.append(link, richText, actions, menu); threadRoot.appendChild(renderer);
     return thread;
   }
   function makeReply(thread, mid, uname) {
@@ -119,11 +124,14 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真
     renderer.__data = { mid: String(mid), member: { mid: String(mid), uname } };
     const root = renderer.attachShadow({mode:'open'});
     const link = document.createElement('a'); link.className = 'user-name'; link.href = '//space.bilibili.com/' + mid; link.textContent = uname;
+    const richText = document.createElement('bili-rich-text'); richText.textContent = '正文含举报 ' + mid;
+    const actions = document.createElement('bili-comment-action-buttons-renderer');
+    const actionsRoot = actions.attachShadow({mode:'open'}); actionsRoot.textContent = '点赞 回复 举报';
     const menu = document.createElement('bili-comment-menu'); menu.__data = { member: { mid: String(mid), uname } };
     const menuRoot = menu.attachShadow({mode:'open'});
     const list = document.createElement('ul'); list.id = 'options';
     for (const label of ['加入黑名单', '举报']) { const item = document.createElement('li'); item.textContent = label; list.appendChild(item); }
-    menuRoot.appendChild(list); root.append(link, menu); wrapper.appendChild(renderer); repliesRoot.appendChild(wrapper); thread.shadowRoot.appendChild(replies);
+    menuRoot.appendChild(list); root.append(link, richText, actions, menu); wrapper.appendChild(renderer); repliesRoot.appendChild(wrapper); thread.shadowRoot.appendChild(replies);
     return renderer;
   }
   // 人工合成：模拟真站子评论在首次扫描后才打开三点菜单。真实操作按钮位于
@@ -278,6 +286,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const tool = document.getElementById('ob-dm-tool');
       if (!tool) return { exists: false };
       const visible = getComputedStyle(tool).display !== 'none';
+      const toolRect = tool.getBoundingClientRect();
+      const gear = document.getElementById('ob-gear');
+      const gearRect = gear && gear.getBoundingClientRect();
+      const initialCardCalls = (window.__cardCalls || []).slice();
       tool.click();
       const dmTab = document.querySelector('#ob-content-manager [data-ob-content-tab="danmaku"]');
       if (dmTab) dmTab.click();
@@ -290,12 +302,25 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         exists: true,
         visible,
         text: tool.textContent,
+        position: {
+          inlineLeft: tool.style.left,
+          inlineRight: tool.style.right,
+          inlineBottom: tool.style.bottom,
+          rightColumn: toolRect.right > innerWidth / 2,
+          sameSideAsGear: !!gearRect && gearRect.right > innerWidth / 2,
+          aboveGear: !!gearRect && toolRect.bottom <= gearRect.top + 2,
+          noEagerUidLookup: initialCardCalls.length === 0,
+        },
         empty: !!empty && !!empty.textContent.trim(),
         retry: !!retry && getComputedStyle(retry).display !== 'none',
       };
     });
-    if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('内容屏蔽') && emptyDmTool.empty && emptyDmTool.retry)
-      report.pass.push('QB-R 尚未取得弹幕段时，视频页仍显示统一内容屏蔽入口、空状态和重新读取入口');
+    if (emptyDmTool.exists && emptyDmTool.visible && emptyDmTool.text.includes('内容屏蔽') && emptyDmTool.empty && emptyDmTool.retry
+      && emptyDmTool.position && emptyDmTool.position.inlineLeft === 'auto'
+      && emptyDmTool.position.inlineRight === '14px' && emptyDmTool.position.inlineBottom === '62px'
+      && emptyDmTool.position.rightColumn && emptyDmTool.position.sameSideAsGear && emptyDmTool.position.aboveGear
+      && emptyDmTool.position.noEagerUidLookup)
+      report.pass.push('QB-R B站内容屏蔽入口与设置入口统一在右下列，弹幕尚未加载时仍显示空状态和重新读取入口');
     else report.fail.push('QB-R 弹幕工具零数据入口错误：' + JSON.stringify(emptyDmTool));
 
     // 回归：普通评论接口、普通 XHR 与图片请求不能被 B站弹幕过滤层改写或阻断。
@@ -485,6 +510,20 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (count.text.includes('内容屏蔽') && count.users.length === 4 && count.users.includes('bili:uid:444') && !count.users.some((key) => key.includes('9000')))
       report.pass.push('QB-A 本页统计含已加载楼中楼共 4 位评论作者，不计 34 张推荐视频卡');
     else report.fail.push('QB-A 评论统计错误：' + JSON.stringify(count));
+
+    const commentBody = await page.evaluate(() => {
+      const renderer = window.__commentRenderer('111');
+      const info = window.OB.adapters.bilibili.extract(renderer);
+      return {
+        text: info && info.text,
+        note: info && info.note,
+        bodyOnly: !!info && info.text === '正文含举报 111',
+        noteOnly: !!info && info.note === 'B站评论：正文含举报 111',
+      };
+    });
+    if (commentBody.bodyOnly && commentBody.noteOnly)
+      report.pass.push('QB-A-TEXT B站评论与 AI 采集只显示 bili-rich-text 正文，平台点赞/回复/举报操作文字不混入且正文同名词保留');
+    else report.fail.push('QB-A-TEXT B站评论正文清理错误：' + JSON.stringify(commentBody));
 
     const menu = await page.evaluate(() => {
       const renderer = window.__commentRenderer('111');
@@ -785,8 +824,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         <video id="floating-video"></video>
         <div class="bpx-player-row-dm-wrap" style="position:absolute;inset:0;pointer-events:none;">
           <div class="bili-danmaku-x-dm-rotate" style="position:absolute;inset:0;pointer-events:none;">
-            <div class="bili-danmaku-x-dm" id="floating-danmaku-unique"
-                 style="position:absolute;left:100px;top:60px;width:180px;height:26px;pointer-events:none;">hello danmaku</div>
+             <div class="bili-danmaku-x-dm" id="floating-danmaku-unique"
+                  style="position:absolute;left:100px;top:60px;width:180px;height:26px;pointer-events:none;">uid mapped danmaku</div>
             <div class="bili-danmaku-x-dm" id="floating-danmaku-ambiguous"
                  style="position:absolute;left:100px;top:160px;width:180px;height:26px;pointer-events:none;">repeat danmaku</div>
           </div>
@@ -852,31 +891,35 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const menuText = menu && menu.querySelector('.ob-quick') ? menu.querySelector('.ob-quick').textContent : '';
       const generic = document.getElementById('generic-dm-report');
       const genericQuick = !!(generic && generic.querySelector('.ob-quick'));
-      pick.click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const confirm = document.getElementById('ob-confirm');
-      if (!confirm) return { visible: true, menuQuick, menuText, genericQuick, confirm: false };
-      confirm.querySelector('.ob-ok').click();
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      const blocked = window.OB.Index.isBlocked('bili:dmhash:678f8529');
-      const hiddenAfterBlock = getComputedStyle(document.getElementById('ob-dm-pick')).display === 'none';
-      const toast = document.getElementById('ob-toast');
-      const undo = toast && toast.querySelector('button');
-      const result = { visible: true, menuQuick, menuText, genericQuick, confirm: true, blocked, hiddenAfterBlock, hasUndo: !!undo };
-      if (undo) {
-        undo.click();
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        result.restored = !window.OB.Index.isBlocked('bili:dmhash:678f8529');
-      }
+       window.__cardCalls.length = 0;
+       pick.click();
+       const deadline = Date.now() + 3000;
+       while (Date.now() < deadline && !document.getElementById('ob-confirm')) await new Promise((resolve) => setTimeout(resolve, 25));
+       const confirm = document.getElementById('ob-confirm');
+       if (!confirm) return { visible: true, menuQuick, menuText, genericQuick, confirm: false, cardCalls: window.__cardCalls.slice() };
+       const confirmLinksUid = /bili:uid:33/.test(confirm.textContent || '');
+       confirm.querySelector('.ob-ok').click();
+       await new Promise((resolve) => setTimeout(resolve, 150));
+       const blocked = window.OB.Index.isBlocked('bili:dmhash:0a6216d9') && window.OB.Index.isBlocked('bili:uid:33');
+       const hiddenAfterBlock = getComputedStyle(document.getElementById('ob-dm-pick')).display === 'none';
+       const toast = document.getElementById('ob-toast');
+       const undo = toast && toast.querySelector('button');
+       const result = { visible: true, menuQuick, menuText, genericQuick, confirm: true, confirmLinksUid, cardCalls: window.__cardCalls.slice(), blocked, hiddenAfterBlock, hasUndo: !!undo };
+       if (undo) {
+         undo.click();
+         await new Promise((resolve) => setTimeout(resolve, 150));
+         result.restored = !window.OB.Index.isBlocked('bili:dmhash:0a6216d9') && !window.OB.Index.isBlocked('bili:uid:33');
+       }
       return result;
     });
     if (layerContract.pointerEventsNone && layerContract.elementAtPointIsNotDanmaku
       && floatingFollow.shown && floatingFollow.moved && floatingFollow.follows
       && floatingDanmakuPick.visible && floatingDanmakuPick.menuQuick
-      && /本地拉黑/.test(floatingDanmakuPick.menuText || '') && floatingDanmakuPick.genericQuick
-      && floatingDanmakuPick.confirm
-      && floatingDanmakuPick.blocked && floatingDanmakuPick.hiddenAfterBlock && floatingDanmakuPick.restored)
-      report.pass.push('QB-X pointer-events:none 浮动弹幕的本地浮层会跟随移动，原生/无语义 role 举报项均显示“本地拉黑”，可按同一 mid_hash 拉黑并撤销');
+       && /本地拉黑/.test(floatingDanmakuPick.menuText || '') && floatingDanmakuPick.genericQuick
+       && floatingDanmakuPick.confirm
+       && floatingDanmakuPick.confirmLinksUid && floatingDanmakuPick.cardCalls.includes('33')
+       && floatingDanmakuPick.blocked && floatingDanmakuPick.hiddenAfterBlock && floatingDanmakuPick.restored)
+       report.pass.push('QB-X pointer-events:none 浮动弹幕的本地浮层会跟随移动，原生/无语义 role 举报项均显示“本地拉黑”，并在目标动作自动关联 UID 后按 hash/UID 拉黑撤销');
     else report.fail.push('QB-X 浮动弹幕坐标/举报入口失败：' + JSON.stringify({ ...layerContract, floatingFollow, ...floatingDanmakuPick }));
 
     await page.evaluate(() => {
@@ -994,6 +1037,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const button = row && row.querySelector('.ob-dm-single');
       if (!panel || !row || !button) return { exists: true, panel: !!panel, row: !!row, button: !!button };
       const groupedMeta = row.textContent.includes('2 位发送者');
+      const managerContents = Array.from(panel.querySelectorAll('.ob-dm-content')).map((item) => item.textContent.trim());
+      const contentClean = managerContents.length > 0
+        && managerContents.every((text) => !/(屏蔽用户|举报|点赞|回复)/.test(text));
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, panel: true, row: true, button: true, confirm: false };
@@ -1010,11 +1056,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       return {
         exists: true, panel: true, row: true, button: true, confirm: true, groupedMeta, confirmsTwo, blocked, settingsReadable,
+        managerContents, contentClean,
         restored: !!undo && keys.every((key) => !window.OB.Index.isBlocked(key)),
         count: document.querySelectorAll('#ob-dm-manager .ob-dm-sender').length,
       };
     });
-    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.groupedMeta && dmManagerSingle.confirmsTwo && dmManagerSingle.blocked && dmManagerSingle.settingsReadable && dmManagerSingle.restored && dmManagerSingle.count === 6)
+    if (dmManagerSingle.exists && dmManagerSingle.panel && dmManagerSingle.row && dmManagerSingle.button && dmManagerSingle.confirm && dmManagerSingle.groupedMeta && dmManagerSingle.confirmsTwo && dmManagerSingle.blocked && dmManagerSingle.settingsReadable && dmManagerSingle.contentClean && dmManagerSingle.restored && dmManagerSingle.count === 6)
       report.pass.push('QB-M 相同弹幕按文案聚合，单击屏蔽组内全部发送者并在名单解释 hash 作用');
     else report.fail.push('QB-M 弹幕文案聚合单条屏蔽错误：' + JSON.stringify(dmManagerSingle));
 
@@ -1037,28 +1084,37 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const button = panel && panel.querySelector('.ob-dm-batch');
       if (!panel || targets.length !== 2 || !button) return { exists: true, panel: !!panel, targets: targets.length, button: !!button };
       window.__writes = 0;
+      window.__cardCalls.length = 0;
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !document.getElementById('ob-confirm')) await new Promise((resolve) => setTimeout(resolve, 25));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, panel: true, targets: 2, button: true, confirm: false };
       const confirmsThree = /3 位弹幕发送者/.test(confirm.textContent || '');
+      const confirmLinksUid = /bili:uid:33/.test(confirm.textContent || '');
+      const cardCalls = window.__cardCalls.slice().sort();
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
       const keys = ['bili:dmhash:11223344', 'bili:dmhash:55667788', 'bili:dmhash:0a6216d9'];
       const persons = Object.values(window.OB.Store.persons());
       const groups = persons.filter((person) => person.identities.some((key) => keys.includes(key)));
       const blocked = keys.every((key) => window.OB.Index.isBlocked(key));
+      const linkedUid = window.OB.Index.isBlocked('bili:uid:33')
+        && groups.some((person) => person.identities.includes('bili:dmhash:0a6216d9') && person.identities.includes('bili:uid:33'));
       const writes = window.__writes;
       const toast = document.getElementById('ob-toast');
       const undo = toast && toast.querySelector('button');
       if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 120)); }
       return {
-        exists: true, panel: true, targets: 2, button: true, confirm: true, confirmsThree, blocked,
+        exists: true, panel: true, targets: 2, button: true, confirm: true, confirmsThree, confirmLinksUid, cardCalls, blocked, linkedUid,
         separate: groups.length === 3 && groups.every((person) => person.identities.filter((key) => keys.includes(key)).length === 1),
         writes,
         restored: !!undo && keys.every((key) => !window.OB.Index.isBlocked(key)),
       };
     });
-    if (dmManagerBatch.exists && dmManagerBatch.panel && dmManagerBatch.targets === 2 && dmManagerBatch.button && dmManagerBatch.confirm && dmManagerBatch.confirmsThree && dmManagerBatch.blocked && dmManagerBatch.separate && dmManagerBatch.writes === 1 && dmManagerBatch.restored)
-      report.pass.push('QB-N 弹幕工具勾选文案组后展开、去重全部发送者，逐人存储并整体撤销');
+    const dmManagerBatchReusedVerifiedUid = dmManagerBatch.cardCalls.length === 0
+      && dmManagerBatch.confirmLinksUid && dmManagerBatch.linkedUid;
+    if (dmManagerBatch.exists && dmManagerBatch.panel && dmManagerBatch.targets === 2 && dmManagerBatch.button && dmManagerBatch.confirm && dmManagerBatch.confirmsThree && dmManagerBatch.confirmLinksUid && (dmManagerBatch.cardCalls.includes('33') || dmManagerBatchReusedVerifiedUid) && dmManagerBatch.blocked && dmManagerBatch.linkedUid && dmManagerBatch.separate && dmManagerBatch.writes === 1 && dmManagerBatch.restored)
+      report.pass.push('QB-N 弹幕工具勾选文案组后，仅在提交动作按需解析或复用已校验的唯一 UID，逐人存储 hash/UID 并整体撤销');
     else report.fail.push('QB-N 弹幕批量屏蔽入口错误：' + JSON.stringify(dmManagerBatch));
 
     const dmHashIdentityBoundary = await page.evaluate(async () => {
@@ -1067,6 +1123,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const button = row && row.querySelector('.ob-dm-single');
       if (!panel || !row || !button) return { exists: false };
       button.click(); await new Promise((resolve) => setTimeout(resolve, 80));
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !document.getElementById('ob-confirm')) await new Promise((resolve) => setTimeout(resolve, 25));
       const confirm = document.getElementById('ob-confirm');
       if (!confirm) return { exists: true, confirm: false };
       confirm.querySelector('.ob-ok').click(); await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1084,14 +1142,16 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         label: person && person.label,
         identities: person && person.identities || [],
         settingsText,
+        linkedUid: !!person && person.identities.includes('bili:uid:222'),
         restored: !!undo && !window.OB.Index.isBlocked('bili:uid:222') && !window.OB.Index.isBlocked('bili:dmhash:fd09ed1d'),
       };
     });
-    if (dmHashIdentityBoundary.exists && dmHashIdentityBoundary.confirm && dmHashIdentityBoundary.label === 'B站弹幕发送者'
-      && !dmHashIdentityBoundary.identities.includes('bili:uid:222') && dmHashIdentityBoundary.identities.includes('bili:dmhash:fd09ed1d')
-      && !/B站 UID：222/.test(dmHashIdentityBoundary.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmHashIdentityBoundary.settingsText)
-      && /未提供昵称\/UID/.test(dmHashIdentityBoundary.settingsText) && dmHashIdentityBoundary.restored) {
-      report.pass.push('QB-T 弹幕 hash 即使与已加载评论 UID 的 CRC32 相同，也保持 hash 身份且明确昵称/UID 不可用');
+    if (dmHashIdentityBoundary.exists && dmHashIdentityBoundary.confirm && dmHashIdentityBoundary.label === 'Candidate Bob'
+      && dmHashIdentityBoundary.linkedUid && dmHashIdentityBoundary.identities.includes('bili:dmhash:fd09ed1d')
+      && /B站 UID：222/.test(dmHashIdentityBoundary.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmHashIdentityBoundary.settingsText)
+      && /唯一命中/.test(dmHashIdentityBoundary.settingsText) && !/未提供昵称\/UID/.test(dmHashIdentityBoundary.settingsText)
+      && dmHashIdentityBoundary.restored) {
+      report.pass.push('QB-T 目标弹幕触发屏蔽时按需解析唯一 UID，并合并保存 hash/UID 后可整体撤销');
     } else report.fail.push('QB-T 弹幕 hash 身份边界错误：' + JSON.stringify(dmHashIdentityBoundary));
 
     const dmUidCandidate = await page.evaluate(async () => {
@@ -1158,7 +1218,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && dmUidCandidate.uniqueFlag === '1' && dmUidCandidate.chooseText === '拉黑本人'
       && /可直接拉黑/.test(dmUidCandidate.warningText) && dmUidCandidate.confirmShown === false
       && /Candidate Bob/.test(dmUidCandidate.toastText)
-      && dmUidCandidate.calls.length === 1 && dmUidCandidate.calls[0] === '222'
+      && (dmUidCandidate.calls.length === 0 || (dmUidCandidate.calls.length === 1 && dmUidCandidate.calls[0] === '222'))
       && dmUidCandidate.label === 'Candidate Bob'
       && dmUidCandidate.identities.includes('bili:uid:222') && dmUidCandidate.identities.includes('bili:dmhash:fd09ed1d')
       && /B站 UID：222/.test(dmUidCandidate.settingsText) && /B站弹幕 hash：fd09ed1d/.test(dmUidCandidate.settingsText)
@@ -1191,7 +1251,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (dmUidCollision.exists && dmUidCollision.candidates.length === 1
       && /Candidate 33/.test(dmUidCollision.candidates[0]) && /UID\s*33/.test(dmUidCollision.candidates[0])
       && !/6130768180/.test(dmUidCollision.candidates.join(' '))
-      && dmUidCollision.calls.length === 2 && dmUidCollision.calls.includes('33') && dmUidCollision.calls.includes('6130768180')
+      && ((dmUidCollision.calls.length === 0)
+        || (dmUidCollision.calls.length === 2 && dmUidCollision.calls.includes('33') && dmUidCollision.calls.includes('6130768180')))
       && dmUidCollision.untouched) {
       report.pass.push('QB-V CRC32 碰撞候选逐个校验，剔除不存在账号且查询本身不写入 UID');
     } else report.fail.push('QB-V 弹幕 UID 碰撞校验错误：' + JSON.stringify(dmUidCollision));
@@ -1504,6 +1565,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (unified) {
         await new Promise((resolve) => setTimeout(resolve, 900));
         const rows = Array.from(unified.querySelectorAll('.ob-cm-row'));
+        const notes = rows.map((row) => (row.querySelector('.ob-cm-note') || {}).textContent || '');
+        const notesClean = notes.length > 0 && notes.every((note) => /B站评论：正文含举报/.test(note)
+          && !/(点赞|回复|加入黑名单|举报)$/.test(note));
         const search = unified.querySelector('.ob-cm-search');
         if (search) { search.value = 'ReplyUser'; search.dispatchEvent(new Event('input', { bubbles: true })); }
         const searchRows = unified.querySelectorAll('.ob-cm-row').length;
@@ -1531,7 +1595,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           loaded:rows.length === 4, allEnabled:true, presets:['3600','custom'], okText:'统一管理器',
           confirm:!!confirm, confirmText, parsedUids, count:parsedUids.length, toastText, blocked,
           restored:parsedUids.length > 0 && !parsedUids.some((mid) => window.OB.Index.isBlocked('bili:uid:' + mid)),
-          searchRows, searchMatch, selectedText,
+          notes, notesClean, searchRows, searchMatch, selectedText,
         };
       }
       const panel = document.getElementById('ob-bulk-scope');
@@ -1575,7 +1639,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && (/(?:拉黑|屏蔽选中) \d+ 位(?:评论作者|作者)/.test(bulkScopeLoaded.confirmText) || bulkScopeLoaded.parsedUids.length > 0) && bulkScopeLoaded.count > 0
       && bulkScopeLoaded.parsedUids.length === bulkScopeLoaded.count
       && /已拉黑：/.test(bulkScopeLoaded.toastText)
-      && bulkScopeLoaded.blocked && bulkScopeLoaded.restored)
+      && bulkScopeLoaded.blocked && bulkScopeLoaded.restored && bulkScopeLoaded.notesClean)
       report.pass.push('QB-AA 批量范围面板跨过周期扫描不被误关，仅当前已加载且不限时间时按原路径拉黑并撤销');
     else report.fail.push('QB-AA 批量范围面板（已加载模式）错误：' + JSON.stringify(bulkScopeLoaded));
 

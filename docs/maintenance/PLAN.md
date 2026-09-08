@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-07
+更新时间：2026-09-08
 
 本文件是 OmniBlock 唯一的活动计划。它记录当前要解决的问题、范围、依赖、验收条件和
 下一步动作；当前事实放在 `CURRENT.md`，用户可见变化放在 README/版本 changelog，已经
@@ -65,6 +65,46 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-07
 - supersedes: none
 - files: omniblock.user.js; test/ai-screening.cjs; test/ai-platforms.cjs; test/adapters.cjs; test/danmaku-auto.cjs; test/comment-manager.cjs; test/real-bilibili-probe.cjs; test/real-platform-probe.cjs; test/real-douyin-probe.cjs; gateway/README.md; test/gateway-smoke.cjs; test/maintenance-check.cjs; 启动网关.cmd; README.md; docs/changelog/v0.48.0.md; docs/decisions/0002-ai-screening-gateway-boundary.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md; docs/architecture/ARCHITECTURE.md; docs/KNOWLEDGE_TREE.md
+
+### OB-RULE-002 — 平台关键词屏蔽与评论 AI 建议提醒
+
+- status: verified
+- priority: P1
+- scope: 将 B站/抖音现有本地关键词/正则自动规则从总设置页迁到各自内容屏蔽弹窗的“关键词屏蔽”标签；规则默认启用，命中当前页面已观察到且身份可靠的评论或弹幕时直接进入既有本地屏蔽链并立即隐藏，不请求 AI、不经过确认。保留既有设置键和规则例外的导入兼容。修复评论晚于弹幕挂载时自动 AI 已经完成首轮、却没有再次分析评论的问题；在当前页面新增可分析评论后有界地重新触发 AI 建议。为微博、知乎补齐当前可靠评论的 AI 采集和平台入口，使其使用同一人工审核弹窗。
+- non-goals: 不调用任何平台写入接口；不把无可靠身份的评论或弹幕伪装成可屏蔽用户；不为关键词功能消耗 token；不让 AI 候选绕过人工确认；不自动滚动/展开微博或知乎评论，不调用私有接口；不改变 AI 80 条批次协议、已有身份键、B站弹幕 hash→UID 安全边界或其他平台适配器选择器。
+- dependencies: OB-AI-001
+- acceptance: required
+  - [x] B站、抖音内容屏蔽弹窗各出现“关键词屏蔽”标签；已有 `biliDanmakuRules`/`douyinDanmakuRules` 数据可见、可添加/启停/删除，设置页不再作为主入口，仅保留迁移说明。
+  - [x] 关键词/正则命中评论或弹幕时不产生 AI 网关请求；可靠身份直接写入既有名单并隐藏，页面刷新/后续同作者内容继续生效；无可靠身份时不提供伪造的可执行身份。
+  - [x] AI 优先分析前先排除已经被关键词/本地名单处理的记录；关键词命中不进入 AI 候选审核队列。
+  - [x] B站评论先加载、弹幕后加载，以及评论晚于首轮 AI 的场景均能在有界重试内触发一次新的 AI 采集；同一记录不重复请求，不建立常驻高频轮询，页面切换/关闭/取消时旧 run 失效。
+  - [x] 微博、知乎在当前已有可靠评论 DOM 和身份契约下显示平台 AI 入口；AI 结果进入现有多选人工审核框，确认前不写名单，结果无法识别身份时只读展示或跳过执行。
+  - [x] 为关键词即时屏蔽、评论延迟 AI、微博/知乎 AI 入口和候选确认各新增或更新回归断言；真实选择器先由当轮真站捕获确认。
+  - [x] 运行受影响的 B站/抖音/微博/知乎回归、语法、文档和四平台真实只读探针；逐项记录 `real-site verified`、`structure regression` 或 `blocked`。
+- evidence: `structure regression`：内容规则夹具 8/8、AI screening 14/14、AI 多平台 7/7、自动弹幕 7/7、quickblock 37/37、评论管理器 3/3、适配器 28/28、运行器 20/20、自动加载 3/3、watchdog 1/1、持久化开发扩展 6/6，受影响回归无页面/控制台错误；`real-site verified`：2026-09-08 匿名/登录状态未判定的 B站视频页观察到评论/弹幕/AI/关键词四标签及评论管理器；同日微博详情页观察到评论/AI 两标签和 26/23/21/5 评论统计及本地屏蔽撤销；`blocked`：抖音验证码、知乎登录页、微博顶层 spacer、B站根评论分页 partial。详见 CURRENT 与 v0.51.0 changelog。
+- next: 保持当前候选本地状态；若要发布，先复核最终差异、源码哈希和隐私门禁，并另获当轮 tag/Release/push 授权。抖音和知乎需在后续获授权登录态只读会话可用时补真站验证；不因匿名阻断扩大结论。
+- updated: 2026-09-08
+- supersedes: none
+- files: omniblock.user.js; test/content-ai.cjs; test/danmaku-auto.cjs; test/ai-screening.cjs; test/ai-platforms.cjs; test/adapters.cjs; test/comment-manager.cjs; test/quickblock.cjs; test/real-bilibili-probe.cjs; test/real-platform-probe.cjs; test/maintenance-check.cjs; README.md; CHANGELOG.md; docs/changelog/INDEX.md; docs/changelog/v0.51.0.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md
+
+### OB-AI-003 — B站新增内容的累计增量 AI 分析
+
+- status: verified
+- priority: P1
+- scope: 修复 B站首轮自动分析完成后，滚动评论、展开楼中楼或弹幕数据段新增内容未触发 AI 增量分析，以及增量完成后“已分析数量”显示为本批新增数量而非当前累计数量的问题；评论 DOM 变化和弹幕数据段变化均进入现有有界调度，并继续按稳定记录 ID 去重。
+- non-goals: 不提高或移除 AI 每批 80 条上限；不自动滚动/展开评论；不改变 B站弹幕 hash→UID 安全边界、人工审核、关键词优先级、现有身份键或平台写入边界；不引入常驻高频轮询。
+- dependencies: OB-RULE-002
+- acceptance: required
+  - [x] 首轮分析完成后新增 B站评论或楼中楼记录，能够触发一次只包含新记录的 AI 请求。
+  - [x] 首轮分析完成后新增 B站弹幕数据段记录，能够触发一次只包含新记录的 AI 请求。
+  - [x] 增量分析完成后，状态中的 `analyzed` 为当前页面已分析记录累计数，且记录总数、批次进度和候选状态一致。
+  - [x] 首轮请求进行期间连续到达的评论/弹幕变化被合并为后续一次增量分析；同一稳定 ID 不重复发送。
+  - [x] 新增回归断言、语法/文档门禁、B站受影响本地检查和当轮真实只读探针均按证据等级记录；80 条批次边界保持原样。
+- evidence: `structure regression`：AI screening 18/18、内容规则 8/8、AI 多平台 7/7、AI 批次 2/2、自动加载 3/3、quickblock 37/37；`real-site verified`：2026-09-08 B站只读视频页首轮 224/224，滚动后 247/247，展开楼中楼后 273/273，均产生只含新增记录的事件；`blocked`：根评论分页仍 partial，登录态未判定。
+- next: 保持 0.51.1 本地候选；若要发布，先复核最终差异、源码哈希和隐私门禁，并另获当轮 tag/Release/push 授权。
+- updated: 2026-09-08
+- supersedes: none
+- files: omniblock.user.js; test/ai-screening.cjs; docs/architecture/ARCHITECTURE.md; docs/changelog/v0.51.1.md; README.md; CHANGELOG.md; docs/changelog/INDEX.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md
 
 ### OB-WEIBO-003 — 详情页作品级评论统计作用域
 

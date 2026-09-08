@@ -167,27 +167,35 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       window.OB.danmakuExemptions.add('bili', ['bili:dmhash:11223344']);
       window.OB.openOptions();
       const panel = document.getElementById('ob-panel');
-      const boxes = panel ? Array.from(panel.querySelectorAll('.ob-auto-platform')) : [];
       const result = {
         panel: !!panel,
-        platforms: boxes.map((box) => box.getAttribute('data-ob-auto-platform')).sort(),
-        biliKinds: panel ? panel.querySelector('[data-ob-auto-platform="bili"] .ob-auto-kind').querySelectorAll('option').length : 0,
-        douyinKinds: panel ? panel.querySelector('[data-ob-auto-platform="douyin"] .ob-auto-kind').querySelectorAll('option').length : 0,
-        ruleRows: panel ? panel.querySelectorAll('.ob-auto-rule').length : 0,
-        exemptionRows: panel ? panel.querySelectorAll('.ob-auto-exemption').length : 0,
-        exemptionRemove: panel ? !!panel.querySelector('.ob-auto-exemption-remove') : false,
-        pakkuNote: panel ? /不会重复实现 PAKKU 的去重/.test(panel.textContent || '') : false,
+        settingsRulePanels: panel ? panel.querySelectorAll('.ob-auto-platform').length : -1,
+        migrationNote: panel ? /关键词.*内容屏蔽/.test(panel.textContent || '') : false,
       };
-      const removeExemption = panel && panel.querySelector('.ob-auto-exemption-remove');
+      // 规则和例外的主入口现在位于平台内容弹窗；旧设置页只保留迁移说明。
+      if (panel) window.OB.openOptions();
+      window.OB.openContentManager(window.OB.adapters.bilibili, 'keywords');
+      const content = document.querySelector('#ob-content-manager');
+      const keywordPane = content && content.querySelector('[data-ob-content-pane="keywords"]');
+      result.contentTabs = content ? content.querySelectorAll('[data-ob-content-tab]').length : 0;
+      result.platforms = content ? Array.from(content.querySelectorAll('[data-ob-content-tab]')).map((tab) => tab.textContent.trim()) : [];
+      result.biliKinds = keywordPane ? keywordPane.querySelector('.ob-auto-kind').querySelectorAll('option').length : 0;
+      result.douyinKinds = result.biliKinds;
+      result.ruleRows = keywordPane ? keywordPane.querySelectorAll('.ob-auto-rule').length : 0;
+      result.exemptionRows = keywordPane ? keywordPane.querySelectorAll('.ob-auto-exemption').length : 0;
+      result.exemptionRemove = keywordPane ? !!keywordPane.querySelector('.ob-auto-exemption-remove') : false;
+      result.pakkuNote = keywordPane ? /不消耗 token|PAKKU/.test(keywordPane.textContent || '') : false;
+      const removeExemption = keywordPane && keywordPane.querySelector('.ob-auto-exemption-remove');
       if (removeExemption) removeExemption.click();
       result.exemptionRemoved = !window.OB.danmakuExemptions.keysFor('bili').includes('bili:dmhash:11223344');
-      if (panel) panel.remove();
+      window.OB.closeContentManager();
       return result;
     });
-    if (settingsUi.panel && settingsUi.platforms.join(',') === 'bili,douyin'
+    if (settingsUi.panel && settingsUi.settingsRulePanels === 0 && settingsUi.migrationNote
+      && settingsUi.contentTabs === 4 && settingsUi.platforms.includes('关键词屏蔽')
       && settingsUi.biliKinds === 2 && settingsUi.douyinKinds === 2 && settingsUi.ruleRows === 2
       && settingsUi.exemptionRows === 1 && settingsUi.exemptionRemove && settingsUi.exemptionRemoved && settingsUi.pakkuNote)
-      report.pass.push('AUTO-UI B站/抖音规则分平台显示关键词与正则入口，并明确不复制 PAKKU 去重');
+      report.pass.push('AUTO-UI 设置页仅保留迁移说明，B站内容弹窗承载关键词/正则和例外入口');
     else report.fail.push('AUTO-UI 规则面板分平台/兼容说明失败：' + JSON.stringify(settingsUi));
     await bili.close();
 

@@ -191,7 +191,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
         threadButton:!!threadButton, threadConfirmOk, threadBlocked, threadWrites, threadRestored,
       };
     });
-    check(biliState.fab && biliState.panel && biliState.contentTabs === 3 && biliState.rows === 3 && biliState.hasSample && biliState.hasMeta
+    check(biliState.fab && biliState.panel && biliState.contentTabs === 4 && biliState.rows === 3 && biliState.hasSample && biliState.hasMeta
       && biliState.searchMatch && /3/.test(biliState.selectedText) && biliState.managerWrites === 0 && biliState.confirm
       && /部分加载|分页失败/.test(biliState.partialStatus || '')
       && biliState.pendingPanel && biliState.receivedSignal && biliState.signalAborted

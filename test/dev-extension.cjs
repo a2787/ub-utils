@@ -13,6 +13,7 @@ const { launchPersistentChromium, ROOT, EDGE_PATH, CHROME_PATH } = require('./ru
 const buildScript = path.join(ROOT, 'test', 'build-dev-extension.cjs');
 const build = JSON.parse(execFileSync(process.execPath, [buildScript], { cwd: ROOT, encoding: 'utf8' }));
 const extensionDir = path.join(ROOT, 'test', '_dev-extension');
+const serviceWorkerSource = fs.readFileSync(path.join(extensionDir, 'bridge-service-worker.js'), 'utf8');
 // 当前 Google Chrome 148 会忽略命令行 unpacked-extension 开关；Edge/Chromium
 // 仍支持它们，因此结构回归默认选 Edge，专用 Chrome 的长期运行由一次性的
 // chrome://extensions「加载已解压的扩展程序」安装流程负责。
@@ -30,6 +31,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
   const report = { pass: [], fail: [], pageErrors: [] };
+  if (/function normalizeBiliCardUrl/.test(serviceWorkerSource)
+    && /method === 'GET' \? normalizeBiliCardUrl/.test(serviceWorkerSource)
+    && /fetch\(request\.url, fetchOptions\)/.test(serviceWorkerSource)
+    && /api\.bilibili\.com/.test(serviceWorkerSource)) {
+    report.pass.push('开发扩展桥接仅转发白名单 B站用户卡片 GET，支持 UID 反查路径');
+  } else {
+    report.fail.push('开发扩展桥接缺少 B站用户卡片 GET 白名单转发');
+  }
   const aiRequests = [];
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniblock-extension-'));
   let context;
