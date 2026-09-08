@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.51.1 - B站新增内容累计增量 AI 分析 - 2026-09-08（本地候选，未推送）
+## v0.51.1 - B站新增内容累计增量 AI 分析 - 2026-09-08（源码已推送，未创建 Release）
 
 - B站滚动评论、展开楼中楼和后续 `seg.so` 弹幕数据段新增内容会进入有界 AI 增量分析；同一稳定记录不重复发送。
 - AI 状态的“已分析数量”改为当前页面累计数；每批最多 80 条的协议和人工审核/关键词优先级保持不变。
@@ -11,7 +11,7 @@
 详细用户变化、验证标签、限制和发布边界：[v0.51.1 完整条目](docs/changelog/v0.51.1.md)。
 
 发布状态：当前公开版本仍为 [OmniBlock v0.46.2](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)；候选构建为
-`0.51.1-content-ai-incremental`，仅保留在本地工作区，未 push、未创建 tag/Release；真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+`0.51.1-content-ai-incremental`，提交 `910d2def9cb445273ebdc73472ec332d5043eafe` 已推送到 `origin/master`，未创建 tag/Release；真实站点边界见[当前维护状态](docs/maintenance/CURRENT.md)。
 
 ## v0.51.0 - 平台关键词屏蔽与评论 AI 建议提醒 - 2026-09-08（本地候选，未推送）
 

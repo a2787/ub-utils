@@ -123,9 +123,9 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 则使用隔离临时 profile 和兼容 Chromium 浏览器打开人工合成页面做 `structure regression`；它证明自动加载
 和存储桥接，不替代真实站点验收。旧的直接注入方式仅保留给隔离夹具和公开只读探针，不能作为专用浏览器安装证据。
 
-### v0.51.1 - B站新增内容累计增量 AI 分析 - 2026-09-08（本地候选，未推送）
+### v0.51.1 - B站新增内容累计增量 AI 分析 - 2026-09-08（源码已推送，未创建 Release）
 
-当前构建标识为 `0.51.1-content-ai-incremental`；工作区源码尚未 push，当前公开 Release 仍为 `0.46.2`。
+当前构建标识为 `0.51.1-content-ai-incremental`；源码提交 `910d2def9cb445273ebdc73472ec332d5043eafe` 已推送到 `origin/master`，当前公开 Release 仍为 `0.46.2`。
 
 - B站首轮自动分析完成后，滚动评论、展开楼中楼出现的新评论会只触发新记录的有界增量分析；旧评论不会重复发送。
 - 后续读取新的 `seg.so` 弹幕数据段时，新进入当前视频会话的弹幕发送者也会进入增量 AI 分析；弹幕管理器计数和 AI 分析状态不再脱节。

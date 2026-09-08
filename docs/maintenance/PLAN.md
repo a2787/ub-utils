@@ -101,7 +101,7 @@ proposed → approved → in_progress → verified
   - [x] 首轮请求进行期间连续到达的评论/弹幕变化被合并为后续一次增量分析；同一稳定 ID 不重复发送。
   - [x] 新增回归断言、语法/文档门禁、B站受影响本地检查和当轮真实只读探针均按证据等级记录；80 条批次边界保持原样。
 - evidence: `structure regression`：AI screening 18/18、内容规则 8/8、AI 多平台 7/7、AI 批次 2/2、自动加载 3/3、quickblock 37/37；`real-site verified`：2026-09-08 B站只读视频页首轮 224/224，滚动后 247/247，展开楼中楼后 273/273，均产生只含新增记录的事件；`blocked`：根评论分页仍 partial，登录态未判定。
-- next: 保持 0.51.1 本地候选；若要发布，先复核最终差异、源码哈希和隐私门禁，并另获当轮 tag/Release/push 授权。
+- next: 0.51.1 已推送到 `origin/master`，未创建 tag/Release；下一项转为下一版本 AI 提示词系统的规划，先定义数据格式、隐私边界、反馈采集和离线评测，再开始实现。
 - updated: 2026-09-08
 - supersedes: none
 - files: omniblock.user.js; test/ai-screening.cjs; docs/architecture/ARCHITECTURE.md; docs/changelog/v0.51.1.md; README.md; CHANGELOG.md; docs/changelog/INDEX.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md

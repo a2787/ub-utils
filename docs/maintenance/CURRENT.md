@@ -1,17 +1,17 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-08
-状态来源：0.51.1 B站增量 AI 候选位于工作区，尚未 push；公开 Release 仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.51.1 B站增量 AI 候选已推送到 `origin/master`，尚未创建 tag/Release；公开 Release 仍为 0.46.2；历史过程见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.51.1`（工作区候选，尚未提交或 push，未创建 tag/Release）
+- 当前 userscript：`0.51.1`（源码已推送到 `origin/master`，未创建 tag/Release）
 - 构建：`0.51.1-content-ai-incremental`
 - 当前公开版本：`0.46.2`
 - 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
 - 最近验证的源码快照：`94528c483554845dc35c8c57121788f311d2e6ce`（候选工作区变更基于此祖先）
 - 当前候选源码 SHA-256：`119030f1e5e528ce7b7c3003354c49606ad323a3e0cd9c860bd78bd826a9574f`
-- 发布状态：0.51.1 仅在本地工作区，未提交/push/tag/Release；0.49.0 仍是已推送源码候选；公开的 0.46.2 仍保留原 tag/Release。
+- 发布状态：0.51.1 已推送到 `origin/master`，提交为 `910d2def9cb445273ebdc73472ec332d5043eafe`，尚未创建 tag/Release；0.49.0 仍是已推送源码候选；公开的 0.46.2 仍保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
 
 ## 本轮已落实
@@ -36,7 +36,7 @@
 - `structure regression`：`node test/ai-screening.cjs` 18/18；覆盖评论/楼中楼滚动与点击、弹幕数据段增量、累计 `analyzed` 和稳定 ID 去重，页面错误和控制台错误均为 0。`node test/content-ai.cjs` 8/8、`node test/ai-batch.cjs` 2/2、`node test/ai-autoload.cjs` 3/3、`node test/ai-platforms.cjs` 7/7、`node test/quickblock.cjs` 37/37 通过。
 - `real-site verified`：2026-09-08 专用 Chrome 持久化开发扩展，B站只读视频页（登录状态未判定，页面形式 `bilibili.com/video/...`）bridge 为 `ready`；首轮 224 条弹幕完成 `224/224`，滚动到评论区后累计 `247/247`（采集 24 条评论，增量事件 23 条），继续加载/展开楼中楼后累计 `273/273`（采集 30 条评论、244 条弹幕，最后一次增量事件 6 条）；旧内容未重复发送，页面错误 0。未点击举报、官方拉黑、关注或发帖控件。
 - `blocked`：B站根评论分页仍为 partial，不能由当前样本推导全量；登录态未判定，本轮未运行需要用户授权的登录态探针。
-- 发布状态：0.51.1 仅为本地候选，未 commit、push、tag、GitHub Release、部署或执行平台写入；下一步最有价值动作是复核最终差异、源码哈希和隐私门禁。
+- 发布状态：0.51.1 已 commit 并 push 到 `origin/master`，未创建 tag、GitHub Release、部署或执行平台写入；下一步转入下一版本提示词系统的设计计划。
 
 ## 2026-09-08 平台关键词屏蔽与评论 AI 建议提醒（OB-RULE-002）
 
