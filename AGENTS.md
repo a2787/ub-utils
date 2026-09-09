@@ -101,11 +101,14 @@
 | 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
 | B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
 | 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
+| 当前专用 Chrome 登录态读取 | `node test/maintenance-check.cjs --dedicated-only`（自动同步扩展后运行专用探针） |
 | 用户可见版本发布 | 所有受影响行，加上 userscript 头部版本号检查 |
 
 真实站点探针默认使用隔离、只读、未登录会话：不得发帖、举报、关注、触发官方拉黑，
 也不得导出 Cookie。可以移动鼠标、滚动、暂停播放和点击脚本自身的 UI，但不得点击平台的
 举报、拉黑、关注等写入控件。真实探针失败是需要记录的证据，不是降低测试标准的理由。
+默认隔离探针与专用 profile 探针是两条不同证据链；前者不能代替后者，也不能用前者的
+登录页/验证码结果推断用户专用浏览器不可用。
 
 ### 登录态探针（需用户显式授权）
 
@@ -121,6 +124,11 @@
   允许；平台的举报、拉黑、关注、发帖等写入控件在任何登录状态下都是红线。脚本自身
   UI 触发的本地名单写入须使用测试存储 stub，不得污染用户真实名单。
 - 登录态探针的输出同样适用隐私门禁：页面标识脱敏，凭证与浏览数据不入库不入日志。
+- 当前任务得到该授权后，优先使用 `node test/maintenance-check.cjs --dedicated-only`；它会先
+  构建并同步开发扩展，再连接固定 CDP 端口，优先读取专用窗口已打开页面。若需要同时保留
+  匿名隔离探针作对照，再使用 `--dedicated`；不要把匿名探针的登录墙/验证码结果混入专用结论。
+  直接运行 `node test/dedicated-browser-probe.cjs` 仅适合已先执行 `node test/dev-browser.cjs sync`
+  的情况。所有模式都把扩展旧版本/桥接故障与平台无内容、登录墙、验证码分开报告。
 
 ## 文档规则
 

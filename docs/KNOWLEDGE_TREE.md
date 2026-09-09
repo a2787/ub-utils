@@ -53,7 +53,7 @@ AGENTS.md
 | 任务 | 必读节点 | 只在必要时读取 |
 |---|---|---|
 | 普通代码修复 | `AGENTS.md`、本文件、`MAINTENANCE_WORKFLOW.md`、`maintenance/CURRENT.md`、`maintenance/PLAN.md`、`architecture/ARCHITECTURE.md` | 受影响平台的源码/测试、README 对应段落 |
-| 平台适配或真实站点验证 | 上述活动节点 | 对应 `test/real-*.cjs`、平台回放、相关历史条目 |
+| 平台适配或真实站点验证 | 上述活动节点 | 对应 `test/real-*.cjs`、`test/dedicated-browser-probe.cjs`、平台回放、相关历史条目 |
 | 性能、日志、生命周期 | 上述活动节点 | `test/performance.cjs`、运行时相关测试、性能历史 |
 | 用户可见功能 | 上述活动节点、`README.md` | 当前版本 changelog 条目、受影响测试 |
 | AI 网关配置或路由 | 上述活动节点、`docs/decisions/0002-ai-screening-gateway-boundary.md` | `gateway/README.md`、`gateway/scripts/`、`test/gateway-smoke.cjs`、`启动网关.cmd` |

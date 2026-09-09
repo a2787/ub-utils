@@ -115,7 +115,7 @@ proposed → approved → in_progress → verified
   - [x] `request-not-allowed` 等桥接错误不再伪装成“AI 网关请求失败”；只有桥状态降级时才提示刷新扩展。
   - [x] 持久化开发扩展带含 `contentType` 的反馈样例分析成功，既有无反馈样例路径继续通过，页面/控制台错误为 0。
   - [x] `node --check`、受影响 AI/提示词/扩展回归、文档门禁和专用 Chrome 当前微博页真实只读验证均已按 `structure regression` 或 `real-site verified` 记录。
-- evidence: `structure regression`：开发扩展 7/7、内容 AI 12/12、AI screening 18/18、提示词系统 12/12、离线评测 5/5、AI 多平台 7/7，页面/控制台错误为 0；三层白名单允许反馈 `contentType`，拒绝路径保留可诊断错误。`real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 页面（登录状态由用户告知，未读取凭证）刷新扩展卡片和页面后 bridge 为 `ready`、尝试 1 次、拒绝 0 次；只读分析完成 `6/6`，进入审核态，`/v1/chat/completions` 收到 HTTP 200，`lastError` 为空。未执行平台写入。
+- evidence: `structure regression`：开发扩展7/7、内容 AI12/12、screening18/18、提示词12/12、评测5/5、多平台7/7；三层白名单与拒绝路径通过。`real-site verified`：2026-09-09 专用 Chrome 微博页 bridge ready，分析6/6、HTTP 200、无 lastError；未执行平台写入。
 - next: 源码已随 v0.52.0 推送；若要创建 tag/Release，另行复核最终差异、源码哈希、隐私门禁和对应授权；DeepSeek 真实语义精度继续由独立评测衡量。
 - updated: 2026-09-09
 - supersedes: none
@@ -134,6 +134,24 @@ proposed → approved → in_progress → verified
   - [x] 夹具回归和专用 Chrome 当前审核弹窗验证通过，未执行平台写入。
 - evidence: `structure regression`：AI screening 19/19、持久化开发扩展 8/8，无页面/控制台错误；`real-site verified`：2026-09-09 专用 Chrome 当前微博审核弹窗完成负反馈四步切换，并验证新记录刷新后恢复灰态、再次撤销，最终反馈 0、候选可选、bridge ready。
 - next: 已随 v0.52.0 源码推送并创建匹配的 tag/Release；DeepSeek 真实语义准确率和后续提示词迭代仍按新计划处理。
+- updated: 2026-09-09
+- supersedes: none
+
+### OB-VALID-001 — 专用登录态探针与开发扩展同步
+
+- status: verified
+- priority: P1
+- scope: 修复真实站点验证默认启动隔离未登录浏览器、专用 Chrome 已加载解压扩展却停留在旧版本或无效 Service Worker 的双重断点；新增同一专用 profile 的登录态只读探针，覆盖扩展版本/桥接健康、平台入口发现、作者/作品与评论/弹幕 AI 读取计数，并让开发扩展构建后可检测当前已加载版本，必要时给出确定的刷新动作。
+- non-goals: 不读取或导出 Cookie、Token、密码或私有接口；不点击平台举报、官方拉黑、关注、发帖等写入控件；不把登录态探针改成平台写入自动化；不承诺规避平台验证码、限流、登录失效或 DOM 改版；不覆盖既有 tag/Release，不修改 `.env`、provider 凭据或平台选择器。
+- dependencies: OB-COVERAGE-001, OB-AI-009, OB-AI-010
+- acceptance: required
+  - [x] `maintenance-check` 保留隔离探针；`--dedicated-only` 先同步扩展再运行同 profile 登录态只读探针，`--dedicated` 追加该链路并保留匿名对照，两类结果分开输出。
+  - [x] 探针优先读取专用窗口现有页，必要时创建并关闭临时页；输出脱敏路由、计数和 `real-site verified`/`blocked`。
+  - [x] `dev-browser sync` 构建后核对版本、桥接和新页面；旧构建/桥接未就绪不能报告 ready，并可自动刷新已加载扩展。
+  - [x] 人工合成分类回归 8/8 通过；不读取登录态、不注入源码、不触发平台写入。
+  - [x] 2026-09-09 专用 Chrome 只读复验六平台：B站8条作品、抖音46条作品、微博6条帖子、知乎5条回答、贴吧1主题+2评论；X 当前为空壳，明确记 `blocked`。
+- evidence: `structure regression`：专用探针分类6/6、各新增脚本语法和维护矩阵通过；`real-site verified`：2026-09-09 当前专用 Chrome 读到 B站/抖音/微博/知乎/贴吧记录，全部 0.52.0、bridge ready；`blocked`：X 当前无帖子，B站/抖音详情导航受页面响应/目标不稳定影响，未伪装为详情全量。
+- next: 后续取得当轮登录态授权后直接使用 `node test/maintenance-check.cjs --dedicated-only`；需要匿名对照再用 `--dedicated`，平台外部门禁仍按当轮证据记录。
 - updated: 2026-09-09
 - supersedes: none
 
@@ -158,7 +176,7 @@ proposed → approved → in_progress → verified
 
 - status: in_progress
 - priority: P1
-- scope: 微博详情页“屏蔽作品”入口的作品作用域识别与一次性读取；把与帖子卡片同级的评论虚拟列表纳入当前帖子统计，在 page-mode 文档滚动中按有限分段保留规范化记录；关闭程序化展开的楼中楼后恢复页面原有滚动样式，并在用户取消/关闭读取时中止剩余异步扫描；插件自有弹窗收尾后把页面键盘焦点交还给文档，避免评论输入框吞掉方向键；在已有作品屏蔽身份且虚拟行被回收/复用时，只对视口内评论做轻量重判，避免已命中身份在滚动帧间短暂重新显示；保持作者、主评论、子评论的身份归属和现有虚拟列表补位逻辑不变。
+- scope: 微博详情页作品级读取与屏蔽作用域；纳入同级评论虚拟列表，按有限分段保留规范化记录；取消/关闭时中止扫描、恢复滚动和焦点；虚拟行回收时重判视口内容；保持作者、主评论、子评论归属与补位逻辑不变。
 - non-goals: 不改变微博评论/回复选择器或身份键；不读取平台写入接口；不新增运行模式或独立诊断模式；不扩大到微博信息流、其他平台或 X；不把页面总评论数猜测成已读取的可屏蔽用户数。
 - dependencies: none
 - acceptance: required
@@ -194,7 +212,7 @@ proposed → approved → in_progress → verified
   - [ ] 贴吧：旧版楼层、新版现代详情评论、楼中楼/批量与恢复分别核验；opaque 首页作者继续 blocked。
   - [ ] 抖音：作者/评论、评论管理器与批量、弹幕悬停/管理器、推荐流遮罩/切换与恢复分别核验；验证码或换片目标不稳定时如实 blocked；弹幕管理器关闭时正在进行的时间轴扫描必须同步取消，不得留下后台任务。
   - [ ] 每项证据附日期、脱敏页面形式、登录状态、确切结果和命令；所有受影响本地回归保持通过。
-- evidence: `structure regression`：本地 `node test/quickblock.cjs` 36/36 通过，新增 `QB-B-REPORT`、`QB-B-LAYOUT` 和 `QB-B-REPLY-MENU`；旧源码重放的两项新增断言均失败，弹幕举报安全边界保持通过。`real-site verified`：2026-09-05 专用 Chrome 复现旧版楼回复入口换行和子评论点击后缺少本地入口；隔离 0.46.2 候选运行 `node test/real-bilibili-probe.cjs --verify-local --verify-sub-comment`，真实发现 1 个子评论，身份解析成功，本地入口数量为 1，主评论/子评论/整楼屏蔽与恢复通过，错误为 0。`blocked`：当前 Chrome 无法按安全策略刷新候选扩展。其余范围按 CURRENT 逐项登记，X 明确排除。
+- evidence: `structure regression`：quickblock36/36，新增报告/布局/子评论菜单断言通过，举报安全边界保持。`real-site verified`：2026-09-05 专用 Chrome 与 B站只读探针通过；`blocked`：部分旧候选扩展刷新受 Chrome 策略阻断。详见 CURRENT，X 不在本项范围。
 - next: 用单标签补齐微博点赞列表、知乎作者/列表、贴吧旧版楼层和抖音推荐流换片；微博顶层 spacer、B站匿名根评论分页和抖音换片/归因性能保持 `blocked` 时不猜测扩展。任何新选择器仍须先捕获再实现，X 按用户要求排除。
 - updated: 2026-09-05
 - supersedes: none
@@ -227,7 +245,7 @@ proposed → approved → in_progress → verified
   - [x] 有可重复的可见/隐藏/换片场景本地基线和回归阈值。
   - [x] 真实页面无法访问时保留 blocked，不用夹具数字替代。
   - [ ] 取得可归属于当前构建的抖音真实静置、播放和换片基线。
-- evidence: `structure regression`：性能边界 8/8；2026-09-04 用户授权登录态抖音详情页只读探针识别 3 条带身份弹幕、6 条评论和 3 行管理器，弹幕/评论本地隐藏与恢复通过，稳定性采样 10 次、心跳错误 0、最大延迟 4ms；播放 4.025 秒 renderer/page 总量为 TaskDuration 0.482075 秒、ThreadTime 0.477392 秒、ScriptDuration 0.095069 秒、LayoutDuration 0.006822 秒、RecalcStyleDuration 0.041989 秒，暂停 4.012 秒分别为 0.345100、0.352478、0.038331、0、0.033411 秒。该指标是页面 renderer 总量，不是插件独占 CPU。换片场景在平台回收旧节点后没有稳定的新目标，按 `blocked` 记录。
+- evidence: `structure regression`：性能边界8/8；2026-09-04 抖音只读详情页弹幕/评论隐藏恢复、稳定性采样通过。renderer/page 指标不等于插件独占 CPU；换片目标不稳定，按 `blocked` 记录。
 - next: 保留播放/暂停数据作为当前候选的页面总量基线；取得稳定换片目标后再补采切换窗口。只有在获得可归因插件指标后，才考虑深扫描时间片或进一步缓存优化；若入口再次验证码阻断，维持 `blocked`。
 - updated: 2026-09-04
 - supersedes: none

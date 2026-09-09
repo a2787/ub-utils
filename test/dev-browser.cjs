@@ -6,6 +6,7 @@
  * 用法：
  *   node test/dev-browser.cjs status
  *   node test/dev-browser.cjs build
+ *   node test/dev-browser.cjs sync
  *   node test/dev-browser.cjs ensure
  *   node test/dev-browser.cjs guide
  */
@@ -14,6 +15,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
+const { syncDevExtension } = require('./dedicated-browser.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DEV_EXTENSION_DIR = path.join(ROOT, 'test', '_dev-extension');
@@ -88,12 +90,19 @@ async function ensure() {
   const extension = buildDevExtension();
   const before = await ready();
   if (before.ready) {
+    const sync = await syncDevExtension({ endpoint: ENDPOINT });
+    const syncFailed = sync.status === 'failed';
     return {
-      status: 'ready-existing', launched: false, requiresRestart: false,
+      status: sync.status === 'ready' ? 'ready-existing' : (syncFailed ? 'failed' : 'ready-install-required'), launched: false, requiresRestart: false,
       cdpUrl: ENDPOINT, profile: PROFILE,
       extension,
-      requiresManualInstall: true,
-      note: '复用已有专用 Chrome。若尚未加载开发扩展，请按 guide 输出的一次性步骤加载；加载后新建页面会自动运行。',
+      sync,
+      requiresManualInstall: sync.status === 'blocked',
+      note: sync.status === 'ready'
+        ? '复用已有专用 Chrome，并已核对新页面会运行当前开发扩展。'
+        : syncFailed
+          ? '复用已有专用 Chrome，但扩展同步发生内部错误；未把 CDP 可用误报为扩展 ready。'
+          : '复用已有专用 Chrome，但当前扩展仍需一次性加载；同步命令已明确报告原因，不把 CDP 可用误报为扩展 ready。',
     };
   }
   const defaultProfile = path.resolve(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
@@ -110,10 +119,17 @@ async function ensure() {
   ], { detached: true, stdio: 'ignore', windowsHide: false });
   child.unref();
   await waitForReady();
+  const sync = await syncDevExtension({ endpoint: ENDPOINT });
+  const syncFailed = sync.status === 'failed';
   return {
-    status: 'ready', launched: true, cdpUrl: ENDPOINT, profile: PROFILE, chrome, extension,
-    requiresManualInstall: true,
-      note: `Google Chrome 不接受本启动方式的命令行加载解压扩展；首次请打开 chrome://extensions，开启开发者模式并加载 ${extension.directory}。以后复用此 profile 时无需重新安装。`,
+    status: sync.status === 'ready' ? 'ready' : (syncFailed ? 'failed' : 'ready-install-required'), launched: true, cdpUrl: ENDPOINT, profile: PROFILE, chrome, extension,
+    sync,
+    requiresManualInstall: sync.status === 'blocked',
+    note: sync.status === 'ready'
+      ? '专用 Chrome 已启动，并已核对新页面会运行当前开发扩展。'
+      : syncFailed
+        ? '专用 Chrome 已启动，但扩展同步发生内部错误；未把 CDP 可用误报为扩展 ready。'
+        : `专用 Chrome 已启动；首次仍需在 chrome://extensions 加载 ${extension.directory}，之后可由 sync 自动刷新已加载扩展。`,
   };
 }
 
@@ -127,9 +143,10 @@ function guide() {
       '在该窗口打开 chrome://extensions，开启右上角“开发者模式”。',
       `点击“加载已解压的扩展程序”，选择 ${extension.directory}。`,
       '以后在同一专用 profile 新建或刷新支持平台页面，源码会由扩展自动加载，不需要页面注入。',
-      '用 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/... 验证新页面的运行版本和构建标识。',
+      '源码修改后运行 node test/dev-browser.cjs sync；它会自动构建、核对当前扩展，必要时打开扩展页并刷新 OmniBlock。',
+      '用 node test/dedicated-browser-probe.cjs 验证六个平台当前专用 profile 的只读内容读取。',
     ],
-    note: '每次源码变更后重新运行 build/ensure；若扩展目录内容变化，在 chrome://extensions 点击扩展的刷新按钮。',
+    note: '首次加载是 Chrome 对解压扩展的安装边界；完成一次后不再要求人工刷新。sync 只点击扩展自己的“重新加载”，不会操作平台页面。',
   };
 }
 
@@ -140,16 +157,20 @@ function guide() {
       ? await ensure()
       : command === 'build'
         ? buildDevExtension()
+        : command === 'sync'
+          ? await (async () => { const extension = buildDevExtension(); const sync = await syncDevExtension({ endpoint: ENDPOINT, force: process.argv.includes('--force') }); return { extension, sync }; })()
         : command === 'guide'
           ? guide()
-        : command === 'status'
+          : command === 'status'
           ? { status: (await ready()).ready ? 'ready' : 'stopped', cdpUrl: ENDPOINT, profile: PROFILE }
-          : (() => { throw new Error('用法：node test/dev-browser.cjs status|build|ensure|guide'); })();
+          : (() => { throw new Error('用法：node test/dev-browser.cjs status|build|sync|ensure|guide'); })();
     console.log(JSON.stringify(result, null, 2));
+    if (command === 'sync' && result.sync && result.sync.status !== 'ready') process.exit(result.sync.status === 'failed' ? 1 : 2);
+    if (command === 'ensure' && result.status !== 'ready' && result.status !== 'ready-existing') process.exit(result.status === 'failed' ? 1 : 2);
     process.exit(0);
   } catch (error) {
-    console.error(JSON.stringify({ status: 'blocked', cdpUrl: ENDPOINT, profile: PROFILE,
+    console.error(JSON.stringify({ status: 'failed', cdpUrl: ENDPOINT, profile: PROFILE,
       error: String(error && error.message || error) }, null, 2));
-    process.exit(2);
+    process.exit(1);
   }
 })();

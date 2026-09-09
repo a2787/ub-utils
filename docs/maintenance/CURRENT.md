@@ -24,11 +24,11 @@
 
 ## 2026-09-08 可学习 AI 提示词系统（OB-AI-004，local candidate）
 
-- 范围：在不改关键词、本地名单、身份规范化和平台写入边界的前提下，加入版本化本地 `PromptProfile`、三态 `FeedbackLedger`、受控原因/备注、相关正负例选择、固定 JSON 输出约束和提示词包导入导出；新 profile 的 `blockCriteria` 已成为 AI 有效规则来源，旧 `aiRules` 只做迁移和兼容同步；带理由反馈达到阈值后生成待确认个性化提案，接受后才进入有效 prompt；同时审计六平台多形态作者、作品、评论、弹幕和帖子读取，补齐抖音精选/搜索/主页作品与无身份 AI 只读记录，并接入微博、知乎、贴吧详情统一右下内容入口。
-- 改动文件：`omniblock.user.js`、相关 AI/覆盖测试和 v0.52.0 候选文档；完整路径见工作区差异。
-- `structure regression`：覆盖 6/6；扩展 8/8；提示词 12/12；评测 5/5；AI screening 19/19；内容 AI 12/12；多平台 7/7；适配器 28/28；运行器 20/20；quickblock 37/37；均无页面/控制台错误；语法、文档、差异门禁通过；maintenance-check 本地项通过，汇总受外部阻断。
-- `real-site verified`：2026-09-09 用户授权专用 Chrome 只读（登录状态由用户告知，未读凭证）：B站作品/评论/弹幕 `1/27/66`（四标签）；微博内容/评论 `6/1+6`（评论/AI）；知乎内容/评论 `12/3` 后新增 `10`；贴吧主题/评论 `1/11`（12 条数字身份）；抖音精选/主页作品 `45/1`（AI/关键词入口）。未点平台写入。
-- `blocked`：X 空壳无 React/推文；抖音未展开评论/弹幕。B站分页/动态 UID、微博 spacer、抖音换片目标和 DeepSeek 精度仍待补验。
+- 范围：加入本地版本化 `PromptProfile`、三态 `FeedbackLedger`、理由/备注、正负例、固定 JSON 和提示词包；`blockCriteria` 为有效 AI 规则，旧 `aiRules` 仅迁移兼容；反馈达阈值生成待确认提案，接受后才入 prompt；并审计六平台作者、作品、评论、弹幕/帖子和统一右下内容入口。
+- 改动文件：`omniblock.user.js`、AI/覆盖测试及 v0.52.0 文档。
+- `structure regression`：覆盖6/6、扩展8/8、提示词12/12、评测5/5、screening19/19、内容 AI12/12、多平台7/7、适配器28/28、运行器20/20、quickblock37/37；页面/控制台错误0，语法/文档/差异门禁通过；maintenance-check 本地项通过，汇总受外部阻断。
+- `real-site verified`：2026-09-09 用户授权专用 Chrome 只读：B站作品/评论/弹幕 `1/27/66`；微博内容/评论 `6/1+6`；知乎内容/评论 `12/3` 后新增 `10`；贴吧主题/评论 `1/11`；抖音精选/主页作品 `45/1`。未点平台写入。
+- `blocked`：X 空壳无推文；抖音未展开评论/弹幕；B站分页/动态 UID、微博 spacer、抖音换片和 DeepSeek 精度仍待补验。
 - 发布状态（记录时）：当时源码 `@version` 为 `0.51.1`；既有 0.51.1 已推送到 `origin/master`，本轮提示词/多平台改动随后纳入 v0.52.0，未在该条目记录时执行公开发布、部署或平台写入。
 
 ## 2026-09-09 提示词反馈样例与开发扩展桥协议修复（OB-AI-009）
@@ -48,18 +48,20 @@
 
 ## 本轮已落实
 
-- 开发扩展桥、loopback 网关、存储恢复、生命周期和页面会话均有来源/序列/teardown/AbortController 边界；页面不获得 `window.GM_*`，桥接失败有界降级。
+- 开发扩展桥、loopback 网关、存储恢复、生命周期和页面会话均有来源/序列/teardown/AbortController 边界；页面不获得 `window.GM_*`，桥接失败有界降级。专用验证现在会先核对当前版本和 bridge ready；`maintenance-check --dedicated-only` 会自动完成扩展同步后再读登录态页面。
 - 通用扫描、Shadow DOM、作者/批量入口和 EventLog 走共享节流/预算路径；后台页面暂停非必要工作，名单索引、备份和日志写入失败保持可诊断，不自动删数据。
 - B站/抖音弹幕会话与自动规则按当前视频隔离；时间轴管理器关闭、换片或取消时恢复页面播放状态并释放扫描资源。
 - 评论、楼中楼、作品级批量和平台适配器均保留 generation/身份规范化/只读加载边界；旧异步结果不会重新渲染或提交名单。
 - B站和抖音的视频评论/弹幕入口合并为一个「内容屏蔽」按钮，统一弹窗提供评论、弹幕、AI、关键词四个标签；微博、知乎、贴吧和 X 只显示适用的内容/评论/AI 标签；切换标签会销毁旧子管理器并释放对应的 FloatingDock/键盘/扫描资源。
-- 本轮候选把统一内容入口固定到设置齿轮同侧的右下列；B站视频/推荐/动态、抖音播放器/精选/搜索/主页作品、微博帖子和贴吧旧版/新版主题帖正文与作者分别读取，评论/AI 使用已捕获语义层并排除操作组件/菜单文字；作者身份暂缺的作品/评论仍进入 AI 只读队列，单条、批量、悬浮、原生列表和 AI 确认弹幕只在目标动作时按需尝试 hash→UID 关联。
-- 持久化开发扩展的 service worker 现在只为 B站用户卡片 `GET` 转发白名单 URL（`type=json&mid=数字`），与 loopback AI `POST` 分支分开；桥接结构回归已覆盖该边界。
+- 本轮候选把统一内容入口固定到设置齿轮同侧的右下列；六平台正文/作者与评论、弹幕、帖子按已捕获语义层读取，排除操作文字；身份暂缺仍只进 AI 队列，hash→UID 只在目标动作时按需尝试。
+- 持久化开发扩展 service worker 只为 B站用户卡片 `GET` 和 loopback AI `POST` 转发白名单目标；桥接结构回归覆盖该边界。
 - AI 网关、模型、规则、分析与审核控件已从设置页迁移到 B站/抖音统一弹窗的「AI 屏蔽」标签；设置页保留迁移提示，loopback 校验、脱敏出站和人工确认边界不变。
 - B站/抖音关键词和正则规则已从设置页迁移到各自内容弹窗的「关键词屏蔽」标签；已有规则键兼容，规则默认启用，命中当前已观察且身份可靠的评论/弹幕时直接本地屏蔽，不请求 AI、不弹确认；身份不可靠时不伪造 UID。
-- B站评论晚于首轮 AI 采集时会按稳定哈希增量提醒，评论关键词命中会先于 AI 被处理；微博、知乎当前评论和作品正文接入统一的评论/AI 内容弹窗，知乎正文取 CommentContent 层并排除同级操作文字，身份暂缺的评论只进入 AI 不进入屏蔽执行。
+- B站评论晚于首轮 AI 采集时按稳定哈希增量提醒，关键词先于 AI；微博、知乎评论/正文接入统一评论/AI 弹窗，身份暂缺只进 AI 不执行屏蔽。
 - B站滚动/展开楼中楼后的新增评论与 `seg.so` 弹幕数据段通过共享内容信号进入同一套有界增量调度；增量请求只发送新的稳定记录，AI 状态中的 `analyzed` 保持为当前页面累计已分析数。
-- 贴吧旧版 `l_post`/`.d_post_content_main` 与现代详情 `.image-text`/`.pb-content-wrap` 主题帖进入只读作品 AI 记录；视频/播放器变体没有正文 DOM 时再读取已捕获 Vue `thread.title`/`origin_thread_info.content`，即使身份暂缺也不丢弃正文；现代 `.pb-comment-item`/`.pb-lzl-item` 评论只接受 Vue `userInfo.id` 数字身份或旧版 `data-field`，不透明作者参数不被猜测。
+- 贴吧旧版/现代主题帖及评论进入只读 AI 记录；评论只接受 Vue 数字身份或旧版 `data-field`，不猜不透明作者参数。
+- `real-site verified`：2026-09-09 通过 `node test/maintenance-check.cjs --dedicated-only` 自动同步后，当前专用 Chrome 新页面与已有页面均为 0.52.0、bridge `ready`；本轮专用探针读取 B站作品 8、抖音作品 46、微博帖子 6、知乎回答 5、贴吧主题 1+评论 2，未执行平台写入。
+- `blocked`：本轮 X 登录态页面为空壳无帖子；B站/抖音从入口到详情页的导航受页面响应/目标不稳定影响，未把入口计数扩大为详情全量。匿名 `--dedicated` 对照中的登录墙/CAPTCHA 仍只属于隔离证据，不代表专用 profile 不可用。
 
 ## 2026-09-08 B站新增内容累计增量 AI 分析（OB-AI-003）
 
@@ -134,7 +136,7 @@
 
 ### `blocked`
 
-- 知乎入口安全验证/登录墙、贴吧滑块验证码、X 登录墙、抖音验证码、微博活动顶层虚拟列表 spacer 不可测、B站根评论分页 partial、B站动态作者 UID 不稳定，以及商汤 provider、额度、cooldown 和记忆仍按各自条目标记为 `blocked`/`partial`；平台限制不变。本轮专用 Chrome 登录态只读复验已按用户授权执行，未读取凭证或执行平台写入。
+- 匿名入口的知乎登录墙、贴吧滑块、X 登录墙、抖音验证码、微博 spacer、B站根评论分页和动态 UID 仍按 `blocked`/`partial` 记录；专用 Chrome 不再沿用匿名结论。本轮专用登录态探针只读，未读取凭证或执行平台写入。
 
 ## 常用命令
 
@@ -147,15 +149,18 @@ node test/content-ai.cjs
 node test/ai-autoload.cjs
 node test/gateway-smoke.cjs
 node test/dev-browser.cjs build
+node test/dev-browser.cjs sync
 node test/dev-extension.cjs
+node test/dedicated-browser-probe.cjs --self-test
+node test/maintenance-check.cjs --dedicated
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
 node test/real-platform-probe.cjs --verify-local
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-固定专用 Chrome 的 profile 仍保留上次人工加载状态；本轮 v0.52.0 已在隔离浏览器会话完成 B站与微博公开只读 UI smoke，未执行平台写入。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-09 `dedicated-browser-probe` 真实读取 B站8、抖音46、微博6、知乎5、贴吧主题1+评论2，X 当前空壳记 `blocked`；未执行平台写入。
 v0.52.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是复核 v0.52.0 Release 页面、tag 指向和专用 Chrome 版本/构建 smoke；不把匿名分页 partial、验证码或登录页阻断当作全量通过。
+下一项最有价值的验证是运行 `node test/dev-browser.cjs sync` 后再跑 `node test/maintenance-check.cjs --dedicated`；不把匿名分页 partial、验证码、登录页或 X 空壳阻断当作全量通过。

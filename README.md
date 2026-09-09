@@ -104,22 +104,29 @@ node test/dev-browser.cjs ensure
 
 首次在这个专用窗口打开 `chrome://extensions`，开启“开发者模式”，选择“加载已解压的扩展程序”，
 载入命令输出中的 `test/_dev-extension` 目录。Chrome 会把这次加载保存到该专用 profile；以后新开支持
-平台页面就会自动运行本地开发源码，不需要再对单页调用注入。源码修改后运行 `node test/dev-browser.cjs build`，
-再在扩展页点击该开发扩展的刷新按钮即可。
+平台页面就会自动运行本地开发源码，不需要再对单页调用注入。源码修改后运行 `node test/dev-browser.cjs sync`；
+它会重新生成当前开发扩展，核对专用 Chrome 中新页面的版本和桥接状态，并自动点击该扩展自己的“重新加载”按钮。
 
 当前 Google Chrome 版本会忽略自动化命令行的 `--disable-extensions-except`/`--load-extension` 组合，
-所以启动器不再把这两个参数当成成功条件，也不会伪造“已加载”。如果需要确认当前安装是否真的作用于新页面，
-在取得本轮登录态只读验证授权后，显式提供一个脱敏前的实际页面地址运行：
+所以启动器不再把这两个参数当成成功条件，也不会伪造“已加载”。首次仍需手动加载一次解压扩展；之后由 `sync`
+负责版本核对和刷新。若要确认六个平台实际页面都能读取，在取得本轮登录态只读验证授权后运行：
 
 ```powershell
-node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
+node test/maintenance-check.cjs --dedicated-only
 ```
 
-开发桥只允许 OmniBlock 自己的名单/备份/日志键和两类只读网络目标；主世界与隔离世界消息带构建期随机签名和单调序列，
-页面拿不到 `window.GM_*` 能力。桥接不可用时会在 8 次尝试后有界降级，不会无限轮询。
+这个命令会先执行本地门禁、自动构建并同步专用扩展，再运行登录态只读探针；因此源码更新后不需要
+先手动刷新扩展。若只想采集专用页面证据，可在已经运行 `sync` 后单独执行
+`node test/dedicated-browser-probe.cjs`；若要把匿名隔离会话作为对照，再执行
+`node test/maintenance-check.cjs --dedicated`。
 
-该探针会在固定 CDP 会话中打开两个新页面，只读取脚本自己的运行版本、构建标识、齿轮和控制坞状态，
-不会注入源码、读取 Cookie 或点击 B 站/抖音/微博的举报、拉黑、关注等平台写入控件。`node test/dev-extension.cjs`
+开发桥只允许 OmniBlock 自己的名单/备份/日志键和两类只读网络目标；主世界与隔离世界消息带构建期随机签名和单调序列，
+页面拿不到 `window.GM_*` 能力。桥接不可用时会在 8 次尝试后有界降级，不会无限轮询；专用探针会把这种扩展故障
+与平台登录墙、验证码或当前没有帖子分开记录。
+
+`dedicated-browser-probe` 只读取固定 CDP 会话中专用 profile 已打开页面；必要时创建并关闭自己的临时页，读取脚本
+自己的运行版本、构建标识、桥接、适配器和语义记录计数，不注入源码、不读取 Cookie、不点击 B 站/抖音/微博的举报、
+拉黑、关注等平台写入控件。`node test/dev-extension.cjs`
 则使用隔离临时 profile 和兼容 Chromium 浏览器打开人工合成页面做 `structure regression`；它证明自动加载
 和存储桥接，不替代真实站点验收。旧的直接注入方式仅保留给隔离夹具和公开只读探针，不能作为专用浏览器安装证据。
 
@@ -359,7 +366,9 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 可重复运行的检查：
 
 ```powershell
-node test/maintenance-check.cjs    # 维护者单命令闭环：静态门禁、完整矩阵、作品级回归、三平台隔离真站探针
+node test/maintenance-check.cjs    # 静态门禁、完整矩阵、作品级回归和隔离真站探针
+node test/maintenance-check.cjs --dedicated-only # 在本轮已授权时自动同步并仅运行专用 profile 六平台只读链路
+node test/maintenance-check.cjs --dedicated # 在本轮已授权时保留匿名对照并追加专用 profile 六平台只读探针
 node test/weibo-replay.cjs         # 微博虚拟列表回放/压力回归；可用 --git-ref= 复核旧版失败
 node test/comment-manager.cjs      # 三平台统一评论管理器、作者去重、搜索、多选和楼操作回归
 node test/work-block.cjs           # 三平台作品作用域、作者/评论/子评论/弹幕、一次事务与撤销回归
@@ -383,8 +392,9 @@ node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页�
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
 node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
 node test/dev-browser.cjs guide                         # 输出一次性加载本地开发扩展的步骤
-node test/dev-browser.cjs build                         # 重新生成当前源码的本地开发扩展
-node test/dev-browser.cjs ensure                        # 启动/复用专用持久 Chrome，不连接主浏览器
+node test/dev-browser.cjs build                         # 只重新生成当前源码的本地开发扩展
+node test/dev-browser.cjs sync                          # 构建、核对并自动刷新专用 Chrome 中已加载的扩展
+node test/dev-browser.cjs ensure                        # 启动/复用专用持久 Chrome 并自动执行 sync
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/... # 新页面无注入核对
 node test/real-login-probe.cjs weibo --url=https://weibo.com/... --duration=90 --scenario=all
 node test/real-login-probe.cjs weibo --current --duration=90 --scenario=all
@@ -393,7 +403,7 @@ node test/real-login-probe.cjs weibo --current --duration=90 --scenario=all
 
 登录态验证前由用户本人在专用 profile 完成登录；探针只控制自己创建的临时标签页，名单写入使用内存 stub，
 不会读取 Cookie 或点击微博举报、官方拉黑、关注、发帖等平台写入控件。公开隔离探针仍可直接注入工作区源码，
-但专用浏览器的开发迭代应使用一次性安装的本地开发扩展，并在源码变更后刷新扩展；不需要每次试验提高版本号或先安装
+但专用浏览器的开发迭代应使用一次性安装的本地开发扩展，并在源码变更后运行 sync；不需要每次试验提高版本号或先安装
 Tampermonkey 候选。同一文档内若因调试重放再次执行源码，当前运行锁会忽略
 重复实例，避免扫描器、观察器、定时器和设置入口叠加；源码发生变化仍需刷新或打开新文档后再验证。
 

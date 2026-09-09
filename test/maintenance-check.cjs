@@ -1,8 +1,9 @@
 /*
  * OmniBlock 维护闭环：默认由维护者运行，不依赖用户 Tampermonkey 已安装版本。
- * 它会顺序执行静态门禁、AI 网关 mock、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和当前源码注入的三平台真站探针。
- * 真实探针仍遵守只读边界；用户浏览器只作为最终环境复核，不是本命令的代码生效前提。
- * 运行：node test/maintenance-check.cjs
+ * 它会顺序执行静态门禁、AI 网关 mock、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和
+ * 隔离真站探针。加 --dedicated 后，先同步并追加当前用户授权的专用 Chrome 登录态只读探针；
+ * --dedicated-only 则只保留本地门禁和专用链路，避免匿名探针阻断混入当前登录态结论。
+ * 运行：node test/maintenance-check.cjs [--dedicated|--dedicated-only]
  */
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -24,6 +25,7 @@ const privacyFiles = [...new Set([...trackedFiles, ...collectMarkdownFiles('docs
   .filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|docs\/.*\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
 for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
+  'test/dev-browser.cjs', 'test/dedicated-browser.cjs', 'test/dedicated-browser-probe.cjs',
   'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-prompt-system.cjs', 'test/ai-prompt-eval.cjs', 'test/ai-platforms.cjs', 'test/content-ai.cjs', 'test/ai-autoload.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
   'test/content-coverage.cjs', 'test/probe-hygiene.cjs']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
@@ -49,6 +51,8 @@ const checks = [
   { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
   { label: 'work block syntax', command: process.execPath, args: ['--check', 'test/work-block.cjs'] },
   { label: 'installed browser probe syntax', command: process.execPath, args: ['--check', 'test/installed-browser-probe.cjs'] },
+  { label: 'dedicated browser probe syntax', command: process.execPath, args: ['--check', 'test/dedicated-browser.cjs'] },
+  { label: 'dedicated browser probe wrapper syntax', command: process.execPath, args: ['--check', 'test/dedicated-browser-probe.cjs'] },
   { label: 'AI platform regression syntax', command: process.execPath, args: ['--check', 'test/ai-platforms.cjs'] },
   { label: 'content AI regression syntax', command: process.execPath, args: ['--check', 'test/content-ai.cjs'] },
   { label: 'multi-platform content coverage syntax', command: process.execPath, args: ['--check', 'test/content-coverage.cjs'] },
@@ -71,6 +75,7 @@ const checks = [
   { label: 'AI Douyin autoload', command: process.execPath, args: ['test/ai-autoload.cjs'] },
   { label: 'AI request watchdog', command: process.execPath, args: ['test/ai-watchdog.cjs'] },
   { label: 'probe hygiene', command: process.execPath, args: ['test/probe-hygiene.cjs'] },
+  { label: 'dedicated browser probe classification', command: process.execPath, args: ['test/dedicated-browser-probe.cjs', '--self-test'] },
   { label: 'AI gateway Docker smoke', command: process.execPath, args: ['test/gateway-smoke.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
   { label: 'Bilibili isolated real-site probe', command: process.execPath, args: ['test/real-bilibili-probe.cjs', '--verify-local'] },
@@ -81,6 +86,19 @@ const checks = [
   { label: 'diff whitespace', command: 'git', args: ['diff', '--check'] },
 ];
 
+const dedicated = process.argv.includes('--dedicated') || process.argv.includes('--dedicated-only');
+if (process.argv.includes('--dedicated-only')) {
+  for (let index = checks.length - 1; index >= 0; index--) {
+    if (/ isolated real-site probe$/.test(checks[index].label)) checks.splice(index, 1);
+  }
+}
+if (dedicated) {
+  checks.push({ label: 'dedicated Chrome development extension sync', command: process.execPath,
+    args: ['test/dev-browser.cjs', 'sync'] });
+  checks.push({ label: 'dedicated Chrome login-state real-site probe', command: process.execPath,
+    args: ['test/dedicated-browser-probe.cjs'] });
+}
+
 if (privacyHits.length) {
   console.error('PRIVACY GATE FAILED:', privacyHits.join(', '));
   process.exit(1);
@@ -90,6 +108,36 @@ let failed = false;
 const blocked = [];
 for (const check of checks) {
   console.log('\n=== ' + check.label + ' ===');
+  if (check.label === 'dedicated Chrome development extension sync') {
+    const result = spawnSync(check.command, check.args, { cwd: ROOT, encoding: 'utf8', env: process.env });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    if (result.error) {
+      failed = true;
+      console.error('CHECK FAILED:', check.label, result.error.message);
+    } else if (result.status === 2) {
+      blocked.push('专用 Chrome 扩展同步需要一次性加载或当前 CDP 不可用；详见上方 sync 结果');
+    } else if (result.status !== 0) {
+      failed = true;
+      console.error('CHECK FAILED:', check.label, 'exit ' + result.status);
+    }
+    continue;
+  }
+  if (check.label === 'dedicated Chrome login-state real-site probe') {
+    const result = spawnSync(check.command, check.args, { cwd: ROOT, encoding: 'utf8', env: process.env });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    if (result.error) {
+      failed = true;
+      console.error('CHECK FAILED:', check.label, result.error.message);
+    } else if (result.status === 2) {
+      blocked.push('专用 Chrome 登录态探针存在外部门禁或当前页面无内容；详见上方 dedicated evidence');
+    } else if (result.status !== 0) {
+      failed = true;
+      console.error('CHECK FAILED:', check.label, 'exit ' + result.status);
+    }
+    continue;
+  }
   const isolatedProbe = check.label.match(/^(.+) isolated real-site probe$/);
   if (isolatedProbe) {
     const probeId = isolatedProbe[1].toLowerCase();
