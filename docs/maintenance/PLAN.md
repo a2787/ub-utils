@@ -133,7 +133,7 @@ proposed → approved → in_progress → verified
   - [x] 新记录经持久化开发扩展保存后，刷新页面仍能恢复灰态反馈并允许撤销。
   - [x] 夹具回归和专用 Chrome 当前审核弹窗验证通过，未执行平台写入。
 - evidence: `structure regression`：AI screening 19/19、持久化开发扩展 8/8，无页面/控制台错误；`real-site verified`：2026-09-09 专用 Chrome 当前微博审核弹窗完成负反馈四步切换，并验证新记录刷新后恢复灰态、再次撤销，最终反馈 0、候选可选、bridge ready。
-- next: 源码已随 v0.52.0 推送；创建 tag/Release 前复核最终差异、源码哈希、隐私门禁并另行取得对应授权。
+- next: 已随 v0.52.0 源码推送并创建匹配的 tag/Release；DeepSeek 真实语义准确率和后续提示词迭代仍按新计划处理。
 - updated: 2026-09-09
 - supersedes: none
 

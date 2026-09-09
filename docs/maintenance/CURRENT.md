@@ -1,18 +1,18 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-09
-状态来源：0.52.0 源码候选已推送；公开 Release 仍为 0.46.2；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.52.0 源码已推送并创建 GitHub Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.52.0`（源码已推送到 `origin/master`，未创建 tag/Release）
+- 当前 userscript：`0.52.0`（源码已推送到 `origin/master`，已创建匹配的 tag/Release）
 - 构建：`0.52.0-content-ai-prompt-feedback`
-- 当前公开版本：`0.46.2`
-- 当前公开功能提交：`acd3b0a47ef56f9a0c662ded8efdb8332aedfff4`
-- 最近验证的源码快照：`4a92a85add65b9e468304d0f5cdd834a1ed1581f`（v0.51.1 基线；本版本基于此提交）
+- 当前公开版本：`0.52.0`
+- 当前公开功能提交：`e360a8dcc23039899844b864f32ba05be82f70f3`
+- 最近验证的源码快照：`e360a8dcc23039899844b864f32ba05be82f70f3`（v0.52.0 功能提交；后续仅文档提交不改变 userscript）
 - 当前候选源码 SHA-256：`5da5ea8c301111cec8fe83c2ec12ca518985fac61ed849817cb8b534aa692679`
-- 发布状态：0.52.0 源码已推送到 `origin/master`，尚未创建 tag/Release；0.51.1 和 0.49.0 仍是已推送源码候选；公开的 0.46.2 仍保留原 tag/Release。
-- 当前公开 tag/Release：[`v0.46.2`](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。
+- 发布状态：0.52.0 源码已推送到 `origin/master`，并已创建匹配的 tag/Release；未执行部署或平台写入。0.51.1 和 0.49.0 仍是没有独立公开 Release 的历史源码候选；v0.46.2 保留原 tag/Release。
+- 当前公开 tag/Release：[`v0.52.0`](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)。
 
 ## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
 
@@ -20,7 +20,7 @@
 - 官方 API 实时发现：使用当前本机 provider 的凭据请求 `https://api.deepseek.com/models`，仅输出型号 ID，得到公开的 `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp`，未列出内测 ID；随后按用户提供的精确内测 ID 经网关实请求成功。凭据未进入输出、源码或文档。
 - `structure regression`：生成后的 `gateway.manifest.json` 显示 `deepseek-v4.1-flash-expires-on-0910`、单个 primary provider 和 `omni-default`；`pwsh -NoProfile -ExecutionPolicy Bypass -File .\gateway\health.ps1` 通过；经本机 loopback 发送人工合成审核请求返回 HTTP 200，响应模型别名为 `omni-default`，正文为可解析的 `block/reason` JSON；网关 smoke、userscript 语法、文档门禁和 `git diff --check` 见本轮交接结果。
 - `blocked`：公开模型目录和当前官方公开文档未覆盖该内测 ID；`expires-on-0910` 到期后的有效性及真实语义准确率尚未验证。本轮只验证文本审核请求，没有额外导出 B站/抖音页面文本或执行平台写入。
-- 发布状态：这是本机运行时配置变更，不改变 userscript 源码哈希、版本号、commit、push、tag/Release 或部署状态；当前候选仍未公开发布。
+- 发布状态（记录时）：这是本机运行时配置变更，不改变 userscript 源码哈希、版本号、commit、push、tag/Release 或部署状态；当时候选仍未公开发布。
 
 ## 2026-09-08 可学习 AI 提示词系统（OB-AI-004，local candidate）
 
@@ -29,7 +29,7 @@
 - `structure regression`：覆盖 6/6；扩展 8/8；提示词 12/12；评测 5/5；AI screening 19/19；内容 AI 12/12；多平台 7/7；适配器 28/28；运行器 20/20；quickblock 37/37；均无页面/控制台错误；语法、文档、差异门禁通过；maintenance-check 本地项通过，汇总受外部阻断。
 - `real-site verified`：2026-09-09 用户授权专用 Chrome 只读（登录状态由用户告知，未读凭证）：B站作品/评论/弹幕 `1/27/66`（四标签）；微博内容/评论 `6/1+6`（评论/AI）；知乎内容/评论 `12/3` 后新增 `10`；贴吧主题/评论 `1/11`（12 条数字身份）；抖音精选/主页作品 `45/1`（AI/关键词入口）。未点平台写入。
 - `blocked`：X 空壳无 React/推文；抖音未展开评论/弹幕。B站分页/动态 UID、微博 spacer、抖音换片目标和 DeepSeek 精度仍待补验。
-- 发布状态：当前源码 `@version` 仍为 `0.51.1`；既有 0.51.1 已推送到 `origin/master`，本轮提示词/多平台改动仅为本地未发布候选，未 commit、push、tag、GitHub Release、部署或执行平台写入。
+- 发布状态（记录时）：当时源码 `@version` 为 `0.51.1`；既有 0.51.1 已推送到 `origin/master`，本轮提示词/多平台改动随后纳入 v0.52.0，未在该条目记录时执行公开发布、部署或平台写入。
 
 ## 2026-09-09 提示词反馈样例与开发扩展桥协议修复（OB-AI-009）
 
@@ -37,14 +37,14 @@
 - 改动文件：`omniblock.user.js`、开发扩展/AI 回归测试、架构与 v0.52.0 候选文档。
 - `structure regression`：持久化开发扩展 8/8，包含真实 service worker loopback mock、反馈样例 `contentType` 端到端请求、反馈存储跨文档读回和桥接拒绝错误文案；内容 AI 12/12、AI screening 18/18、提示词系统 12/12、离线评测 5/5、AI 多平台 7/7；页面/控制台错误为 0。
 - `real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 页面（登录状态由用户告知，未读取凭证）刷新扩展卡片和页面后 bridge 为 `ready`、尝试 1 次、拒绝 0 次；只读 AI 分析完成 `6/6`，进入审核态，本地 `/v1/chat/completions` 收到 HTTP 200，`lastError` 为空。未执行平台写入。
-- 发布状态：本项已随 v0.52.0 源码推送到 `origin/master`；未创建 tag/Release、部署或平台写入。
+- 发布状态：本项已随 v0.52.0 源码推送到 `origin/master` 并进入 v0.52.0 tag/Release；未部署或平台写入。
 
 ## 2026-09-09 AI 审核负向反馈可撤销切换（OB-AI-010）
 
 - 范围/改动：审核弹窗「不屏蔽」改为可点击灰态；撤销精确删除 `ai_rejected` 事件、恢复候选选择，再次点击可重录。改动 `omniblock.user.js`、`test/ai-screening.cjs` 与候选文档。
 - `structure regression`：`node test/ai-screening.cjs` 19/19，无页面/控制台错误；内容 AI、提示词、扩展、多平台、通用运行器、适配器、quickblock 和内容覆盖回归保持通过。
 - `real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 审核弹窗完成“记录→撤销→再记录→再撤销”；按钮始终可点，最终反馈 0、候选可选、bridge `ready`。另记录 1 条新负反馈并刷新，恢复灰态可撤销，撤销后反馈 0；未执行平台写入。
-- `blocked`：此前会话的 3 条旧反馈状态未在账本读回，无法追溯恢复；本轮新记录已跨刷新读回。源码已随 v0.52.0 推送，未创建 tag/Release。
+- `blocked`：此前会话的 3 条旧反馈状态未在账本读回，无法追溯恢复；本轮新记录已跨刷新读回。源码已随 v0.52.0 推送并进入 tag/Release，未部署或执行平台写入。
 
 ## 本轮已落实
 
@@ -154,8 +154,8 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
 固定专用 Chrome 的 profile 仍保留上次人工加载状态；本轮 v0.52.0 已在隔离浏览器会话完成 B站与微博公开只读 UI smoke，未执行平台写入。
-公开的 0.46.2 tag 与 Release 保持不变；0.48.0、0.49.0、0.51.1 和 0.52.0 已推送到 `origin/master`，均未创建新 tag/Release。
+v0.52.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是对已推送的 v0.52.0 做远端分支读回和专用 Chrome 版本/构建 smoke；若要创建 tag/Release，需另获当轮授权，不把匿名分页 partial、验证码或登录页阻断当作全量通过。
+下一项最有价值的验证是复核 v0.52.0 Release 页面、tag 指向和专用 Chrome 版本/构建 smoke；不把匿名分页 partial、验证码或登录页阻断当作全量通过。
