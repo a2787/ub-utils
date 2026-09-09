@@ -24,8 +24,8 @@ const privacyFiles = [...new Set([...trackedFiles, ...collectMarkdownFiles('docs
   .filter((name) => /^(?:README\.md|CHANGELOG\.md|MAINTENANCE\.md|AGENTS\.md|docs\/.*\.md|omniblock\.user\.js|test\/.*\.cjs)$/.test(name));
 for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
-  'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-platforms.cjs', 'test/content-ai.cjs', 'test/ai-autoload.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
-  'test/probe-hygiene.cjs']) {
+  'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-prompt-system.cjs', 'test/ai-prompt-eval.cjs', 'test/ai-platforms.cjs', 'test/content-ai.cjs', 'test/ai-autoload.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
+  'test/content-coverage.cjs', 'test/probe-hygiene.cjs']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
 }
 const privacyPatterns = [
@@ -51,6 +51,7 @@ const checks = [
   { label: 'installed browser probe syntax', command: process.execPath, args: ['--check', 'test/installed-browser-probe.cjs'] },
   { label: 'AI platform regression syntax', command: process.execPath, args: ['--check', 'test/ai-platforms.cjs'] },
   { label: 'content AI regression syntax', command: process.execPath, args: ['--check', 'test/content-ai.cjs'] },
+  { label: 'multi-platform content coverage syntax', command: process.execPath, args: ['--check', 'test/content-coverage.cjs'] },
   { label: 'AI Douyin autoload syntax', command: process.execPath, args: ['--check', 'test/ai-autoload.cjs'] },
   { label: 'generic UI/state', command: process.execPath, args: ['test/run.cjs'] },
   { label: 'core state', command: process.execPath, args: ['test/state.cjs'] },
@@ -61,8 +62,12 @@ const checks = [
   { label: 'performance boundaries', command: process.execPath, args: ['test/performance.cjs'] },
   { label: 'persistent development extension', command: process.execPath, args: ['test/dev-extension.cjs'] },
   { label: 'AI screening', command: process.execPath, args: ['test/ai-screening.cjs'] },
+  { label: 'AI prompt system', command: process.execPath, args: ['test/ai-prompt-system.cjs'] },
+  { label: 'AI prompt offline evaluation syntax', command: process.execPath, args: ['--check', 'test/ai-prompt-eval.cjs'] },
+  { label: 'AI prompt offline evaluation', command: process.execPath, args: ['test/ai-prompt-eval.cjs'] },
   { label: 'AI platform collection', command: process.execPath, args: ['test/ai-platforms.cjs'] },
   { label: 'content AI', command: process.execPath, args: ['test/content-ai.cjs'] },
+  { label: 'multi-platform content coverage', command: process.execPath, args: ['test/content-coverage.cjs'] },
   { label: 'AI Douyin autoload', command: process.execPath, args: ['test/ai-autoload.cjs'] },
   { label: 'AI request watchdog', command: process.execPath, args: ['test/ai-watchdog.cjs'] },
   { label: 'probe hygiene', command: process.execPath, args: ['test/probe-hygiene.cjs'] },

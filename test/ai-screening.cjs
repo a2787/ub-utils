@@ -125,8 +125,10 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   } else report.fail.push('AI-10 分析加载态未切换到全量分批文案');
   const bridgeDiagnosticsReady = USERSCRIPT.includes('function persistentBridgeError()')
     && USERSCRIPT.includes('浏览器开发扩展桥接不可用')
-    && USERSCRIPT.includes('loopback 地址校验已通过；请检查本地网关和浏览器扩展桥接。')
-    && USERSCRIPT.includes("status.state === 'error' && status.gatewayConfigured");
+    && USERSCRIPT.includes('function aiRequestErrorMessage(error)')
+    && USERSCRIPT.includes('AI 请求被浏览器扩展拒绝（request-not-allowed）')
+    && USERSCRIPT.includes('扩展桥已就绪，但 AI 请求体未通过桥接协议校验。')
+    && USERSCRIPT.includes("if (status.state !== 'error') return '当前仅允许 loopback 网关。'");
   if (bridgeDiagnosticsReady) report.pass.push('AI-11 开发桥降级快速诊断与 loopback 错误文案已接入');
   else report.fail.push('AI-11 缺少开发桥降级快速诊断或有效 loopback 错误文案');
   const browser = await launchChromium({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
@@ -188,6 +190,57 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const serializedBodies = JSON.stringify(initial.bodies);
   if (initial.bodies.length >= 1 && !/(bili:uid|bili:dmhash|space\.bilibili|"keys"|"uid"|"mid"|"hash")/i.test(serializedBodies)) report.pass.push('AI-3 发往网关的请求只包含规则/临时项目/文本，不含身份键');
   else report.fail.push('AI-3 AI 请求疑似携带身份字段：' + serializedBodies.slice(0, 1000));
+
+  // 人工合成：审核弹窗中的负向反馈必须是可撤销切换。测试四次点击的
+  // 完整状态链：记录、撤销、再次记录、再次撤销；最后恢复可选状态，
+  // 以免干扰后续的名单确认断言。
+  let rejectToggle = null;
+  if (initial.review && initial.candidates) {
+    const targetReject = page.locator('#ob-ai-review .ob-ai-candidate').first().locator('.ob-ai-reject');
+    const snapshotReject = () => page.evaluate(() => {
+      const row = document.querySelector('#ob-ai-review .ob-ai-candidate');
+      const button = row && row.querySelector('.ob-ai-reject');
+      const input = row && row.querySelector('input[type="checkbox"]');
+      const feedback = window.OB.ai.prompt.getFeedback(500).filter((event) => event.label === 'negative' && event.source === 'ai_rejected');
+      return {
+        active: button && button.getAttribute('aria-pressed') === 'true',
+        disabled: !!(button && button.disabled),
+        inputDisabled: !!(input && input.disabled),
+        checked: !!(input && input.checked),
+        rowFeedback: row && row.dataset.feedback || '',
+        feedbackCount: feedback.length,
+        mainData: String(window.__gm && window.__gm['omniblock:data:v1'] || ''),
+      };
+    });
+    await targetReject.click();
+    await page.waitForSelector('#ob-ai-feedback', { timeout: 3000 }).catch(() => {});
+    if (await page.locator('#ob-ai-feedback .ob-ai-feedback-skip').count()) await page.locator('#ob-ai-feedback .ob-ai-feedback-skip').click();
+    const recorded = await snapshotReject();
+    await targetReject.click();
+    const withdrawn = await snapshotReject();
+    await targetReject.click();
+    await page.waitForSelector('#ob-ai-feedback', { timeout: 3000 }).catch(() => {});
+    if (await page.locator('#ob-ai-feedback .ob-ai-feedback-skip').count()) await page.locator('#ob-ai-feedback .ob-ai-feedback-skip').click();
+    const rerecorded = await snapshotReject();
+    await targetReject.click();
+    const restored = await snapshotReject();
+    rejectToggle = { recorded, withdrawn, rerecorded, restored };
+  }
+  if (rejectToggle
+    && rejectToggle.recorded.active && !rejectToggle.recorded.disabled
+    && rejectToggle.recorded.inputDisabled && !rejectToggle.recorded.checked
+    && rejectToggle.recorded.rowFeedback === 'negative' && rejectToggle.recorded.feedbackCount === 1
+    && !rejectToggle.withdrawn.active && !rejectToggle.withdrawn.disabled
+    && !rejectToggle.withdrawn.inputDisabled && rejectToggle.withdrawn.checked
+    && !rejectToggle.withdrawn.rowFeedback && rejectToggle.withdrawn.feedbackCount === 0
+    && rejectToggle.rerecorded.active && !rejectToggle.rerecorded.disabled
+    && rejectToggle.rerecorded.feedbackCount === 1
+    && !rejectToggle.restored.active && !rejectToggle.restored.disabled
+    && !rejectToggle.restored.inputDisabled && rejectToggle.restored.checked
+    && rejectToggle.restored.feedbackCount === 0
+    && !/bili:(?:uid|dmhash):/.test(rejectToggle.restored.mainData)) {
+    report.pass.push('AI-19 审核“不屏蔽”灰态可点击撤销，反馈可再次记录且候选恢复可选');
+  } else report.fail.push('AI-19 负向反馈切换异常：' + JSON.stringify(rejectToggle));
 
   if (initial.review) {
     await page.locator('#ob-ai-review .ob-ai-confirm').click();

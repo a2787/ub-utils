@@ -1,11 +1,12 @@
 /* 专用开发扩展回归：证明源码不是只在当前标签页一次性注入。
  * 人工合成 B 站/抖音页面，打开三个新文档，验证不同平台/子域都自动加载扩展，
- * chrome.storage 本地桥接能跨页面保存设置，loopback AI 窄 JSON 请求可经桥接返回，
+ * chrome.storage 本地桥接能跨页面保存设置和 AI 反馈，loopback AI 窄 JSON 请求可经桥接返回，
  * 页面脚本不能伪造桥接消息；最后在缺少隔离桥的人工页面验证启动会有界降级，不会无限重试。
  * 运行：node test/dev-extension.cjs
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { launchPersistentChromium, ROOT, EDGE_PATH, CHROME_PATH } = require('./runtime.cjs');
@@ -14,6 +15,12 @@ const buildScript = path.join(ROOT, 'test', 'build-dev-extension.cjs');
 const build = JSON.parse(execFileSync(process.execPath, [buildScript], { cwd: ROOT, encoding: 'utf8' }));
 const extensionDir = path.join(ROOT, 'test', '_dev-extension');
 const serviceWorkerSource = fs.readFileSync(path.join(extensionDir, 'bridge-service-worker.js'), 'utf8');
+const bridgeSourcePaths = [
+  path.join(extensionDir, 'runtime-main.js'),
+  path.join(extensionDir, 'bridge-isolated.js'),
+  path.join(extensionDir, 'bridge-service-worker.js'),
+];
+const bridgeSources = bridgeSourcePaths.map((file) => fs.readFileSync(file, 'utf8'));
 // 当前 Google Chrome 148 会忽略命令行 unpacked-extension 开关；Edge/Chromium
 // 仍支持它们，因此结构回归默认选 Edge，专用 Chrome 的长期运行由一次性的
 // chrome://extensions「加载已解压的扩展程序」安装流程负责。
@@ -23,8 +30,12 @@ const fixtureUrls = [
   'https://space.bilibili.com/omniblock-structure-fixture',
   'https://www.douyin.com/omniblock-structure-fixture',
 ];
-const fallbackUrl = 'https://example.invalid/omniblock-bridge-timeout-fixture';
-const aiUrl = 'http://127.0.0.1:4000/v1/chat/completions';
+// 使用可被浏览器正常解析的保留域名；context.route 会在真正发出网络请求前
+// 返回人工页面，避免 Edge 对 `.invalid` 导航直接报 ERR_ABORTED/关闭目标页，
+// 让该用例真正覆盖“缺少隔离桥”的 runtime-main 降级路径。
+const fallbackUrl = 'https://example.com/omniblock-bridge-timeout-fixture';
+let aiUrl = '';
+let aiServer = null;
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>OmniBlock extension fixture</title></head>
 <body><main data-ob-fixture="artificial"><h1>人工合成扩展回归页面</h1><p>不包含真实作品或账号标识。</p></main></body></html>`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,7 +50,49 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   } else {
     report.fail.push('开发扩展桥接缺少 B站用户卡片 GET 白名单转发');
   }
+  const feedbackExampleAllowlist = "['role', 'label', 'kind', 'contentType', 'text', 'reasonCode', 'note']";
+  if (bridgeSources.length === 3 && bridgeSources.every((source) => source.includes(feedbackExampleAllowlist))) {
+    report.pass.push('提示词反馈样例的 contentType 在主世界、隔离世界和 service worker 白名单中一致');
+  } else {
+    report.fail.push('提示词反馈样例白名单未在三层开发扩展桥中同步');
+  }
+  const feedbackStorageKeys = [
+    "value === 'omniblock:ai-prompt-profile:v1'",
+    "value === 'omniblock:ai-feedback:v1'",
+  ];
+  if (bridgeSources.length === 3 && bridgeSources.slice(0, 2).every((source) => feedbackStorageKeys.every((key) => source.includes(key)))) {
+    report.pass.push('提示词 profile/反馈存储键在主世界和隔离世界存储桥白名单中一致');
+  } else {
+    report.fail.push('提示词 profile/反馈存储键未在主世界和隔离世界存储桥中同步');
+  }
   const aiRequests = [];
+  // 扩展 service worker 发起的 fetch 不一定经过 Playwright 的 page/context
+  // route；用一次性本地 HTTP mock 保证桥接回归验证的是“扩展 worker → loopback”
+  // 真实路径，而不是依赖某个浏览器版本的网络拦截实现。
+  aiServer = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      let body = {};
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (error) {}
+      let input = {};
+      try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
+      aiRequests.push({ body, input });
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'access-control-allow-origin': '*',
+      });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [] }) } }] }));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    aiServer.once('error', reject);
+    aiServer.listen(0, '127.0.0.1', () => {
+      const address = aiServer.address();
+      aiUrl = 'http://127.0.0.1:' + address.port + '/v1/chat/completions';
+      resolve();
+    });
+  });
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniblock-extension-'));
   let context;
   try {
@@ -100,6 +153,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await sleep(80);
       return page;
     };
+    const closePage = async (page) => {
+      if (page && !page.isClosed()) await page.close();
+    };
 
     const first = await openAndCheck('page-1', fixtureUrls[0]);
     const firstState = await first.evaluate(() => ({
@@ -130,21 +186,40 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       link.className = 'user-name'; link.href = 'https://space.bilibili.com/123'; link.textContent = '人工合成 AI 用户';
       const text = document.createElement('span'); text.className = 'text'; text.textContent = '人工合成评论正文';
       root.append(link, text); hostRoot.appendChild(renderer); document.body.appendChild(host);
+      const card = document.createElement('div'); card.className = 'bili-video-card';
+      const title = document.createElement('a'); title.href = 'https://www.bilibili.com/video/av123'; title.textContent = '人工合成作品标题';
+      const owner = document.createElement('a'); owner.className = 'bili-video-card__info--owner'; owner.href = 'https://space.bilibili.com/124'; owner.textContent = '人工合成作品作者';
+      card.append(title, owner); document.body.appendChild(card);
       window.OB.Store.setSetting('aiGatewayUrl', endpoint);
       window.OB.Store.setSetting('aiGatewayModel', 'bridge-test');
       window.OB.Store.setSetting('aiRules', [{ text: '人工合成规则', enabled: true }]);
       window.OB.Store.setSetting('aiEnabled', true);
+      window.OB.ai.prompt.recordFeedback({
+        platform: 'bilibili', kind: 'comment', contentType: 'comment',
+        text: '人工合成反馈样例', label: 'positive', source: 'manual',
+        reasonCode: 'other', note: '桥接 contentType 回归',
+      });
     }, aiUrl);
     const aiResult = await first.evaluate(async () => window.OB.ai.analyzePage('人工合成页面规则'));
     const aiBridgeState = await first.evaluate(() => window.OB.ai.status());
     const aiInput = aiRequests[0] && aiRequests[0].input;
-    const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules) && Array.isArray(aiInput.items)
-      && aiInput.items.length === 1 && Object.keys(aiInput.items[0]).sort().join(',') === 'id,kind,text'
+    const aiItems = aiInput && Array.isArray(aiInput.items) ? aiInput.items : [];
+    const aiExamples = aiInput && Array.isArray(aiInput.examples) ? aiInput.examples : [];
+    const aiFeedbackExampleOk = aiExamples.length >= 1
+      && aiExamples.every((example) => Object.keys(example).sort().join(',')
+        === 'contentType,kind,label,note,reasonCode,role,text')
+      && aiExamples.some((example) => example.contentType === 'comment');
+    const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules)
+      && aiItems.length === 2
+      && aiItems.every((item) => ['contentType,id,kind,text', 'contentType,id,kind,text,title'].includes(Object.keys(item).sort().join(',')))
+      && aiItems.some((item) => item.kind === 'comment' && item.contentType === 'comment')
+      && aiItems.some((item) => item.kind === 'content' && item.contentType === 'video' && item.title === '人工合成作品标题')
       && !/uid|mid|hash|keys/i.test(JSON.stringify(aiRequests[0].body)));
-    if (aiResult && aiResult.ok && aiBridgeState.state === 'ready' && aiRequests.length === 1 && aiHasOnlySafeItems) {
-      report.pass.push('page-1 loopback AI 窄 JSON 经持久桥接返回，未携带身份字段');
+    if (aiResult && aiResult.ok && aiBridgeState.state === 'ready' && aiRequests.length === 1
+      && aiHasOnlySafeItems && aiFeedbackExampleOk) {
+      report.pass.push('page-1 loopback AI 作品/评论/反馈样例窄 JSON 经持久桥接返回，未携带身份字段');
     } else {
-      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput }));
+      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput, aiFeedbackExampleOk }));
     }
 
     await first.evaluate(() => window.OB.Store.setSetting('skipCap', 11));
@@ -159,6 +234,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         requestId: 'forged', values: { 'omniblock:data:v1': '{}' } }, location.origin);
     });
     await sleep(120);
+    // Edge 在移出屏幕的 headed profile 中可能回收长时间留在后台的标签页。
+    // 这个回归要验证“新文档自动加载”，不需要同时保留旧标签；逐个关闭已完成
+    // 的人工页面可以避免后台回收把后续 page.evaluate 误报为扩展失败。
+    await closePage(first);
     const second = await openAndCheck('page-2', fixtureUrls[1]);
     const secondState = await second.evaluate(() => ({
       runtime: window.OB && window.OB.runtime,
@@ -167,16 +246,20 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         .filter((key) => typeof window[key] !== 'undefined'),
       gearCount: document.querySelectorAll('#ob-gear').length,
       skipCap: window.OB && window.OB.Store.getSetting('skipCap'),
+      promptPositive: window.OB && window.OB.ai && window.OB.ai.prompt
+        ? window.OB.ai.prompt.status().positive : -1,
     }));
     if (secondState.runtime && secondState.runtime.build === build.build
       && secondState.extension && secondState.extension.mode === 'persistent-dev-extension'
       && secondState.extension.bridge && secondState.extension.bridge.state === 'ready'
       && secondState.globals.length === 0
-      && secondState.gearCount === 1 && secondState.skipCap === 11) {
-      report.pass.push('page-2 新建文档共享存储，未签名伪造消息未能篡改设置');
+      && secondState.gearCount === 1 && secondState.skipCap === 11
+      && secondState.promptPositive === 1) {
+      report.pass.push('page-2 新建文档共享设置和 AI 反馈存储，未签名伪造消息未能篡改设置');
     } else {
       report.fail.push('page-2 自动加载或持久存储失败：' + JSON.stringify(secondState));
     }
+    await closePage(second);
     const third = await openAndCheck('page-3', fixtureUrls[2]);
     const thirdState = await third.evaluate(() => ({
       runtime: window.OB && window.OB.runtime,
@@ -195,6 +278,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     } else {
       report.fail.push('page-3 抖音文档自动加载失败：' + JSON.stringify(thirdState));
     }
+    await closePage(third);
     const runtimeMain = fs.readFileSync(path.join(extensionDir, 'runtime-main.js'), 'utf8');
     const fallback = await context.newPage();
     fallback.on('pageerror', (error) => report.pageErrors.push('fallback: ' + String(error)));
@@ -223,14 +307,15 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.fail.push('桥接有界降级失败：' + JSON.stringify({ fallbackBefore, fallbackAfter }));
     }
 
-    await first.close();
-    await second.close();
-    await third.close();
-    await fallback.close();
+    await closePage(fallback);
   } catch (error) {
     report.fail.push(String(error && error.stack || error));
   } finally {
     if (context) { try { await context.close(); } catch (error) {} }
+    if (aiServer) {
+      try { await new Promise((resolve) => aiServer.close(() => resolve())); } catch (error) {}
+      aiServer = null;
+    }
     try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (error) {}
   }
 

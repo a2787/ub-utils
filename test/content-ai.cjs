@@ -1,8 +1,8 @@
-/* OmniBlock 内容弹窗、关键词优先级和四平台 AI 提醒回归。
- * 夹具说明：B站/抖音/微博/知乎 DOM 均为人工合成，选择器只复用仓库已有的
+/* OmniBlock 内容弹窗、关键词优先级和五平台 AI 提醒回归。
+ * 夹具说明：B站/抖音/微博/知乎/贴吧 DOM 均为人工合成，选择器只复用仓库已有的
  * 当前捕获契约；不访问真实平台或真实模型，网关由 Playwright 模拟。
- * 覆盖：B站/抖音评论关键词即时屏蔽且不请求 AI、关键词标签迁移、微博/知乎
- * 评论 AI 采集与统一提醒弹窗，以及知乎没有未经验证的全量加载入口。
+ * 覆盖：B站/抖音评论关键词即时屏蔽且不请求 AI、关键词标签迁移、微博/知乎/贴吧
+ * 评论 AI 采集与统一提醒弹窗、详情路由空评论入口，以及知乎没有未经验证的全量加载入口。
  * 运行：node test/content-ai.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -33,8 +33,14 @@ window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
 window.GM_info = { script: { name: '本地内容过滤增强', version: '${VERSION}', namespace: 'https://github.com/a2787/ub-utils' } };
 window.__aiBodies = [];
+window.__gmError = '';
 window.GM_xmlhttpRequest = (opts) => {
   try { window.__aiBodies.push(JSON.parse(opts.data || '{}')); } catch (error) {}
+  if (window.__gmError) {
+    const message = String(window.__gmError);
+    setTimeout(() => { if (opts.onerror) opts.onerror(new Error(message)); }, 0);
+    return { abort() {} };
+  }
   fetch(opts.url, { method: opts.method || 'GET', headers: opts.headers || {}, body: opts.data || undefined })
     .then(async (response) => ({ status: response.status, responseText: await response.text() }))
     .then((response) => { if (opts.onload) opts.onload(response); })
@@ -68,6 +74,12 @@ const WEIBO_FIXTURE = `<!doctype html><html><body>
 const ZHIHU_FIXTURE = `<!doctype html><html><body>
 <div class="comment-row"><div class="avatar-col"><a href="/people/660001">知乎目标作者</a></div><div class="content-col"><div class="comment-head"><a href="/people/660001">知乎目标作者</a></div><div class="CommentContent css-captured">目标 知乎评论正文</div><div class="comment-actions"><button>赞同</button><button>回复</button><button>举报</button></div></div></div>
 </body></html>`;
+
+const TIEBA_FIXTURE = `<!doctype html><html><body>
+<div class="pb-comment-item" id="tieba-target"><div class="head-line user-info"><a class="head-name" href="/home/main?id=opaque-portrait">贴吧目标作者</a></div><div class="comment-content">目标 贴吧评论正文</div><div class="comment-actions"><button>回复</button><button>举报</button><button>拉黑</button></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 770001, name: 'tieba-target', name_show: '贴吧目标作者' } };</script></div>
+</body></html>`;
+
+const EMPTY_ZHIHU_FIXTURE = `<!doctype html><html><body><main><h1>人工合成知乎问题详情</h1><div>评论尚未展开</div></main></body></html>`;
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
@@ -195,18 +207,36 @@ async function openContent(page, adapterId, tab) {
       window.OB.openContentManager(window.OB.adapters.weibo, 'ai');
       await new Promise((resolve) => setTimeout(resolve, 100));
       const root = document.querySelector('#ob-content-manager');
+      const contentFab = document.querySelector('[data-ob-content-tool="1"]');
       return {
         tabs: root ? Array.from(root.querySelectorAll('[data-ob-content-tab]')).map((node) => node.textContent.trim()) : [],
         aiSurface: !!(root && root.querySelector('[data-ob-content-pane="ai"] [data-ob-ai-surface]')),
         keywordTab: !!(root && root.querySelector('[data-ob-content-tab="keywords"]')),
+        contentFabRight: !!contentFab && contentFab.style.right === '14px' && contentFab.style.left === 'auto'
+          && contentFab.style.bottom === '62px',
       };
     });
     if (weiboUi.tabs.length === 2 && weiboUi.tabs.includes('屏蔽评论') && weiboUi.tabs.includes('AI 屏蔽')
-      && weiboUi.aiSurface && !weiboUi.keywordTab) report.pass.push('CR-6 微博使用统一评论/AI 内容弹窗，不增加不适用的关键词或弹幕标签');
+      && weiboUi.aiSurface && !weiboUi.keywordTab && weiboUi.contentFabRight) report.pass.push('CR-6 微博使用右下统一评论/AI 内容弹窗，不增加不适用的关键词或弹幕标签');
     else report.fail.push('CR-6 微博统一内容弹窗异常：' + JSON.stringify(weiboUi));
+    const weiboError = await weibo.evaluate(async () => {
+      window.__gmError = 'request-not-allowed';
+      let result = null;
+      try { result = await window.OB.ai.analyzePage('人工合成错误路径'); }
+      finally { window.__gmError = ''; }
+      const status = window.OB.ai.status();
+      const statusText = document.querySelector('#ob-ai-status')?.textContent || '';
+      return { result, lastError: status.lastError, statusText };
+    });
+    if (weiboError.result && weiboError.result.ok === false
+      && weiboError.lastError === 'AI 请求被浏览器扩展拒绝（request-not-allowed）'
+      && /扩展桥已就绪，但 AI 请求体未通过桥接协议校验/.test(weiboError.statusText)
+      && !/请检查本地网关和浏览器扩展桥接/.test(weiboError.statusText))
+      report.pass.push('CR-6A 桥接拒绝错误保留可诊断原因，不再显示泛化网关/桥接提示');
+    else report.fail.push('CR-6A 桥接拒绝错误提示异常：' + JSON.stringify(weiboError));
     await weibo.close();
 
-    const zhihu = await installPage(browser, 'https://www.zhihu.com/question/content-rule-fixture', ZHIHU_FIXTURE);
+    const zhihu = await installPage(browser, 'https://www.zhihu.com/question/1', ZHIHU_FIXTURE);
     await sleep(2300);
     const zhihuState = await zhihu.evaluate(() => {
       const adapter = window.OB.adapters.zhihu;
@@ -244,6 +274,72 @@ async function openContent(page, adapterId, tab) {
       && zhihuUi.rows === 1 && zhihuUi.fullLoadHidden) report.pass.push('CR-8 知乎统一弹窗显示评论/AI，评论管理器不提供未经验证的全量加载');
     else report.fail.push('CR-8 知乎统一内容弹窗异常：' + JSON.stringify(zhihuUi));
     await zhihu.close();
+
+    const zhihuEmpty = await installPage(browser, 'https://www.zhihu.com/question/2', EMPTY_ZHIHU_FIXTURE);
+    await sleep(900);
+    const zhihuEmptyUi = await zhihuEmpty.evaluate(async () => {
+      const gear = document.querySelector('#ob-gear');
+      if (gear) gear.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const fab = document.querySelector('[data-ob-content-tool="1"]');
+      window.OB.openContentManager(window.OB.adapters.zhihu, 'comments');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const root = document.querySelector('#ob-content-manager');
+      return {
+        fab: !!fab,
+        fabRight: !!fab && fab.style.right === '14px' && fab.style.left === 'auto' && fab.style.bottom === '62px',
+        tabs: root ? Array.from(root.querySelectorAll('[data-ob-content-tab]')).map((node) => node.textContent.trim()) : [],
+        emptyCommentPanel: !!(root && root.querySelector('#ob-comment-manager')),
+      };
+    });
+    if (zhihuEmptyUi.fab && zhihuEmptyUi.fabRight && zhihuEmptyUi.tabs.length === 2
+      && zhihuEmptyUi.tabs.includes('屏蔽评论') && zhihuEmptyUi.tabs.includes('AI 屏蔽')
+      && zhihuEmptyUi.emptyCommentPanel) report.pass.push('CR-9 知乎详情评论尚未展开时仍显示右下内容入口，并保留空评论管理器与 AI 标签');
+    else report.fail.push('CR-9 知乎空评论详情入口异常：' + JSON.stringify(zhihuEmptyUi));
+    await zhihuEmpty.close();
+
+    const tieba = await installPage(browser, 'https://tieba.baidu.com/p/1', TIEBA_FIXTURE);
+    await sleep(2300);
+    const tiebaState = await tieba.evaluate(() => {
+      const adapter = window.OB.adapters.tieba;
+      const records = adapter.collectAIRecords(document);
+      const latest = (window.__aiBodies || [])[window.__aiBodies.length - 1] || {};
+      let input = {};
+      try { input = JSON.parse(latest.messages && latest.messages[1] && latest.messages[1].content || '{}'); } catch (error) {}
+      return {
+        records: records.map((record) => ({ text: record.text, keys: record.keys, level: record.level })),
+        requestCount: (window.__aiBodies || []).length,
+        items: input.items || [],
+        review: !!document.querySelector('#ob-ai-review'),
+      };
+    });
+    if (tiebaState.records.length === 1 && tiebaState.records[0].keys.includes('tieba:uid:770001')
+      && /目标 贴吧评论正文/.test(tiebaState.records[0].text)
+      && !/回复|举报|拉黑/.test(tiebaState.records[0].text)
+      && tiebaState.requestCount >= 1 && tiebaState.review && tiebaState.items.length === 1)
+      report.pass.push('CR-10 贴吧现代评论正文进入 AI 提醒，Vue 数字 UID 可执行且操作文字未进入请求');
+    else report.fail.push('CR-10 贴吧评论 AI 采集/提醒异常：' + JSON.stringify(tiebaState));
+    const tiebaUi = await tieba.evaluate(async () => {
+      window.OB.ai.closeReview();
+      window.OB.openContentManager(window.OB.adapters.tieba, 'ai');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const aiRoot = document.querySelector('#ob-content-manager');
+      const aiSurface = !!(aiRoot && aiRoot.querySelector('[data-ob-content-pane="ai"] [data-ob-ai-surface]'));
+      window.OB.openContentManager(window.OB.adapters.tieba, 'comments');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const root = document.querySelector('#ob-content-manager');
+      return {
+        tabs: root ? Array.from(root.querySelectorAll('[data-ob-content-tab]')).map((node) => node.textContent.trim()) : [],
+        aiSurface,
+        commentRows: root ? root.querySelectorAll('[data-ob-content-pane="comments"] .ob-cm-row').length : 0,
+        fabRight: (() => { const fab = document.querySelector('[data-ob-content-tool="1"]'); return !!fab && fab.style.right === '14px' && fab.style.left === 'auto' && fab.style.bottom === '62px'; })(),
+      };
+    });
+    if (tiebaUi.tabs.length === 2 && tiebaUi.tabs.includes('屏蔽评论') && tiebaUi.tabs.includes('AI 屏蔽')
+      && tiebaUi.aiSurface && tiebaUi.commentRows === 1 && tiebaUi.fabRight)
+      report.pass.push('CR-11 贴吧内容弹窗统一显示右下评论/AI 两标签，并挂载评论管理器');
+    else report.fail.push('CR-11 贴吧统一内容弹窗异常：' + JSON.stringify(tiebaUi));
+    await tieba.close();
   } finally {
     await browser.close();
   }

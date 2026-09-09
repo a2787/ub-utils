@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-08
+更新时间：2026-09-09
 
 本文件是 OmniBlock 唯一的活动计划。它记录当前要解决的问题、范围、依赖、验收条件和
 下一步动作；当前事实放在 `CURRENT.md`，用户可见变化放在 README/版本 changelog，已经
@@ -29,82 +29,130 @@ proposed → approved → in_progress → verified
 
 - status: in_progress
 - priority: P1
-- scope: B站评论/弹幕、规则/审核、OpenAI 兼容网关；向导生成 LiteLLM 配置，userscript 不实现 router。
-- non-goals: 不改 V2；Key 不入仓库；不伪造 UID；不自动屏蔽；不扩展无结构证据的平台。
+- scope: B站评论/弹幕、规则/审核、OpenAI 兼容 loopback 网关。
+- non-goals: 不改 V2、Key、UID、自动屏蔽或无结构证据的平台。
 - dependencies: none
 - acceptance: required
-  - [x] AI 默认关闭；配置、规则和审核状态有本地回归。
-  - [x] loopback 仅发送无身份键文本；候选须多选确认后才写入名单。
-  - [x] 本地矩阵、B站只读探针、docs/隐私门禁通过；DeepSeek V4 thinking 超时由 `thinkingMode=disabled` 解决。
-  - [x] 网关向导、生命周期、健康、mock fallback 及官方 DeepSeek 页面联调通过；商汤与多 provider fallback 待补。
-- evidence: 详见 CURRENT；LiteLLM mock `structure regression`；官方 DeepSeek V4 Flash `real-site verified`；商汤、额度和记忆 `blocked`
-- next: 增加商汤“日日新” provider，验证模型、额度、fallback 和 cooldown；不改 V2。
-- updated: 2026-09-06
+  - [x] AI 配置、loopback 脱敏出站、人工审核和既有矩阵已通过。
+  - [ ] 商汤 provider、额度、fallback 和 cooldown 另行评估。
+- evidence: `structure regression` 与 DeepSeek 既有证据见 `CURRENT.md`；未完成项保持 `blocked`。
+- next: 后续另行评估商汤 provider；不影响本轮桥接修复。
+- updated: 2026-09-09
 - supersedes: none
-- files: omniblock.user.js; gateway/*; test/ai-screening.cjs; test/gateway-smoke.cjs; docs/decisions/0002-ai-screening-gateway-boundary.md; README.md; docs/changelog/v0.47.0.md; docs/maintenance/CURRENT.md
 
 ### OB-AI-002 — AI 多平台采集与一键网关启动
 
 - status: blocked
 - priority: P1
-- scope: 保留并显式回归 B站评论/弹幕 AI 采集；接入抖音当前页面已观察到的评论/弹幕；按活动视频会话隔离抖音弹幕缓存；提供根目录双击启动网关包装文件，并同步设置页说明与本地验证。
-- non-goals: 不引入 Native Messaging 或其他系统级启动组件；不修改注册表、系统服务或开机启动；不自动展开/滚动页面收集 AI 内容；不调用抖音私有接口；不改变现有身份键、人工审核、名单写入和平台只读边界；不改 V2；不执行 push、tag、Release 或其他公开发布。
+- scope: 保留 B站 AI；接入抖音当前页评论/弹幕和活动视频会话隔离；提供根目录网关启动文件，保持现有身份、审核和只读边界。
+- non-goals: 不引入系统级启动组件或私有接口；不自动展开/滚动收集；不改身份、审核、名单、V2 或公开发布边界。
 - dependencies: OB-AI-001
 - acceptance: required
-  - [x] B站评论和当前弹幕会话仍通过统一 AI 采集契约，保持无身份字段出站和人工审核。
-  - [x] 抖音评论使用已有可靠 `douyin:secuid` 身份；抖音弹幕保留正文与已有 `douyin:uid`/`douyin:secuid` 身份，无法确认身份的候选只读不可执行。
-  - [x] 抖音活动视频换片、SPA 路由、节点回收和页面隐藏不会串用旧 AI 记录，也不会按高频 DOM 变化重复请求模型。
-  - [x] 根目录双击启动文件只调用 PowerShell 7 的 `gateway\\start.ps1`，不含 API Key，不改变系统配置，并保留健康检查错误信息。
-  - [x] 人工合成 B站/抖音 AI 夹具、适配器/弹幕/评论管理器回归、网关启动文件静态门禁和语法/doc 门禁通过。
-  - [x] B站与抖音匿名真实只读探针同轮执行；B站目标通过，抖音验证码阻断已如实记录为 `blocked`，未以夹具替代。
-  - [x] README、版本 changelog、CURRENT、架构/计划与当前候选版本同步；候选仍保持本地未发布。
-  - [x] 抖音登录态真实页面完成当前已观察评论/弹幕、弹幕管理器和自动规则的只读观察；未点平台写入控件。
-  - [ ] 抖音登录态同 URL 换片后完成新会话弹幕管理器/AI 采集隔离观察；数据不足时保留 `blocked`。
-- evidence: `structure regression`：AI B站 8/8、抖音 6/6、受影响本地矩阵、完整 gateway smoke 和 `cmd.exe /c "启动网关.cmd"` 实际启动均通过；`real-site verified`：2026-09-06 B站匿名探针与专用 Chrome 0.48.0 页面通过，2026-09-07 抖音登录态当前视频 15 条带身份弹幕、10 条评论及管理器/自动规则闭环通过；抖音换片新行暂 `blocked`，匿名入口仍为验证码中间页。
-- next: 在专用 Chrome 以当前已加载视频重放稳定同 URL 换片，确认新会话管理器/AI 记录不继承旧视频；不公开发布。
-- updated: 2026-09-07
+  - [x] B站/抖音当前页采集、持久化隔离、启动文件和只读边界已有验证。
+  - [ ] 抖音同 URL 换片后的新会话隔离需稳定真实样本。
+- evidence: 完整历史验收见 `CURRENT.md` 和对应历史计划；抖音同 URL 换片新行仍为 `blocked`，匿名入口仍可能停在验证码中间页。
+- next: 在专用 Chrome 重放稳定同 URL 换片，确认新会话不继承旧 AI 记录；不公开发布。
+- updated: 2026-09-09
 - supersedes: none
-- files: omniblock.user.js; test/ai-screening.cjs; test/ai-platforms.cjs; test/adapters.cjs; test/danmaku-auto.cjs; test/comment-manager.cjs; test/real-bilibili-probe.cjs; test/real-platform-probe.cjs; test/real-douyin-probe.cjs; gateway/README.md; test/gateway-smoke.cjs; test/maintenance-check.cjs; 启动网关.cmd; README.md; docs/changelog/v0.48.0.md; docs/decisions/0002-ai-screening-gateway-boundary.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md; docs/architecture/ARCHITECTURE.md; docs/KNOWLEDGE_TREE.md
 
 ### OB-RULE-002 — 平台关键词屏蔽与评论 AI 建议提醒
 
 - status: verified
 - priority: P1
-- scope: 将 B站/抖音现有本地关键词/正则自动规则从总设置页迁到各自内容屏蔽弹窗的“关键词屏蔽”标签；规则默认启用，命中当前页面已观察到且身份可靠的评论或弹幕时直接进入既有本地屏蔽链并立即隐藏，不请求 AI、不经过确认。保留既有设置键和规则例外的导入兼容。修复评论晚于弹幕挂载时自动 AI 已经完成首轮、却没有再次分析评论的问题；在当前页面新增可分析评论后有界地重新触发 AI 建议。为微博、知乎补齐当前可靠评论的 AI 采集和平台入口，使其使用同一人工审核弹窗。
-- non-goals: 不调用任何平台写入接口；不把无可靠身份的评论或弹幕伪装成可屏蔽用户；不为关键词功能消耗 token；不让 AI 候选绕过人工确认；不自动滚动/展开微博或知乎评论，不调用私有接口；不改变 AI 80 条批次协议、已有身份键、B站弹幕 hash→UID 安全边界或其他平台适配器选择器。
+- scope: B站/抖音关键词标签和默认即时本地屏蔽；AI 前置排除关键词命中；评论晚到的有界增量；微博/知乎评论 AI 入口。
+- non-goals: 不调用平台写入；不伪造身份；不为关键词消耗 token；不绕过 AI 人工审核；不改 80 条批次、身份键或平台选择器。
 - dependencies: OB-AI-001
 - acceptance: required
-  - [x] B站、抖音内容屏蔽弹窗各出现“关键词屏蔽”标签；已有 `biliDanmakuRules`/`douyinDanmakuRules` 数据可见、可添加/启停/删除，设置页不再作为主入口，仅保留迁移说明。
-  - [x] 关键词/正则命中评论或弹幕时不产生 AI 网关请求；可靠身份直接写入既有名单并隐藏，页面刷新/后续同作者内容继续生效；无可靠身份时不提供伪造的可执行身份。
-  - [x] AI 优先分析前先排除已经被关键词/本地名单处理的记录；关键词命中不进入 AI 候选审核队列。
-  - [x] B站评论先加载、弹幕后加载，以及评论晚于首轮 AI 的场景均能在有界重试内触发一次新的 AI 采集；同一记录不重复请求，不建立常驻高频轮询，页面切换/关闭/取消时旧 run 失效。
-  - [x] 微博、知乎在当前已有可靠评论 DOM 和身份契约下显示平台 AI 入口；AI 结果进入现有多选人工审核框，确认前不写名单，结果无法识别身份时只读展示或跳过执行。
-  - [x] 为关键词即时屏蔽、评论延迟 AI、微博/知乎 AI 入口和候选确认各新增或更新回归断言；真实选择器先由当轮真站捕获确认。
-  - [x] 运行受影响的 B站/抖音/微博/知乎回归、语法、文档和四平台真实只读探针；逐项记录 `real-site verified`、`structure regression` 或 `blocked`。
-- evidence: `structure regression`：内容规则夹具 8/8、AI screening 14/14、AI 多平台 7/7、自动弹幕 7/7、quickblock 37/37、评论管理器 3/3、适配器 28/28、运行器 20/20、自动加载 3/3、watchdog 1/1、持久化开发扩展 6/6，受影响回归无页面/控制台错误；`real-site verified`：2026-09-08 匿名/登录状态未判定的 B站视频页观察到评论/弹幕/AI/关键词四标签及评论管理器；同日微博详情页观察到评论/AI 两标签和 26/23/21/5 评论统计及本地屏蔽撤销；`blocked`：抖音验证码、知乎登录页、微博顶层 spacer、B站根评论分页 partial。详见 CURRENT 与 v0.51.0 changelog。
-- next: 保持当前候选本地状态；若要发布，先复核最终差异、源码哈希和隐私门禁，并另获当轮 tag/Release/push 授权。抖音和知乎需在后续获授权登录态只读会话可用时补真站验证；不因匿名阻断扩大结论。
-- updated: 2026-09-08
+  - [x] 关键词优先、评论增量和微博/知乎 AI 入口回归及真站证据已记录。
+- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md` 和 v0.51.0 条目；本轮依赖其已验证结果。
+- next: 保持候选，发布前另行复核差异、哈希和隐私门禁并取得发布授权。
+- updated: 2026-09-09
 - supersedes: none
-- files: omniblock.user.js; test/content-ai.cjs; test/danmaku-auto.cjs; test/ai-screening.cjs; test/ai-platforms.cjs; test/adapters.cjs; test/comment-manager.cjs; test/quickblock.cjs; test/real-bilibili-probe.cjs; test/real-platform-probe.cjs; test/maintenance-check.cjs; README.md; CHANGELOG.md; docs/changelog/INDEX.md; docs/changelog/v0.51.0.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md
 
 ### OB-AI-003 — B站新增内容的累计增量 AI 分析
 
 - status: verified
 - priority: P1
-- scope: 修复 B站首轮自动分析完成后，滚动评论、展开楼中楼或弹幕数据段新增内容未触发 AI 增量分析，以及增量完成后“已分析数量”显示为本批新增数量而非当前累计数量的问题；评论 DOM 变化和弹幕数据段变化均进入现有有界调度，并继续按稳定记录 ID 去重。
-- non-goals: 不提高或移除 AI 每批 80 条上限；不自动滚动/展开评论；不改变 B站弹幕 hash→UID 安全边界、人工审核、关键词优先级、现有身份键或平台写入边界；不引入常驻高频轮询。
+- scope: 首轮后新增评论、楼中楼和弹幕数据段触发稳定 ID 去重的有界增量；`analyzed` 显示页面累计数。
+- non-goals: 不移除每批 80 条上限；不自动滚动/展开；不改 hash→UID、审核、关键词、身份或平台写入边界。
 - dependencies: OB-RULE-002
 - acceptance: required
-  - [x] 首轮分析完成后新增 B站评论或楼中楼记录，能够触发一次只包含新记录的 AI 请求。
-  - [x] 首轮分析完成后新增 B站弹幕数据段记录，能够触发一次只包含新记录的 AI 请求。
-  - [x] 增量分析完成后，状态中的 `analyzed` 为当前页面已分析记录累计数，且记录总数、批次进度和候选状态一致。
-  - [x] 首轮请求进行期间连续到达的评论/弹幕变化被合并为后续一次增量分析；同一稳定 ID 不重复发送。
-  - [x] 新增回归断言、语法/文档门禁、B站受影响本地检查和当轮真实只读探针均按证据等级记录；80 条批次边界保持原样。
-- evidence: `structure regression`：AI screening 18/18、内容规则 8/8、AI 多平台 7/7、AI 批次 2/2、自动加载 3/3、quickblock 37/37；`real-site verified`：2026-09-08 B站只读视频页首轮 224/224，滚动后 247/247，展开楼中楼后 273/273，均产生只含新增记录的事件；`blocked`：根评论分页仍 partial，登录态未判定。
-- next: 0.51.1 已推送到 `origin/master`，未创建 tag/Release；下一项转为下一版本 AI 提示词系统的规划，先定义数据格式、隐私边界、反馈采集和离线评测，再开始实现。
+  - [x] 评论/楼中楼/弹幕新增记录触发去重增量，`analyzed` 保持页面累计数。
+- evidence: `structure regression` 与 2026-09-08 B站 `real-site verified` 数字详见 `CURRENT.md`；根评论分页仍 partial。
+- next: 依赖结果已交给 OB-AI-004；不公开发布。
+- updated: 2026-09-09
+- supersedes: none
+
+### OB-AI-004 — 可学习的 AI 提示词系统（v0.52.0）
+
+- status: in_progress
+- priority: P1
+- scope: 提示词/反馈/偏好；审计六平台作者/作品/评论/弹幕/帖子，含抖音精选/搜索/主页、无身份样本。
+- non-goals: 不自动转规则、微调或训练；不改关键词/审核/脱敏/网关；无内容路由不显示入口；不调用平台写入。
+- dependencies: OB-AI-003
+- acceptance: required
+  - [x] schema、迁移、脱敏、预算通过。
+  - [x] 反馈三态/理由、提示词、提案、离线评测通过。
+  - [x] `structure regression`：微博/知乎/贴吧详情右下入口；知乎空评论宿主；微博/知乎无弹幕/关键词；贴吧主题帖/评论仅接受数字 Vue 身份或 `data-field`。
+  - [x] `structure regression`：六平台读取/操作文案隔离 6/6；扩展窄 JSON 桥 7/7。
+  - [x] `real-site verified`：2026-09-09 专用 Chrome 候选只读页读到 B站作品/评论/弹幕 `1/27/66`、微博内容/评论 `6/1+6`、知乎内容/回答 `12/3` 后展开评论 `10`、持久扩展贴吧主题帖/评论 `1/11`、抖音精选/主页作品 `45/1`；适用内容面板均挂载。
+  - [ ] `blocked`：X 根入口为空壳无推文；抖音本轮未展开评论/弹幕；B站分页/动态 UID、微博 spacer、抖音换片和 DeepSeek 真实精度仍待补验。
+- evidence: `structure regression`：覆盖/扩展7/7、提示词12/12、评测5/5、内容 AI12/12、AI screening19/19、适配器28/28、quickblock37/37、运行器20/20；`real-site verified`：2026-09-09 专用 Chrome 候选/持久扩展只读，未触发平台写入；`blocked`：X 空壳、抖音未展开。
+- next: 抖音评论/弹幕与 X 样本；复核哈希/隐私/maintenance-check；未发布。
+- plan: [详](plans/2026-09-08-ob-ai-004.md)
+- updated: 2026-09-09
+- supersedes: none
+
+### OB-AI-009 — 提示词反馈样例与开发扩展桥协议修复
+
+- status: verified
+- priority: P1
+- scope: 修复提示词系统输出的反馈样例与持久化开发扩展桥请求白名单不一致的问题；保留 `contentType` 作为 AI 内容形态上下文；让桥接拒绝、网关 HTTP、超时和桥状态错误在页面上可区分；补充带反馈样例的端到端开发扩展回归，并在用户授权的专用 Chrome 当前页面复验。
+- non-goals: 不改 provider、模型路由、API Key、提示词隐私边界、80 条批次上限、关键词/人工审核/身份键或任何平台写入；不删除已有反馈或重置用户浏览器存储；不公开发布。
+- dependencies: OB-AI-004
+- acceptance: required
+  - [x] `contentType` 反馈样例在主世界、隔离世界和 service worker 三层白名单中保持一致，并到达 loopback mock 网关。
+  - [x] `request-not-allowed` 等桥接错误不再伪装成“AI 网关请求失败”；只有桥状态降级时才提示刷新扩展。
+  - [x] 持久化开发扩展带含 `contentType` 的反馈样例分析成功，既有无反馈样例路径继续通过，页面/控制台错误为 0。
+  - [x] `node --check`、受影响 AI/提示词/扩展回归、文档门禁和专用 Chrome 当前微博页真实只读验证均已按 `structure regression` 或 `real-site verified` 记录。
+- evidence: `structure regression`：开发扩展 7/7、内容 AI 12/12、AI screening 18/18、提示词系统 12/12、离线评测 5/5、AI 多平台 7/7，页面/控制台错误为 0；三层白名单允许反馈 `contentType`，拒绝路径保留可诊断错误。`real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 页面（登录状态由用户告知，未读取凭证）刷新扩展卡片和页面后 bridge 为 `ready`、尝试 1 次、拒绝 0 次；只读分析完成 `6/6`，进入审核态，`/v1/chat/completions` 收到 HTTP 200，`lastError` 为空。未执行平台写入。
+- next: 源码已随 v0.52.0 推送；若要创建 tag/Release，另行复核最终差异、源码哈希、隐私门禁和对应授权；DeepSeek 真实语义精度继续由独立评测衡量。
+- updated: 2026-09-09
+- supersedes: none
+
+### OB-AI-010 — AI 审核负向反馈可撤销切换
+
+- status: verified
+- priority: P1
+- scope: 审核弹窗「不屏蔽」按钮；负向反馈精确删除、候选重新可选、再次记录，以及持久化开发扩展刷新后的状态读回。
+- non-goals: 不写入主屏蔽名单；不改平台写入、提示词隐私、批次上限或 AI 判定。
+- dependencies: OB-AI-009
+- acceptance: required
+  - [x] 首次点击仍记录 `ai_rejected` 负反馈且按钮保持可点击的灰态。
+  - [x] 再次点击删除对应反馈、恢复可靠身份候选的勾选能力；第三次点击可重新记录。
+  - [x] 新记录经持久化开发扩展保存后，刷新页面仍能恢复灰态反馈并允许撤销。
+  - [x] 夹具回归和专用 Chrome 当前审核弹窗验证通过，未执行平台写入。
+- evidence: `structure regression`：AI screening 19/19、持久化开发扩展 8/8，无页面/控制台错误；`real-site verified`：2026-09-09 专用 Chrome 当前微博审核弹窗完成负反馈四步切换，并验证新记录刷新后恢复灰态、再次撤销，最终反馈 0、候选可选、bridge ready。
+- next: 源码已随 v0.52.0 推送；创建 tag/Release 前复核最终差异、源码哈希、隐私门禁并另行取得对应授权。
+- updated: 2026-09-09
+- supersedes: none
+
+### OB-AI-005 — DeepSeek Flash 网关型号刷新（本机运行时）
+
+- status: verified
+- priority: P1
+- dependencies: OB-AI-001
+- scope: 本机 LiteLLM provider 切换至用户提供的内测型号 `deepseek-v4.1-flash-expires-on-0910`；保持 `omni-default`、官方地址、thinking、重试/限流和 API Key 不变。
+- non-goals: 不改 `.env`/凭据、userscript、提示词/审核/身份/平台/版本；不测试视觉输入，不公开发布。
+- acceptance: required
+  - [x] 官方 `GET /models` 脱敏查询完成；公开列表未列出内测 ID，随后按用户提供的精确 ID 做直连路由验证。
+  - [x] manifest 保持别名、地址和 primary 边界，health 与 loopback 窄 JSON 请求均通过。
+  - [x] gateway smoke、语法、文档和差异门禁通过。
+- evidence: `structure regression`：本机 manifest/health、gateway smoke、经目标 ID 路由的合成 HTTP 200；公开目录未列出内测 ID。
+- next: 到期复核；精度另建人工标注评测。
 - updated: 2026-09-08
 - supersedes: none
-- files: omniblock.user.js; test/ai-screening.cjs; docs/architecture/ARCHITECTURE.md; docs/changelog/v0.51.1.md; README.md; CHANGELOG.md; docs/changelog/INDEX.md; docs/maintenance/CURRENT.md; docs/maintenance/PLAN.md
+- files: `gateway/runtime/*`（Git 忽略）；详见 `CURRENT.md`
 
 ### OB-WEIBO-003 — 详情页作品级评论统计作用域
 
@@ -150,7 +198,6 @@ proposed → approved → in_progress → verified
 - next: 用单标签补齐微博点赞列表、知乎作者/列表、贴吧旧版楼层和抖音推荐流换片；微博顶层 spacer、B站匿名根评论分页和抖音换片/归因性能保持 `blocked` 时不猜测扩展。任何新选择器仍须先捕获再实现，X 按用户要求排除。
 - updated: 2026-09-05
 - supersedes: none
-- files: omniblock.user.js; test/quickblock.cjs; docs/maintenance/PLAN.md; docs/maintenance/CURRENT.md; README.md; docs/changelog/v0.46.1.md; docs/changelog/v0.46.2.md
 
 ### OB-RULE-001 — 自动规则正则安全边界
 
@@ -167,7 +214,6 @@ proposed → approved → in_progress → verified
 - next: 设计保守启发式并评估对现有规则兼容性，必要时先以 warning 方式落地。
 - updated: 2026-09-04
 - supersedes: none
-- files: omniblock.user.js; test/danmaku-auto.cjs; test/state.cjs
 
 ### OB-PERF-001 — 可归因的性能预算
 
@@ -185,7 +231,6 @@ proposed → approved → in_progress → verified
 - next: 保留播放/暂停数据作为当前候选的页面总量基线；取得稳定换片目标后再补采切换窗口。只有在获得可归因插件指标后，才考虑深扫描时间片或进一步缓存优化；若入口再次验证码阻断，维持 `blocked`。
 - updated: 2026-09-04
 - supersedes: none
-- files: omniblock.user.js; test/performance.cjs; test/real-platform-probe.cjs
 
 ### OB-MAINT-001 — 重复路径清理与受控模块化
 

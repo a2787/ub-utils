@@ -187,6 +187,30 @@ async function pickWeiboDetailTarget(browser, candidates) {
             visibleButtonCount: visibleWorkButtons.length,
             error: workError,
           };
+          let aiContent = { total: 0, byKind: {}, contentTypes: {}, withIdentity: 0, withoutIdentity: 0 };
+          let aiContentError = '';
+          try {
+            const raw = adapter && typeof adapter.collectAIRecords === 'function'
+              ? adapter.collectAIRecords(document) : [];
+            const records = Array.isArray(raw) ? raw : [];
+            const byKind = {};
+            const contentTypes = {};
+            for (const record of records) {
+              const kind = String(record && record.kind || 'comment');
+              const type = String(record && record.contentType || kind);
+              byKind[kind] = (byKind[kind] || 0) + 1;
+              contentTypes[type] = (contentTypes[type] || 0) + 1;
+            }
+            aiContent = {
+              total: records.length,
+              byKind,
+              contentTypes,
+              withIdentity: records.filter((record) => Array.isArray(record && record.keys) && record.keys.length).length,
+              withoutIdentity: records.filter((record) => !Array.isArray(record && record.keys) || !record.keys.length).length,
+            };
+          } catch (error) {
+            aiContentError = String(error && error.message || error).slice(0, 160);
+          }
           const platform = id === 'weibo' ? (() => {
             const comments = Array.from(document.querySelectorAll('.wbpro-list > .item1, .wbpro-list .list2 > .item2'));
             const commentInfos = comments.map((item) => adapter && adapter.extract(item));
@@ -237,6 +261,9 @@ async function pickWeiboDetailTarget(browser, candidates) {
             pageText: (document.body && document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 220),
             detail,
             work,
+            contentRoute: !!(adapter && typeof adapter.contentRouteAvailable === 'function' && adapter.contentRouteAvailable()),
+            aiContent,
+            aiContentError,
             platform,
           };
         }, { id: target.id, showDetails });

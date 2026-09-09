@@ -60,6 +60,7 @@ const isolatedBridge = String.raw`(() => {
   const MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
   const MAX_AI_REQUEST_CHARS = 256 * 1024;
   const MAX_AI_REQUEST_TIMEOUT_MS = 60000;
+  const AI_CONTENT_TYPES = new Set(['comment', 'danmaku', 'video', 'answer', 'post', 'pin', 'column', 'tweet', 'thread', 'question', 'content']);
   const ownWrites = new Map();
   const encoder = new TextEncoder();
   const subtle = globalThis.crypto && globalThis.crypto.subtle;
@@ -117,6 +118,7 @@ const isolatedBridge = String.raw`(() => {
   function isAllowedStorageKey(key) {
     const value = String(key || '');
     return value === 'omniblock:data:v1' || value === 'omniblock:backup:v1'
+      || value === 'omniblock:ai-prompt-profile:v1' || value === 'omniblock:ai-feedback:v1'
       || value === 'omniblock:events:index:v1'
       || /^omniblock:events:v1:\d{4}-\d{2}-\d{2}$/.test(value);
   }
@@ -176,14 +178,40 @@ const isolatedBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
+      || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
+      || input.profile.schemaVersion !== 1
+      || typeof input.profile.language !== 'string' || input.profile.language.length > 24
+      || typeof input.profile.objective !== 'string' || input.profile.objective.length > 500
+      || !Array.isArray(input.profile.blockCriteria) || input.profile.blockCriteria.length > 24
+      || !Array.isArray(input.profile.allowCriteria) || input.profile.allowCriteria.length > 24
+      || !Array.isArray(input.profile.priority) || input.profile.priority.length > 3
+      || !Array.isArray(input.profile.acceptedPreferences) || input.profile.acceptedPreferences.length > 16
+      || !Array.isArray(input.examples) || input.examples.length > 8
       || !Array.isArray(input.items) || input.items.length > 80) return false;
-    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+    const profileTextListsOk = input.profile.blockCriteria.concat(input.profile.allowCriteria, input.profile.acceptedPreferences)
+      .every((value) => typeof value === 'string' && value.length <= 300);
+    const examplesOk = input.examples.every((example) => example && typeof example === 'object' && !Array.isArray(example)
+      && Object.keys(example).every((key) => ['role', 'label', 'kind', 'contentType', 'text', 'reasonCode', 'note'].includes(key))
+      && example.role === 'readonly_feedback'
+      && (example.label === 'positive' || example.label === 'negative')
+      && (example.kind === 'comment' || example.kind === 'danmaku' || example.kind === 'content')
+      && typeof example.contentType === 'string' && AI_CONTENT_TYPES.has(example.contentType)
+      && typeof example.text === 'string' && example.text.length <= 800
+      && typeof example.reasonCode === 'string' && example.reasonCode.length <= 32
+      && typeof example.note === 'string' && example.note.length <= 240);
+    return profileTextListsOk && examplesOk
+      && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
+      && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
-        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
+        && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
+        && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
         && typeof item.text === 'string' && item.text.length <= 800);
   }
   function normalizeAllowedRequest(message) {
@@ -307,6 +335,7 @@ const serviceWorker = String.raw`(() => {
   const MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
   const MAX_AI_REQUEST_CHARS = 256 * 1024;
   const MAX_AI_REQUEST_TIMEOUT_MS = 60000;
+  const AI_CONTENT_TYPES = new Set(['comment', 'danmaku', 'video', 'answer', 'post', 'pin', 'column', 'tweet', 'thread', 'question', 'content']);
   const controllers = new Map();
 
   function requestKey(sender, id) {
@@ -364,14 +393,40 @@ const serviceWorker = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
+      || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
+      || input.profile.schemaVersion !== 1
+      || typeof input.profile.language !== 'string' || input.profile.language.length > 24
+      || typeof input.profile.objective !== 'string' || input.profile.objective.length > 500
+      || !Array.isArray(input.profile.blockCriteria) || input.profile.blockCriteria.length > 24
+      || !Array.isArray(input.profile.allowCriteria) || input.profile.allowCriteria.length > 24
+      || !Array.isArray(input.profile.priority) || input.profile.priority.length > 3
+      || !Array.isArray(input.profile.acceptedPreferences) || input.profile.acceptedPreferences.length > 16
+      || !Array.isArray(input.examples) || input.examples.length > 8
       || !Array.isArray(input.items) || input.items.length > 80) return false;
-    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+    const profileTextListsOk = input.profile.blockCriteria.concat(input.profile.allowCriteria, input.profile.acceptedPreferences)
+      .every((value) => typeof value === 'string' && value.length <= 300);
+    const examplesOk = input.examples.every((example) => example && typeof example === 'object' && !Array.isArray(example)
+      && Object.keys(example).every((key) => ['role', 'label', 'kind', 'contentType', 'text', 'reasonCode', 'note'].includes(key))
+      && example.role === 'readonly_feedback'
+      && (example.label === 'positive' || example.label === 'negative')
+      && (example.kind === 'comment' || example.kind === 'danmaku' || example.kind === 'content')
+      && typeof example.contentType === 'string' && AI_CONTENT_TYPES.has(example.contentType)
+      && typeof example.text === 'string' && example.text.length <= 800
+      && typeof example.reasonCode === 'string' && example.reasonCode.length <= 32
+      && typeof example.note === 'string' && example.note.length <= 240);
+    return profileTextListsOk && examplesOk
+      && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
+      && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
-        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
+        && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
+        && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
         && typeof item.text === 'string' && item.text.length <= 800);
   }
 
@@ -430,6 +485,7 @@ const mainBridge = String.raw`(() => {
   const EXPECTED_SOURCE = 'omniblock-isolated';
   const MAX_READY_ATTEMPTS = 8;
   const MAX_VALUE_CHARS = 4 * 1024 * 1024;
+  const AI_CONTENT_TYPES = new Set(['comment', 'danmaku', 'video', 'answer', 'post', 'pin', 'column', 'tweet', 'thread', 'question', 'content']);
   const values = Object.create(null);
   const listeners = new Map();
   const xhrCallbacks = new Map();
@@ -500,6 +556,7 @@ const mainBridge = String.raw`(() => {
   function isAllowedStorageKey(key) {
     const value = String(key || '');
     return value === 'omniblock:data:v1' || value === 'omniblock:backup:v1'
+      || value === 'omniblock:ai-prompt-profile:v1' || value === 'omniblock:ai-feedback:v1'
       || value === 'omniblock:events:index:v1'
       || /^omniblock:events:v1:\d{4}-\d{2}-\d{2}$/.test(value);
   }
@@ -554,14 +611,40 @@ const mainBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['rules', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
+      || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
+      || input.profile.schemaVersion !== 1
+      || typeof input.profile.language !== 'string' || input.profile.language.length > 24
+      || typeof input.profile.objective !== 'string' || input.profile.objective.length > 500
+      || !Array.isArray(input.profile.blockCriteria) || input.profile.blockCriteria.length > 24
+      || !Array.isArray(input.profile.allowCriteria) || input.profile.allowCriteria.length > 24
+      || !Array.isArray(input.profile.priority) || input.profile.priority.length > 3
+      || !Array.isArray(input.profile.acceptedPreferences) || input.profile.acceptedPreferences.length > 16
+      || !Array.isArray(input.examples) || input.examples.length > 8
       || !Array.isArray(input.items) || input.items.length > 80) return false;
-    return input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+    const profileTextListsOk = input.profile.blockCriteria.concat(input.profile.allowCriteria, input.profile.acceptedPreferences)
+      .every((value) => typeof value === 'string' && value.length <= 300);
+    const examplesOk = input.examples.every((example) => example && typeof example === 'object' && !Array.isArray(example)
+      && Object.keys(example).every((key) => ['role', 'label', 'kind', 'contentType', 'text', 'reasonCode', 'note'].includes(key))
+      && example.role === 'readonly_feedback'
+      && (example.label === 'positive' || example.label === 'negative')
+      && (example.kind === 'comment' || example.kind === 'danmaku' || example.kind === 'content')
+      && typeof example.contentType === 'string' && AI_CONTENT_TYPES.has(example.contentType)
+      && typeof example.text === 'string' && example.text.length <= 800
+      && typeof example.reasonCode === 'string' && example.reasonCode.length <= 32
+      && typeof example.note === 'string' && example.note.length <= 240);
+    return profileTextListsOk && examplesOk
+      && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
+      && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
-        && (item.kind === 'comment' || item.kind === 'danmaku')
+        && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
+        && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
+        && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
         && typeof item.text === 'string' && item.text.length <= 800);
   }
   function normalizeAllowedRequest(details) {

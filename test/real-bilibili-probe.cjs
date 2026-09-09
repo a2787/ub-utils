@@ -312,6 +312,35 @@ async function pickLocalCommentTarget(candidates) {
       }
     }
 
+    // 读取摘要只统计类型/身份数量，不输出正文、昵称、UID 或页面标识；用于确认
+    // 作品正文和评论/弹幕是否都真正进入当前候选的 AI 记录契约。
+    result.aiContent = await page.evaluate(() => {
+      const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+      try {
+        const raw = adapter && typeof adapter.collectAIRecords === 'function'
+          ? adapter.collectAIRecords(document) : [];
+        const records = Array.isArray(raw) ? raw : [];
+        const byKind = {};
+        const contentTypes = {};
+        for (const record of records) {
+          const kind = String(record && record.kind || 'comment');
+          const type = String(record && record.contentType || kind);
+          byKind[kind] = (byKind[kind] || 0) + 1;
+          contentTypes[type] = (contentTypes[type] || 0) + 1;
+        }
+        return {
+          total: records.length,
+          byKind,
+          contentTypes,
+          withIdentity: records.filter((record) => Array.isArray(record && record.keys) && record.keys.length).length,
+          withoutIdentity: records.filter((record) => !Array.isArray(record && record.keys) || !record.keys.length).length,
+          contentRoute: !!(adapter && typeof adapter.contentRouteAvailable === 'function' && adapter.contentRouteAvailable()),
+        };
+      } catch (error) {
+        return { error: String(error && error.message || error).slice(0, 160) };
+      }
+    });
+
     // 在打开任何自建确认框之前记录本页批量入口。此前探针只在点过按钮后
     // 才读取它，正好会撞上“弹窗打开时隐藏 FAB”的正常逻辑，无法验证入口本身。
     // FAB 在“已识别作者数为 0”时按设计隐藏，所以快照必须等到评论作者真的解析出来，
