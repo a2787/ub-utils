@@ -150,7 +150,7 @@ proposed → approved → in_progress → verified
   - [x] 规则性攻击、广告等非事实性违规仍能进入人工审核；未核查数量在 AI 状态和审核说明中可见，不写入名单。
   - [x] 人工合成回归覆盖“真实/未核查短句不误杀、明确违规仍候选、无身份仍不可执行”，专用 Chrome 当前页面复验。
 - evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md` 和 `docs/changelog/v0.53.0.md`；`blocked` 仅表示当前网关尚未接入外部检索，不是事实判断通过。
-- next: 保持 0.53.0 本地候选；若接入检索，另立计划并先评审来源、隐私、缓存、回退和成本。
+- next: 保持 0.53.0 已发布；若接入检索，另立计划并先评审来源、隐私、缓存、回退和成本。
 - updated: 2026-09-09
 - supersedes: none
 

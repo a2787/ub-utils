@@ -1,28 +1,27 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-09
-状态来源：0.53.0 本地候选，尚未 push/Release；公开版本仍为 0.52.0。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.53.0 已 push/Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.53.0`（本地候选，尚未 push/创建 tag/Release）
+- 当前 userscript：`0.53.0`（已发布）
 - 构建：`0.53.0-ai-background-bili-commit`
-- 当前公开版本：`0.52.0`
-- 当前公开功能提交：`e360a8dcc23039899844b864f32ba05be82f70f3`
-- 最近验证的源码快照：`e360a8dcc23039899844b864f32ba05be82f70f3`（v0.52.0 已提交快照；0.53.0 候选证据见下方）
-- 当前候选源码 SHA-256：`b3cbb5765a56e606385faac3baa44602c408b80a56299b6be540fbd198b619dc`
-- 发布状态：0.53.0 仅为本地候选，尚未 push、创建 tag/Release、部署或执行平台写入；公开 0.52.0 保持不变。0.51.1 和 0.49.0 仍是没有独立公开 Release 的历史源码候选；v0.46.2 保留原 tag/Release。
-- 当前公开 tag/Release：[`v0.52.0`](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)。
+- 当前公开版本/提交：`0.53.0` / `2fdf801b5c9727365c51dc6302032f38cec47793`
+- 最近验证的源码快照：`2fdf801b5c9727365c51dc6302032f38cec47793`
+- 当前候选源码 SHA-256：`b3cbb5765a56e606385faac3baa44602c408b80a56299b6be540fbd198b619dc`（即已发布构建）
+- 发布状态：`v0.53.0` 已 push、创建 tag/Release；无登记部署链，未执行平台写入。
+- 当前公开 tag/Release：[`v0.53.0`](https://github.com/a2787/ub-utils/releases/tag/v0.53.0)。
 
-## 2026-09-09 B站 AI 确认后台化（OB-AI-001，本地候选）
+## 2026-09-09 B站 AI 确认后台化（OB-AI-001，已发布）
 
 - 范围/文件：B站 AI 确认先关弹窗，基础 hash/已有 UID 立即写入，UID 关联、反馈和提示后台执行；UID 解析最多 2 并发；日志记录 runId/采集/网关/总耗时；涉及 `omniblock.user.js`、AI 回归和 B站探针。失败/歧义仍 hash-only。
 - `structure regression`：AI screening 21/21（含延迟、立即 hash 和时延日志断言）、quickblock 37/37，内容 AI 12/12、多平台 7/7、提示词 13/13、评测 5/5、批次 2/2、自动加载 3/3、适配器 28/28、运行器 20/20，页面/控制台错误 0。
 - `real-site verified`：隔离探针动态发现 `bilibili.com/video/...`，读取 1 作品、4 评论、64 弹幕，共 69 条且均带身份；专用 Chrome B站视频刷新到当前构建、bridge ready，AI 8 条（1 作品/7 弹幕）、入口 1 个；只证明读取链路。
 - `real-site verified`：真实 B站 DOM 的 `--verify-ai-background` 走 loopback/GM mock，4 评论、11 弹幕、1 候选；确认后浮层立即消失、基础 hash 首次写入生效并提示完成；UID mock 失败仍保留 hash。只证明生命周期，不证明模型/平台写入。
-- `blocked`：模型精度、外部检索、评论分页和动态 UID 未验证；未执行平台写入。候选未 commit/push/tag/Release/部署。
+- `blocked`：模型精度、外部检索、评论分页和动态 UID 未验证；未执行平台写入。
 
-## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，本地候选）
+## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，已发布）
 
 - 范围：修复 AI 把“未提供来源/尚未核查”直接写成“未经证实”并生成屏蔽候选的问题；提示词新增 `claimType`、`verificationStatus`、`verificationMethod`、`ruleMatched`，客户端对事实性候选做保守二次门禁；未核查数量只进入状态/审核说明，不写入名单。
 - 改动文件：`omniblock.user.js`、`test/ai-prompt-system.cjs`、`test/ai-prompt-eval.cjs`、本地候选 changelog、架构/计划文档。
@@ -30,7 +29,7 @@
 - `real-site verified`：2026-09-09 用户授权的专用 Chrome 只读页面，B站页面形式 `bilibili.com/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `8/8` 条、屏蔽候选 `0`、延后 `1` 条；AI 面板显示“尚未核查，已保留未屏蔽”。贴吧页面形式 `tieba.baidu.com/p/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `17/17` 条、候选 `2` 条，候选理由中“未经证实/无来源/无法核实”计数为 `0`。未点击平台举报、官方拉黑、关注或发帖控件。
 - `real-site verified`：同日专用 Chrome 维护探针确认 B站入口 `content=15`、抖音入口 `content=12`、微博 `content=6/users=6`、知乎 `content=5/users=5`、贴吧 `content=6/users=5` 均运行 0.53.0 且 bridge ready；X 入口无可读取内容，B站/抖音详情目标未响应，按 `blocked` 记录。
 - `blocked`：当前 loopback 网关没有检索证据通道；本候选不声称已对任意事实完成独立联网核查，也不把模型内部知识当来源。X 空壳、B站/抖音详情导航与评论分页等外部页面限制不变。
-- 发布状态：0.53.0 尚未 commit/push/tag/Release/部署；公开版本仍为 0.52.0。
+- 发布状态：该能力已随 v0.53.0 commit/push/tag/Release；无登记部署链，未执行平台写入。
 
 ## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
 

@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.53.0 - 事实核查与屏蔽决策分离 - 2026-09-09（本地候选，未推送）
+## v0.53.0 - 事实核查与屏蔽决策分离 - 2026-09-09（已发布）
 
 - AI 现在区分规则违规、事实性主张、观点和核查状态；缺少引用、尚未核查或语境不足不再单独构成“虚假/谣言”的屏蔽候选。
 - 旧式 `decision=block` 若理由仅为“未经证实/无可核实依据”，会被客户端保守降为延后；规则性违规和带正面矛盾依据的事实仍进入人工审核。
@@ -13,7 +13,7 @@
 
 详细用户变化、验证证据、未接入检索的限制和发布边界：[v0.53.0 完整条目](docs/changelog/v0.53.0.md)。
 
-发布状态：当前公开版本仍为 [OmniBlock v0.52.0](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)；候选构建为 `0.53.0-ai-background-bili-commit`，尚未 push、创建 tag/Release 或部署。
+发布状态：当前公开版本为 [OmniBlock v0.53.0](https://github.com/a2787/ub-utils/releases/tag/v0.53.0)；构建为 `0.53.0-ai-background-bili-commit`，提交/tag/Release 已完成；本仓库没有登记的生产部署链。
 
 ## v0.52.0 - 多平台内容入口与可学习 AI 提示词反馈 - 2026-09-09（已创建 GitHub Release）
 
