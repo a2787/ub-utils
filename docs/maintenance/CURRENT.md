@@ -24,11 +24,11 @@
 ## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，已发布）
 
 - 范围：修复 AI 把“未提供来源/尚未核查”直接写成“未经证实”并生成屏蔽候选的问题；提示词新增 `claimType`、`verificationStatus`、`verificationMethod`、`ruleMatched`，客户端对事实性候选做保守二次门禁；未核查数量只进入状态/审核说明，不写入名单。
-- 改动文件：`omniblock.user.js`、`test/ai-prompt-system.cjs`、`test/ai-prompt-eval.cjs`、本地候选 changelog、架构/计划文档。
+- 改动文件：`omniblock.user.js`、`test/ai-prompt-system.cjs`、`test/ai-prompt-eval.cjs`、v0.53.0 changelog、架构/计划文档。
 - `structure regression`：userscript 语法、AI prompt/eval、AI screening、内容 AI、多平台适配器、通用运行器、B站 quickblock、持久化扩展和完整维护自检中的本地项均通过；候选源码 SHA-256 已与本文件同步。
 - `real-site verified`：2026-09-09 用户授权的专用 Chrome 只读页面，B站页面形式 `bilibili.com/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `8/8` 条、屏蔽候选 `0`、延后 `1` 条；AI 面板显示“尚未核查，已保留未屏蔽”。贴吧页面形式 `tieba.baidu.com/p/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `17/17` 条、候选 `2` 条，候选理由中“未经证实/无来源/无法核实”计数为 `0`。未点击平台举报、官方拉黑、关注或发帖控件。
 - `real-site verified`：同日专用 Chrome 维护探针确认 B站入口 `content=15`、抖音入口 `content=12`、微博 `content=6/users=6`、知乎 `content=5/users=5`、贴吧 `content=6/users=5` 均运行 0.53.0 且 bridge ready；X 入口无可读取内容，B站/抖音详情目标未响应，按 `blocked` 记录。
-- `blocked`：当前 loopback 网关没有检索证据通道；本候选不声称已对任意事实完成独立联网核查，也不把模型内部知识当来源。X 空壳、B站/抖音详情导航与评论分页等外部页面限制不变。
+- `blocked`：当前 loopback 网关没有检索证据通道；本版本不声称已对任意事实完成独立联网核查，也不把模型内部知识当来源。X 空壳、B站/抖音详情导航与评论分页等外部页面限制不变。
 - 发布状态：该能力已随 v0.53.0 commit/push/tag/Release；无登记部署链，未执行平台写入。
 
 ## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
@@ -119,18 +119,18 @@
 
 ## 近期历史事实路由（OB-AI-008 及更早）
 
-- 2026-09-07 抖音一键加载、评论/弹幕会话隔离和取消清理的详细证据已归档在历史版本条目；当前只保留其仍影响本候选的外部门禁。
+- 2026-09-07 抖音一键加载、评论/弹幕会话隔离和取消清理的详细证据已归档在历史版本条目；当前只保留其仍影响本版本的外部门禁。
 
 ## 历史事实路由
 
-- 2026-08-29 至 2026-09-05 的治理、B站入口/身份、微博虚拟列表与作品级读取等已关闭或阶段性条目，保留在 [HISTORY_INDEX.md](HISTORY_INDEX.md) 指向的计划和 `LEGACY-HISTORY.md`；本页只保留当前候选、最近证据和仍影响当前决策的限制。
-- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.0 候选事实。
+- 2026-08-29 至 2026-09-05 的治理、B站入口/身份、微博虚拟列表与作品级读取等已关闭或阶段性条目，保留在 [HISTORY_INDEX.md](HISTORY_INDEX.md) 指向的计划和 `LEGACY-HISTORY.md`；本页只保留当前发布构建、最近证据和仍影响当前决策的限制。
+- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.0 事实。
 
 ## 汇总证据
 
 ### `structure regression`
 
-- 当前 v0.53.0 本地候选回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 21/21、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
+- 当前 v0.53.0 发布构建回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 21/21、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
 - `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
 
 ### `real-site verified`
