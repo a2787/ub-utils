@@ -171,6 +171,14 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && /只读反馈证据/.test(rendered.system)) {
     report.pass.push('PROMPT-5 提示词只渲染有界相关反馈，身份/URL/昵称未进入模型输入');
   } else report.fail.push('PROMPT-5 提示词渲染边界异常：' + renderedText.slice(0, 1800));
+  if (/缺少引用.*不等于内容为假/.test(rendered.system)
+    && /verificationStatus/.test(rendered.system)
+    && /verificationMethod/.test(rendered.system)
+    && /ruleMatched/.test(rendered.system)
+    && /decision[^\n]*uncertain/.test(rendered.system)
+    && /没有检索结果/.test(rendered.system)) {
+    report.pass.push('PROMPT-12 提示词将事实核查与屏蔽决策分离，未核查不得直接判假');
+  } else report.fail.push('PROMPT-12 缺少事实核查保守边界或结构化输出字段：' + rendered.system.slice(0, 2200));
 
   await page.evaluate(() => window.OB.Store.setSetting('aiEnabled', true));
   await page.waitForFunction(() => (window.__aiBodies || []).length >= 1, null, { timeout: 5000 }).catch(() => {});

@@ -2,7 +2,8 @@
  * 夹具说明：全部评论正文、作者和身份均为人工合成数据；DOM 形态沿用当前
  * B站评论适配器契约。网关返回的是人工合成 gold oracle，不连接 DeepSeek，
  * 因此本文件评估的是提示词系统的请求边界和结果解析链路，不是模型语义准确率。
- * 覆盖：block/allow/uncertain gold 集、TP/FP/FN、提示词预算、示例去重和身份脱敏。
+ * 覆盖：block/allow/uncertain gold 集、事实性“未核查”误判隔离、TP/FP/FN、
+ * 提示词预算、示例去重和身份脱敏。
  * 运行：node test/ai-prompt-eval.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -17,6 +18,7 @@ const SYNTHETIC_ITEMS = [
   ['人工合成广告样本乙', 'block'],
   ['人工合成歧视样本丙', 'block'],
   ['人工合成剧透样本丁', 'block'],
+  ['人工合成已核查矛盾事实', 'block'],
   ['人工合成正常问候', 'allow'],
   ['人工合成不同观点', 'allow'],
   ['人工合成引用原句', 'allow'],
@@ -93,10 +95,23 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
         contentType: 'application/json; charset=utf-8',
         body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
           schemaVersion: 1,
-          items: (Array.isArray(input.items) ? input.items : []).filter((item) => GOLD.get(String(item && item.text || '')) === 'block').map((item) => ({
-            id: item.id, decision: 'block', category: 'synthetic-gold', confidence: 0.88,
-            reasonCodes: ['synthetic'], reason: '人工合成 gold oracle', evidence: '人工合成评测标签',
-          })),
+          items: (Array.isArray(input.items) ? input.items : []).flatMap((item) => {
+            const label = GOLD.get(String(item && item.text || ''));
+            if (label === 'uncertain') return [{
+              id: item.id, decision: 'block', claimType: 'factual_claim', verificationStatus: 'not_checked',
+              verificationMethod: 'none', ruleMatched: true, confidence: 0.93,
+              reasonCodes: ['unverified'], reason: '未经证实，缺少可核实依据', evidence: '',
+            }];
+            if (label !== 'block') return [];
+            const verified = String(item && item.text || '').includes('已核查');
+            return [{
+              id: item.id, decision: 'block', claimType: verified ? 'factual_claim' : 'policy_violation',
+              verificationStatus: verified ? 'contradicted' : 'not_applicable',
+              verificationMethod: verified ? 'external_source' : 'none', ruleMatched: true,
+              category: 'synthetic-gold', confidence: 0.88,
+              reasonCodes: ['synthetic'], reason: '人工合成 gold oracle', evidence: verified ? '人工合成核查摘要' : '人工合成评测标签',
+            }];
+          }),
         }) } }] }),
       });
       return;
@@ -125,6 +140,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       systemLength: String(body.messages && body.messages[0] && body.messages[0].content || '').length,
       duplicateExamples: exampleKeys.length - new Set(exampleKeys).size,
       feedbackLimit: window.OB.ai.prompt.status().feedbackLimit,
+      deferred: window.OB.ai.status().deferred,
     };
   });
   const goldBlock = SYNTHETIC_ITEMS.filter(([, label]) => label === 'block').map(([text]) => text);
@@ -145,9 +161,11 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && Array.isArray(observed.input.examples);
   if (result && result.ok && shapeOk) report.pass.push('EVAL-1 人工合成 gold 请求包含稳定项目 ID、kind、正文和提示词版本');
   else report.fail.push('EVAL-1 请求形态异常：' + JSON.stringify({ result, shapeOk, itemCount: observed.input.items && observed.input.items.length }));
-  if (tp === goldBlock.length && fp === 0 && fn === 0 && uncertainBlocked === 0) {
-    report.pass.push('EVAL-2 mock gold oracle 分类指标 TP=' + tp + ' FP=' + fp + ' FN=' + fn + '，不误杀 uncertain');
-  } else report.fail.push('EVAL-2 分类指标异常：' + JSON.stringify({ tp, fp, fn, uncertainBlocked, goldAllow: goldAllow.length, result, rows: observed.rows, inputItems: observed.input.items, status: await page.evaluate(() => window.OB.ai.status()) }));
+  if (tp === goldBlock.length && fp === 0 && fn === 0 && uncertainBlocked === 0
+    && observed.deferred === goldUncertain.length
+    && observed.rows.includes('人工合成已核查矛盾事实')) {
+    report.pass.push('EVAL-2 mock gold oracle 分类指标 TP=' + tp + ' FP=' + fp + ' FN=' + fn + '，不误杀未核查事实并保留有依据矛盾事实');
+  } else report.fail.push('EVAL-2 分类指标异常：' + JSON.stringify({ tp, fp, fn, uncertainBlocked, deferred: observed.deferred, goldAllow: goldAllow.length, result, rows: observed.rows, inputItems: observed.input.items, status: await page.evaluate(() => window.OB.ai.status()) }));
   if (observed.systemLength <= 7200 && observed.input.examples.length <= 8 && observed.duplicateExamples === 0) {
     report.pass.push('EVAL-3 system/examples 遵守长度和数量预算，示例没有重复');
   } else report.fail.push('EVAL-3 提示词预算或示例去重异常：' + JSON.stringify({ systemLength: observed.systemLength, examples: observed.input.examples.length, duplicateExamples: observed.duplicateExamples }));

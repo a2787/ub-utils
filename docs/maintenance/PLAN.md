@@ -137,6 +137,23 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-09
 - supersedes: none
 
+### OB-AI-011 — 事实核查状态与屏蔽决策分离
+
+- status: verified
+- priority: P1
+- scope: AI 提示词和响应解析；区分规则违规、事实性主张、观点与“未核查/语境不足”；默认不因缺少引用或模型未查证而生成屏蔽候选，并在状态/审核说明中保留延后计数。
+- non-goals: 不把平台正文发往公共搜索；不新增隐私扩展权限或非 loopback 通道；不把模型臆测当外部证据；不改关键词优先级、身份键、人工确认、80 条批次或平台写入边界。
+- dependencies: OB-AI-004, OB-AI-009, OB-AI-010
+- acceptance: required
+  - [x] 提示词明确“缺少来源不等于虚假”，要求返回 `claimType`、`verificationStatus`、`verificationMethod` 和 `ruleMatched`。
+  - [x] 客户端拒绝仅凭 `unverified/not_checked/insufficient_context` 的事实性屏蔽候选；兼容旧响应中的“未经证实/无可核实依据”误判。
+  - [x] 规则性攻击、广告等非事实性违规仍能进入人工审核；未核查数量在 AI 状态和审核说明中可见，不写入名单。
+  - [x] 人工合成回归覆盖“真实/未核查短句不误杀、明确违规仍候选、无身份仍不可执行”，专用 Chrome 当前页面复验。
+- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md` 和 `docs/changelog/v0.53.0.md`；`blocked` 仅表示当前网关尚未接入外部检索，不是事实判断通过。
+- next: 保持 0.53.0 本地候选；若接入检索，另立计划并先评审来源、隐私、缓存、回退和成本。
+- updated: 2026-09-09
+- supersedes: none
+
 ### OB-VALID-001 — 专用登录态探针与开发扩展同步
 
 - status: verified

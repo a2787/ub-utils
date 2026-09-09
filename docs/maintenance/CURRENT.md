@@ -1,18 +1,28 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-09
-状态来源：0.52.0 源码已推送并创建 GitHub Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：0.53.0 本地候选，尚未 push/Release；公开版本仍为 0.52.0。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.52.0`（源码已推送到 `origin/master`，已创建匹配的 tag/Release）
-- 构建：`0.52.0-content-ai-prompt-feedback`
+- 当前 userscript：`0.53.0`（本地候选，尚未 push/创建 tag/Release）
+- 构建：`0.53.0-ai-evidence-boundary`
 - 当前公开版本：`0.52.0`
 - 当前公开功能提交：`e360a8dcc23039899844b864f32ba05be82f70f3`
-- 最近验证的源码快照：`e360a8dcc23039899844b864f32ba05be82f70f3`（v0.52.0 功能提交；后续仅文档提交不改变 userscript）
-- 当前候选源码 SHA-256：`5da5ea8c301111cec8fe83c2ec12ca518985fac61ed849817cb8b534aa692679`
-- 发布状态：0.52.0 源码已推送到 `origin/master`，并已创建匹配的 tag/Release；未执行部署或平台写入。0.51.1 和 0.49.0 仍是没有独立公开 Release 的历史源码候选；v0.46.2 保留原 tag/Release。
+- 最近验证的源码快照：`e360a8dcc23039899844b864f32ba05be82f70f3`（v0.52.0 已提交快照；0.53.0 候选证据见下方）
+- 当前候选源码 SHA-256：`d97bc2830af576bd6f0e737afa3d942d82d235bd1573decbb5129b3c3b5bb098`
+- 发布状态：0.53.0 仅为本地候选，尚未 push、创建 tag/Release、部署或执行平台写入；公开 0.52.0 保持不变。0.51.1 和 0.49.0 仍是没有独立公开 Release 的历史源码候选；v0.46.2 保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.52.0`](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)。
+
+## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，本地候选）
+
+- 范围：修复 AI 把“未提供来源/尚未核查”直接写成“未经证实”并生成屏蔽候选的问题；提示词新增 `claimType`、`verificationStatus`、`verificationMethod`、`ruleMatched`，客户端对事实性候选做保守二次门禁；未核查数量只进入状态/审核说明，不写入名单。
+- 改动文件：`omniblock.user.js`、`test/ai-prompt-system.cjs`、`test/ai-prompt-eval.cjs`、本地候选 changelog、架构/计划文档。
+- `structure regression`：userscript 语法、AI prompt/eval、AI screening、内容 AI、多平台适配器、通用运行器、B站 quickblock、持久化扩展和完整维护自检中的本地项均通过；候选源码 SHA-256 已与本文件同步。
+- `real-site verified`：2026-09-09 用户授权的专用 Chrome 只读页面，B站页面形式 `bilibili.com/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `8/8` 条、屏蔽候选 `0`、延后 `1` 条；AI 面板显示“尚未核查，已保留未屏蔽”。贴吧页面形式 `tieba.baidu.com/p/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `17/17` 条、候选 `2` 条，候选理由中“未经证实/无来源/无法核实”计数为 `0`。未点击平台举报、官方拉黑、关注或发帖控件。
+- `real-site verified`：同日专用 Chrome 维护探针确认 B站入口 `content=15`、抖音入口 `content=12`、微博 `content=6/users=6`、知乎 `content=5/users=5`、贴吧 `content=6/users=5` 均运行 0.53.0 且 bridge ready；X 入口无可读取内容，B站/抖音详情目标未响应，按 `blocked` 记录。
+- `blocked`：当前 loopback 网关没有检索证据通道；本候选不声称已对任意事实完成独立联网核查，也不把模型内部知识当来源。X 空壳、B站/抖音详情导航与评论分页等外部页面限制不变。
+- 发布状态：0.53.0 尚未 commit/push/tag/Release/部署；公开版本仍为 0.52.0。
 
 ## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
 
@@ -31,20 +41,11 @@
 - `blocked`：X 空壳无推文；抖音未展开评论/弹幕；B站分页/动态 UID、微博 spacer、抖音换片和 DeepSeek 精度仍待补验。
 - 发布状态（记录时）：当时源码 `@version` 为 `0.51.1`；既有 0.51.1 已推送到 `origin/master`，本轮提示词/多平台改动随后纳入 v0.52.0，未在该条目记录时执行公开发布、部署或平台写入。
 
-## 2026-09-09 提示词反馈样例与开发扩展桥协议修复（OB-AI-009）
+## 2026-09-09 v0.52 桥接与反馈修复（OB-AI-009/010）
 
-- 范围：修复 PromptSystem 反馈样例输出的 `contentType` 与持久化开发扩展三层请求白名单不一致导致的 AI 请求前置拒绝；同步主世界、隔离世界和 service worker 的字段/枚举校验；保留 AI 内容形态上下文和身份字段拒绝边界；将桥接拒绝、扩展回调、网关 HTTP/格式、连接失败和超时错误分别呈现。
-- 改动文件：`omniblock.user.js`、开发扩展/AI 回归测试、架构与 v0.52.0 候选文档。
-- `structure regression`：持久化开发扩展 8/8，包含真实 service worker loopback mock、反馈样例 `contentType` 端到端请求、反馈存储跨文档读回和桥接拒绝错误文案；内容 AI 12/12、AI screening 18/18、提示词系统 12/12、离线评测 5/5、AI 多平台 7/7；页面/控制台错误为 0。
-- `real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 页面（登录状态由用户告知，未读取凭证）刷新扩展卡片和页面后 bridge 为 `ready`、尝试 1 次、拒绝 0 次；只读 AI 分析完成 `6/6`，进入审核态，本地 `/v1/chat/completions` 收到 HTTP 200，`lastError` 为空。未执行平台写入。
-- 发布状态：本项已随 v0.52.0 源码推送到 `origin/master` 并进入 v0.52.0 tag/Release；未部署或平台写入。
-
-## 2026-09-09 AI 审核负向反馈可撤销切换（OB-AI-010）
-
-- 范围/改动：审核弹窗「不屏蔽」改为可点击灰态；撤销精确删除 `ai_rejected` 事件、恢复候选选择，再次点击可重录。改动 `omniblock.user.js`、`test/ai-screening.cjs` 与候选文档。
-- `structure regression`：`node test/ai-screening.cjs` 19/19，无页面/控制台错误；内容 AI、提示词、扩展、多平台、通用运行器、适配器、quickblock 和内容覆盖回归保持通过。
-- `real-site verified`：2026-09-09 用户授权专用 Chrome 当前 `weibo.com/...` 审核弹窗完成“记录→撤销→再记录→再撤销”；按钮始终可点，最终反馈 0、候选可选、bridge `ready`。另记录 1 条新负反馈并刷新，恢复灰态可撤销，撤销后反馈 0；未执行平台写入。
-- `blocked`：此前会话的 3 条旧反馈状态未在账本读回，无法追溯恢复；本轮新记录已跨刷新读回。源码已随 v0.52.0 推送并进入 tag/Release，未部署或执行平台写入。
+- 已归档：反馈样例桥接白名单、loopback 错误分层和审核「不屏蔽」可撤销均已随 v0.52.0 发布；细节见 `docs/changelog/v0.52.0.md`。
+- `structure regression`：开发扩展 8/8、AI screening 19/19、内容 AI 12/12、提示词系统 12/12；页面/控制台错误为 0。
+- `real-site verified`：2026-09-09 用户授权专用 Chrome 微博只读页 bridge ready，AI `6/6`；审核负反馈完成记录/撤销循环并跨刷新读回，最终反馈 0；未执行平台写入。
 
 ## 本轮已落实
 
@@ -109,25 +110,20 @@
 - `real-site verified`：2026-09-07 用户授权专用 Chrome 抖音登录态刷新候选扩展后，当前页观察到 245 条内容；“分析本页”进入 4 批并完成 245/245，审核态 8 条候选，桥接为 `ready`，网关收到 4 次 POST 且均为 HTTP 200，`lastError` 为空，控件尾缀命中 0；未点平台写入控件。
 - `blocked`：抖音验证码；换片新行不足；商汤未联调。2026-09-07 Docker engine 已恢复（Model Runner 关闭）；health/models 200、compose healthy；目录保留，数据卷未动。
 
-## 2026-09-07 抖音一键加载与 AI 分析闭环（OB-AI-008）
+## 近期历史事实路由（OB-AI-008 及更早）
 
-- 范围：抖音设置页一次点击完成评论展开/有限滚动、当前视频弹幕时间轴扫描、实际记录收集、AI 分批和人工审核；不调用私有接口、不执行平台写入、不自动确认候选。
-- `structure regression`：`node test/ai-autoload.cjs` 3/3；覆盖加载后记录全量分析、播放器状态 class 变化不误取消和 AbortSignal 取消；语法、AI/评论/弹幕回归和文档门禁通过。
-- `real-site verified`：2026-09-07 用户授权专用 Chrome 登录态 `douyin.com/video/...` 点击一次后，实际记录 365 条，弹幕时间轴 55/55，5 批完成 365/365，审核框 28 条候选，错误为 0；未确认候选或点击平台写入控件。
-- 修复根因：播放器播放状态 class 不再被当作换片；明确视频身份改变仍取消旧 run。加载/分析可见进度并可取消。
-- `blocked`：匿名入口验证码仍不稳定；商汤 provider、额度和真实 fallback 未纳入本候选。
-- `maintenance-check` 本地矩阵和独立 B站探针重跑通过；综合 `BLOCKED`：一次匿名 B站样本无 `aid`、抖音验证码、微博无 spacer。
+- 2026-09-07 抖音一键加载、评论/弹幕会话隔离和取消清理的详细证据已归档在历史版本条目；当前只保留其仍影响本候选的外部门禁。
 
 ## 历史事实路由
 
 - 2026-08-29 至 2026-09-05 的治理、B站入口/身份、微博虚拟列表与作品级读取等已关闭或阶段性条目，保留在 [HISTORY_INDEX.md](HISTORY_INDEX.md) 指向的计划和 `LEGACY-HISTORY.md`；本页只保留当前候选、最近证据和仍影响当前决策的限制。
-- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.51.0 快照。
+- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.0 候选事实。
 
 ## 汇总证据
 
 ### `structure regression`
 
-- 当前 v0.52.0 候选回归为覆盖 6/6、规则 8/8、提示词 12/12、评测 5/5、内容 AI 12/12、AI screening 19/19、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
+- 当前 v0.53.0 本地候选回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 19/19、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
 - `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
 
 ### `real-site verified`
@@ -158,9 +154,9 @@ node test/real-platform-probe.cjs --verify-local
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-09 `dedicated-browser-probe` 真实读取 B站8、抖音46、微博6、知乎5、贴吧主题1+评论2，X 当前空壳记 `blocked`；未执行平台写入。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-09 新候选维护探针真实读取 B站15、抖音12、微博6、知乎5、贴吧6，X 空壳记 `blocked`；未执行平台写入。
 v0.52.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的验证是运行 `node test/dev-browser.cjs sync` 后再跑 `node test/maintenance-check.cjs --dedicated`；不把匿名分页 partial、验证码、登录页或 X 空壳阻断当作全量通过。
+下一项最有价值的工作是另立受控事实检索通道计划；在此之前不把模型内部知识或未核查状态当作虚假，也不把详情页阻断当作全量通过。
