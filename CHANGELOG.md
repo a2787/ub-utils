@@ -7,11 +7,13 @@
 - AI 现在区分规则违规、事实性主张、观点和核查状态；缺少引用、尚未核查或语境不足不再单独构成“虚假/谣言”的屏蔽候选。
 - 旧式 `decision=block` 若理由仅为“未经证实/无可核实依据”，会被客户端保守降为延后；规则性违规和带正面矛盾依据的事实仍进入人工审核。
 - 提示词和审核说明显示核查状态/依据与延后数量；loopback、人工确认、关键词优先级、身份和 80 条批次边界不变。
-- `structure regression`：AI 提示词/离线评测及既有 AI/内容回归通过；真实专用 Chrome 复验和外部检索边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+- B站 AI 弹幕确认后审核弹窗立即关闭；基础 hash/已有 UID 先写入本地名单，UID 关联由最多 2 个并发任务在后台补充，完成后提示结果；唯一校验失败或歧义仍安全保留 hash，不绕过人工确认。
+- AI 分析日志补充 `runId`、采集/网关/总耗时，并抑制没有实际活动的虚假取消事件；新到内容不会在手动分析批次间隙抢占运行。
+- `structure regression`：AI 提示词/离线评测、AI screening 21/21 及既有 AI/内容回归通过；真实专用 Chrome 复验和外部检索边界见[当前维护状态](docs/maintenance/CURRENT.md)。
 
 详细用户变化、验证证据、未接入检索的限制和发布边界：[v0.53.0 完整条目](docs/changelog/v0.53.0.md)。
 
-发布状态：当前公开版本仍为 [OmniBlock v0.52.0](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)；候选构建为 `0.53.0-ai-evidence-boundary`，尚未 push、创建 tag/Release 或部署。
+发布状态：当前公开版本仍为 [OmniBlock v0.52.0](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)；候选构建为 `0.53.0-ai-background-bili-commit`，尚未 push、创建 tag/Release 或部署。
 
 ## v0.52.0 - 多平台内容入口与可学习 AI 提示词反馈 - 2026-09-09（已创建 GitHub Release）
 

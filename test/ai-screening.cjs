@@ -3,7 +3,8 @@
  * 本测试不连接真实模型，使用 Playwright route 模拟本地 OpenAI Chat Completions 网关。
  * 覆盖：默认配置入口、loopback 网关请求、请求不含身份键、AI 建议多选确认、
  * 无可靠身份候选不可执行、页面附加规则、名单持久化、评论晚到后的增量分析，
- * 以及后续弹幕数据段触发的增量分析、累计计数和 B站嵌套评论滚动/点击后的增量分析。
+ * 以及后续弹幕数据段触发的增量分析、累计计数和 B站嵌套评论滚动/点击后的增量分析，
+ * 以及 AI 弹幕确认的即时关闭、基础 hash 先落盘、后台 UID 补充和分段耗时日志。
  * 运行：node test/ai-screening.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -19,7 +20,7 @@ const SHIM = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
-    showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
+    showBulkBlock: true, localBackupEnabled: false, logEnabled: true,
     aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
     aiRules: [{ id: 'ai-rule-repro', text: '不许引战', enabled: true }]
   }
@@ -45,7 +46,7 @@ window.GM_xmlhttpRequest = (opts) => {
       if (opts.onload) opts.onload({ status: 200, responseText: JSON.stringify(card
         ? { code: 0, data: { card } }
         : { code: -404, data: null }) });
-    }, 0);
+    }, Math.max(0, Number(window.__cardDelayMs) || 0));
     return { abort() {} };
   }
   try { window.__aiBodies.push(JSON.parse(opts.data || '{}')); } catch (error) {}
@@ -466,11 +467,29 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && pageRule.text.some((text) => String(text).includes('晚到引战内容'))) report.pass.push('AI-5 页面附加规则与预设规则合并分析当前页，并保留无身份候选的安全提示');
   else report.fail.push('AI-5 页面附加规则候选异常：' + JSON.stringify(pageRule));
   if (pageRule.rows) {
-    await page.evaluate(() => { window.__cardCalls.length = 0; });
+    await page.evaluate(() => {
+      window.__cardCalls.length = 0;
+      window.__cardDelayMs = 700;
+      window.__aiConfirmClickAt = performance.now();
+    });
     await page.locator('#ob-ai-review .ob-ai-confirm').click();
+    const immediateCommit = await page.evaluate(() => ({
+      review: !!document.querySelector('#ob-ai-review'),
+      elapsed: performance.now() - Number(window.__aiConfirmClickAt || 0),
+      hasImmediateDmHash: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:0a6216d9'),
+    }));
+    if (!immediateCommit.review && immediateCommit.elapsed < 250 && immediateCommit.hasImmediateDmHash) {
+      report.pass.push('AI-20 B站 AI 弹幕确认后审核弹窗立即关闭，基础 hash 立即生效，UID 识别移到后台');
+    } else {
+      report.fail.push('AI-20 B站 AI 弹幕确认仍阻塞审核弹窗：' + JSON.stringify(immediateCommit));
+    }
     await page.waitForFunction(() => {
       const state = String(window.__gm['omniblock:data:v1'] || '');
       return state.includes('bili:uid:789') && state.includes('bili:dmhash:0a6216d9') && state.includes('bili:uid:33');
+    }, null, { timeout: 5000 }).catch(() => {});
+    await page.waitForFunction(() => {
+      const toast = document.querySelector('#ob-toast');
+      return !!toast && /AI 建议已确认/.test(toast.textContent || '');
     }, null, { timeout: 5000 }).catch(() => {});
   }
   const finalState = await page.evaluate(() => ({
@@ -480,12 +499,26 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     hasDmHash: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:0a6216d9'),
     hasDmUid: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:33'),
     cardCalls: window.__cardCalls || [],
+    toast: document.querySelector('#ob-toast') && document.querySelector('#ob-toast').textContent,
+    review: !!document.querySelector('#ob-ai-review'),
     persistedSettings: String(window.__gm['omniblock:data:v1'] || '').includes('aiEnabled'),
     errors: window.__aiBodies.length,
   }));
   if (finalState.has123 && finalState.has321 && finalState.has789 && finalState.hasDmHash && finalState.hasDmUid
-    && finalState.cardCalls.includes('33') && finalState.persistedSettings) report.pass.push('AI-6 页面附加规则确认进入现有名单持久化链路，并仅为命中的弹幕按需关联 UID');
+    && finalState.cardCalls.includes('33') && /AI 建议已确认/.test(finalState.toast || '')
+    && finalState.persistedSettings) report.pass.push('AI-6 页面附加规则确认进入现有名单持久化链路，并仅为命中的弹幕按需关联 UID，完成后提示');
   else report.fail.push('AI-6 页面附加规则确认未完成：' + JSON.stringify(finalState));
+
+  const timing = await page.evaluate(() => {
+    const events = window.OB && window.OB.logs ? window.OB.logs.eventsForDay() : [];
+    const finish = events.filter((event) => event && event.type === 'ai.analysis.finish').pop();
+    return finish && finish.data || null;
+  });
+  if (timing && Number.isFinite(Number(timing.durationMs)) && Number(timing.durationMs) >= 0
+    && Number.isFinite(Number(timing.collectMs)) && Number(timing.collectMs) >= 0
+    && Number.isFinite(Number(timing.gatewayMs)) && Number(timing.gatewayMs) >= 0) {
+    report.pass.push('AI-21 AI 分析日志拆分记录采集、网关和总耗时，不含正文或身份键');
+  } else report.fail.push('AI-21 AI 分析耗时日志缺少分段字段：' + JSON.stringify(timing));
 
   await browser.close();
   console.log('PASS:', report.pass.join(' | ') || '无');

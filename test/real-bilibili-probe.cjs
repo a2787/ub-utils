@@ -1,7 +1,7 @@
 /* 真实 B站页面只读探针。
  * 使用隔离的临时 Chrome 配置和内存 GM 存储；只修改该临时本地名单，
  * 不会读取用户 Cookie，也不会触发平台写操作或官方拉黑。
- * 运行：node test/real-bilibili-probe.cjs [--verify-auto-danmaku]
+ * 运行：node test/real-bilibili-probe.cjs [--verify-auto-danmaku] [--verify-ai-background]
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { discoverTargets, redactTarget } = require('./discover.cjs');
@@ -20,31 +20,71 @@ const VERIFY_DANMAKU_UID = process.argv.includes('--verify-danmaku-uid');
 const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VERIFY_DANMAKU_UID;
 const VERIFY_FLOATING_DANMAKU = process.argv.includes('--verify-floating-danmaku');
 const VERIFY_AUTO_DANMAKU = process.argv.includes('--verify-auto-danmaku');
+const VERIFY_AI_BACKGROUND = process.argv.includes('--verify-ai-background');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
+const AI_PROBE_GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const AI_PROBE_SETTINGS = VERIFY_AI_BACKGROUND
+  ? ", aiEnabled: true, aiGatewayUrl: '" + AI_PROBE_GATEWAY_URL
+    + "', aiGatewayModel: 'omni-default', aiRules: [{ id: 'real-ai-probe', text: '探针选定的弹幕内容', enabled: true }]"
+  : '';
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const sourceHash = crypto.createHash('sha256').update(userscript).digest('hex');
 const build = (userscript.match(/const RUNTIME_BUILD\s*=\s*'([^']+)'/) || [, ''])[1];
 const shim = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true${AI_PROBE_SETTINGS} } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; if (k === 'omniblock:data:v1') window.__obProbeWrites = (window.__obProbeWrites || 0) + 1; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
+window.__obAIProbe = { requests: 0, summaries: [], responses: [], errors: [] };
 window.GM_addStyle = (css) => { const add=()=>{ const s=document.createElement('style'); s.textContent=css; (document.head||document.documentElement).appendChild(s); }; if(document.head||document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
 window.GM_xmlhttpRequest = (options) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => { controller.abort(); if(options.ontimeout) options.ontimeout(); }, Number(options.timeout) || 30000);
-  window.fetch(options.url, { method:options.method || 'GET', credentials:'omit', signal:controller.signal })
+  const requestUrl = String(options && options.url || '');
+  if (requestUrl.includes('chat/completions')) {
+    window.__obAIProbe.requests++;
+    try {
+      const body = JSON.parse(options.data || '{}');
+      const input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}');
+      const items = Array.isArray(input.items) ? input.items : [];
+      window.__obAIProbe.summaries.push({
+        itemCount: items.length,
+        danmakuCount: items.filter((item) => item && item.kind === 'danmaku').length,
+        contentCount: items.filter((item) => item && item.kind === 'content').length,
+      });
+    } catch (error) {
+      window.__obAIProbe.summaries.push({ parseError: true });
+    }
+  }
+  window.fetch(options.url, {
+    method: options.method || 'GET',
+    headers: options.headers || {},
+    body: options.data || undefined,
+    credentials: 'omit',
+    signal: controller.signal,
+  })
     .then(async (response) => {
       const responseText = await response.text();
       clearTimeout(timeout);
+      if (requestUrl.includes('chat/completions')) {
+        let responseItems = -1;
+        try {
+          const body = JSON.parse(responseText || '{}');
+          const content = body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
+          const parsed = JSON.parse(content || '{}');
+          responseItems = Array.isArray(parsed.items) ? parsed.items.length : -1;
+        } catch (error) {}
+        window.__obAIProbe.responses.push({ status: response.status, hasBody: !!responseText, responseItems });
+      }
       if(options.onload) options.onload({ status:response.status, responseText });
     })
     .catch((error) => {
       clearTimeout(timeout);
+      if (requestUrl.includes('chat/completions')) window.__obAIProbe.errors.push(String(error && error.message || error).slice(0, 120));
       if(error && error.name === 'AbortError') return;
       if(options.onerror) options.onerror(error);
     });
@@ -206,6 +246,14 @@ async function pickLocalCommentTarget(candidates) {
       try {
         const uid = new globalThis.URL(route.request().url()).searchParams.get('mid') || '';
         if (/^\d+$/.test(uid)) result.uidCardRequestCount++;
+        if (VERIFY_AI_BACKGROUND) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json; charset=utf-8',
+            body: JSON.stringify({ code: -404, data: null }),
+          });
+          return;
+        }
         const requestHeaders = { ...route.request().headers() };
         delete requestHeaders.cookie;
         const response = await route.fetch({ headers: requestHeaders });
@@ -217,6 +265,40 @@ async function pickLocalCommentTarget(candidates) {
         await route.abort('failed');
       }
     });
+    if (VERIFY_AI_BACKGROUND) {
+      await page.route(AI_PROBE_GATEWAY_URL, async (route) => {
+        let input = {};
+        try {
+          const body = JSON.parse(route.request().postData() || '{}');
+          input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}');
+        } catch (error) {}
+        const item = Array.isArray(input.items)
+          ? input.items.find((candidate) => candidate && candidate.kind === 'danmaku')
+          : null;
+        const response = {
+          choices: [{ message: { content: JSON.stringify({
+            items: item ? [{
+              id: item.id,
+              decision: 'block',
+              claimType: 'policy_violation',
+              verificationStatus: 'not_applicable',
+              verificationMethod: 'none',
+              ruleMatched: true,
+              confidence: 0.99,
+              reasonCodes: ['probe_rule_match'],
+              reason: '命中探针规则',
+              evidence: '人工合成的探针规则命中',
+            }] : [],
+          }) } }],
+        };
+        await route.fulfill({
+          status: 200,
+          headers: { 'access-control-allow-origin': '*' },
+          contentType: 'application/json; charset=utf-8',
+          body: JSON.stringify(response),
+        });
+      });
+    }
     await page.addInitScript({ content: shim + '\n' + userscript + '\n' + xhrProbe });
     const response = await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await waitForStableDocument(page);
@@ -340,6 +422,76 @@ async function pickLocalCommentTarget(candidates) {
         return { error: String(error && error.message || error).slice(0, 160) };
       }
     });
+
+    if (VERIFY_AI_BACKGROUND) {
+      // 这里仍使用真实 B 站 DOM、真实脚本和真实事件路径，但网关与 GM 存储均为
+      // 本探针隔离的人工合成实现；它验证用户可见生命周期，不把 mock 判断精度
+      // 误写成线上模型效果，也不触发 B 站官方写操作。
+      result.aiBackground = await page.evaluate(async () => {
+        const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const recordList = () => {
+          const adapter = window.OB && window.OB.adapters && window.OB.adapters.bilibili;
+          try {
+            const records = adapter && typeof adapter.collectAIRecords === 'function'
+              ? adapter.collectAIRecords(document) : [];
+            return Array.isArray(records) ? records : [];
+          } catch (error) {
+            return [];
+          }
+        };
+        if (!window.OB || !window.OB.ai) return { status: 'blocked', reason: '脚本 AI 接口未就绪' };
+        window.OB.ai.closeReview();
+        const analysis = await window.OB.ai.analyzePage('探针选定的弹幕内容');
+        const before = recordList().find((record) => record && record.kind === 'danmaku' && record.keys && record.keys.length);
+        const review = document.querySelector('#ob-ai-review');
+        const candidate = review && review.querySelector('.ob-ai-candidate input[type="checkbox"]:not(:disabled)');
+        if (!review || !candidate || !before) {
+          return {
+            status: 'blocked',
+            reason: '真实页面未产生可执行的弹幕 AI 候选',
+            analysis: analysis && { ok: !!analysis.ok, candidates: Array.isArray(analysis.candidates) ? analysis.candidates.length : 0 },
+            recordCount: recordList().length,
+            aiStatus: window.OB.ai.status(),
+            network: window.__obAIProbe || null,
+          };
+        }
+        const selectedKey = String(before.keys.find((key) => /^bili:dmhash:/.test(String(key || ''))) || before.keys[0] || '');
+        if (!candidate.checked) candidate.click();
+        const confirm = review.querySelector('.ob-ai-confirm');
+        if (!confirm) return { status: 'blocked', reason: 'AI 审核确认按钮未找到' };
+        confirm.click();
+        const dataImmediately = String(window.__gm && window.__gm['omniblock:data:v1'] || '');
+        const immediate = {
+          reviewClosed: !document.querySelector('#ob-ai-review'),
+          baseKeyEffective: !!selectedKey && dataImmediately.includes(selectedKey),
+          dataWriteCount: Number(window.__obProbeWrites) || 0,
+        };
+        let toastText = '';
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+          const toast = document.getElementById('ob-toast');
+          toastText = String(toast && toast.textContent || '');
+          if (/AI 建议已确认/.test(toastText)) break;
+          await pause(100);
+        }
+        const finalData = String(window.__gm && window.__gm['omniblock:data:v1'] || '');
+        return {
+          status: immediate.reviewClosed && immediate.baseKeyEffective && /AI 建议已确认/.test(toastText)
+            ? 'passed' : 'failed',
+          analysis: analysis && { ok: !!analysis.ok, candidates: Array.isArray(analysis.candidates) ? analysis.candidates.length : 0 },
+          selectedKind: before.kind,
+          immediate,
+          completionToast: toastText.slice(0, 180),
+          finalKeyEffective: !!selectedKey && finalData.includes(selectedKey),
+          storageWriteCount: Number(window.__obProbeWrites) || 0,
+        };
+      });
+      if (!result.aiBackground || result.aiBackground.status !== 'passed') {
+        const reason = result.aiBackground && result.aiBackground.reason
+          ? result.aiBackground.reason : '真实 B站 AI 后台确认链路未通过';
+        result.errors.push((result.aiBackground && result.aiBackground.status === 'blocked' ? 'blocked：' : '验证失败：') + reason);
+      }
+    }
 
     // 在打开任何自建确认框之前记录本页批量入口。此前探针只在点过按钮后
     // 才读取它，正好会撞上“弹窗打开时隐藏 FAB”的正常逻辑，无法验证入口本身。

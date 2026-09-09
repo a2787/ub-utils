@@ -6,13 +6,21 @@
 ## 当前版本
 
 - 当前 userscript：`0.53.0`（本地候选，尚未 push/创建 tag/Release）
-- 构建：`0.53.0-ai-evidence-boundary`
+- 构建：`0.53.0-ai-background-bili-commit`
 - 当前公开版本：`0.52.0`
 - 当前公开功能提交：`e360a8dcc23039899844b864f32ba05be82f70f3`
 - 最近验证的源码快照：`e360a8dcc23039899844b864f32ba05be82f70f3`（v0.52.0 已提交快照；0.53.0 候选证据见下方）
-- 当前候选源码 SHA-256：`d97bc2830af576bd6f0e737afa3d942d82d235bd1573decbb5129b3c3b5bb098`
+- 当前候选源码 SHA-256：`b3cbb5765a56e606385faac3baa44602c408b80a56299b6be540fbd198b619dc`
 - 发布状态：0.53.0 仅为本地候选，尚未 push、创建 tag/Release、部署或执行平台写入；公开 0.52.0 保持不变。0.51.1 和 0.49.0 仍是没有独立公开 Release 的历史源码候选；v0.46.2 保留原 tag/Release。
 - 当前公开 tag/Release：[`v0.52.0`](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)。
+
+## 2026-09-09 B站 AI 确认后台化（OB-AI-001，本地候选）
+
+- 范围/文件：B站 AI 确认先关弹窗，基础 hash/已有 UID 立即写入，UID 关联、反馈和提示后台执行；UID 解析最多 2 并发；日志记录 runId/采集/网关/总耗时；涉及 `omniblock.user.js`、AI 回归和 B站探针。失败/歧义仍 hash-only。
+- `structure regression`：AI screening 21/21（含延迟、立即 hash 和时延日志断言）、quickblock 37/37，内容 AI 12/12、多平台 7/7、提示词 13/13、评测 5/5、批次 2/2、自动加载 3/3、适配器 28/28、运行器 20/20，页面/控制台错误 0。
+- `real-site verified`：隔离探针动态发现 `bilibili.com/video/...`，读取 1 作品、4 评论、64 弹幕，共 69 条且均带身份；专用 Chrome B站视频刷新到当前构建、bridge ready，AI 8 条（1 作品/7 弹幕）、入口 1 个；只证明读取链路。
+- `real-site verified`：真实 B站 DOM 的 `--verify-ai-background` 走 loopback/GM mock，4 评论、11 弹幕、1 候选；确认后浮层立即消失、基础 hash 首次写入生效并提示完成；UID mock 失败仍保留 hash。只证明生命周期，不证明模型/平台写入。
+- `blocked`：模型精度、外部检索、评论分页和动态 UID 未验证；未执行平台写入。候选未 commit/push/tag/Release/部署。
 
 ## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，本地候选）
 
@@ -123,7 +131,7 @@
 
 ### `structure regression`
 
-- 当前 v0.53.0 本地候选回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 19/19、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
+- 当前 v0.53.0 本地候选回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 21/21、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
 - `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
 
 ### `real-site verified`

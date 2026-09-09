@@ -20,6 +20,7 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
   相同文案按组显示，单击或勾选批量会屏蔽组内全部发送者，并按 `mid_hash` 过滤；
   已屏蔽的评论 UID 会经 CRC32 正向映射到弹幕；单条、批量、悬浮弹幕、原生弹幕列表和
   AI 审核中确认的弹幕目标，都会在屏蔽动作发生时自动按需查询 1–10 位 UID 候选并校验；
+  AI 弹幕确认后审核弹窗会立即关闭，基础 hash/已有 UID 会先写入本地名单，UID 关联再由最多 2 个并发任务在后台补充，完成后再提示结果；
   唯一且完整校验的候选会同时保存 hash 与 UID，碰撞或请求失败则安全地只保存 hash，
   不在初始加载阶段做全量反查）
 - **抖音视频弹幕**（网页弹幕带 `data-danmaku-user-id` 时按 uid 隐藏；悬停弹幕会浮出
@@ -132,7 +133,7 @@ node test/maintenance-check.cjs --dedicated-only
 
 ### v0.53.0 — 事实核查与屏蔽决策分离（本地候选，未推送）
 
-当前工作区源码 `@version` 为 `0.53.0`，构建为 `0.53.0-ai-evidence-boundary`；它尚未推送或创建 GitHub Release。AI 提示词现在明确区分规则违规、事实性主张、观点和核查状态：没有引用、模型没有查到资料、单句断言或语境不足，不等于内容为假。当前 loopback 网关没有外部检索结果时，这类事实只会计入“尚未核查/延后”，不会仅凭“未经证实”进入屏蔽候选。
+当前工作区源码 `@version` 为 `0.53.0`，构建为 `0.53.0-ai-background-bili-commit`；它尚未推送或创建 GitHub Release。AI 提示词现在明确区分规则违规、事实性主张、观点和核查状态：没有引用、模型没有查到资料、单句断言或语境不足，不等于内容为假。当前 loopback 网关没有外部检索结果时，这类事实只会计入“尚未核查/延后”，不会仅凭“未经证实”进入屏蔽候选。
 
 只有命中用户规则的非事实性违规，或返回明确矛盾依据的事实性内容，才会进入原有人工审核；审核弹窗会显示核查状态/依据，并在说明中列出因未核查而保留的数量。当前版本不把模型内部记忆冒充网络来源，也不把平台正文发送到公共搜索服务。
 
@@ -393,6 +394,7 @@ node test/ai-bridge.cjs          # 持久化开发扩展桥接降级快速失败
 node test/dev-extension.cjs      # 持久化开发扩展自动加载、存储和窄网络桥结构回归
 node test/probe-hygiene.cjs      # 真实探针 document-start 注入清理回归
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
+node test/real-bilibili-probe.cjs --verify-ai-background # 真实 B站 DOM + 隔离 loopback mock，验证确认后立即关闭与后台完成提示
 node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=90 # 专用 Chrome 登录态只读探针
 node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼

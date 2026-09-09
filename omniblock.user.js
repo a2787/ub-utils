@@ -54,7 +54,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.53.0-ai-evidence-boundary';
+  const RUNTIME_BUILD = '0.53.0-ai-background-bili-commit';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -13519,6 +13519,7 @@
     const DM_PAGE_SIZE = 100;
     const DM_SENDER_LIMIT = 5000;
     const DM_UID_LOOKUP_LIMIT = 5000;
+    const DM_UID_LOOKUP_CONCURRENCY = 2;
     const DM_UID_CARD_CACHE_LIMIT = 5000;
     let dmTool = null;
     let dmManager = null;
@@ -14408,23 +14409,43 @@
     }
 
     async function prepareDmBlockRecords(records) {
+      const sourceRecords = Array.isArray(records) ? records : [];
       const result = [];
       const stateByHash = new Map();
       let linked = 0;
       let hashOnly = 0;
-      for (const record of Array.isArray(records) ? records : []) {
+      const hashes = [];
+      const seenHashes = new Set();
+      for (const record of sourceRecords) {
+        const keys = normalizeIdentityKeys(record && record.keys);
+        const hash = dmHashFromRecord({ keys });
+        if (!hash || keys.some((key) => /^bili:uid:\d+$/.test(key))) {
+          continue;
+        }
+        if (!seenHashes.has(hash)) { seenHashes.add(hash); hashes.push(hash); }
+      }
+      // 目标动作才进入此路径；render:false 保证异步查询不会重建当前按钮/管理器。
+      // 同一批不同 hash 最多并行两个候选链，既不让顺序反查拖长整批，也不向
+      // B 站用户卡片接口制造无界突发请求；同一 hash 仍由 dmUidLookups 去重。
+      let nextHash = 0;
+      const lookupWorker = async () => {
+        while (nextHash < hashes.length) {
+          const hash = hashes[nextHash++];
+          const state = await lookupDmUidCandidates(hash, { render: false });
+          stateByHash.set(hash, state);
+        }
+      };
+      const workerCount = Math.min(DM_UID_LOOKUP_CONCURRENCY, hashes.length);
+      if (workerCount) await Promise.all(Array.from({ length: workerCount }, () => lookupWorker()));
+
+      for (const record of sourceRecords) {
         const keys = normalizeIdentityKeys(record && record.keys);
         const hash = dmHashFromRecord({ keys });
         if (!hash || keys.some((key) => /^bili:uid:\d+$/.test(key))) {
           result.push({ ...record, keys });
           continue;
         }
-        let state = stateByHash.get(hash);
-        if (!state) {
-          // 目标动作才进入此路径；render:false 保证异步查询不会重建当前按钮/管理器。
-          state = await lookupDmUidCandidates(hash, { render: false });
-          stateByHash.set(hash, state);
-        }
+        const state = stateByHash.get(hash);
         const candidate = verifiedUniqueDmUid(state);
         if (!candidate) {
           hashOnly++;
@@ -15445,12 +15466,12 @@
     let autoPendingKey = '';
     let autoRetryCount = 0;
     let autoContentPending = false;
-    let autoRunActive = false;
-    let autoRunSequence = 0;
     const autoAnalyzedRecordIds = new Set();
     const autoCandidates = new Map();
     let configSignatureValue = '';
     let generation = 0;
+    let analysisSequence = 0;
+    let activeRunCount = 0;
     let activeRequest = null;
     let activeLoader = null;
     let review = null;
@@ -15524,6 +15545,9 @@
     }
 
     function cancelActive(reason) {
+      const requestActive = !!activeRequest;
+      const loaderActive = !!activeLoader;
+      const hadActive = activeRunCount > 0 || loaderActive || requestActive;
       generation++;
       if (activeLoader) {
         try { activeLoader.abort(); } catch (e) {}
@@ -15533,7 +15557,19 @@
         try { activeRequest.abort(); } catch (e) {}
         activeRequest = null;
       }
-      if (reason) EventLog.record('ai.analysis.cancel', { reason: String(reason).slice(0, 40) });
+      if (reason && hadActive) EventLog.record('ai.analysis.cancel', {
+        reason: String(reason).slice(0, 40), activeRuns: activeRunCount,
+        requestActive, loaderActive,
+      });
+    }
+
+    function monotonicNow() {
+      return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now() : Date.now();
+    }
+
+    function elapsedMs(startedAt) {
+      return Math.max(0, Math.round(monotonicNow() - Number(startedAt || 0)));
     }
 
     function clearAutoAnalysis() {
@@ -16011,12 +16047,15 @@
       return result;
     }
 
-    function closeReview(reason, quiet) {
+    function closeReview(reason, quiet, options) {
       const current = review;
       review = null;
+      const preserveFeedbackIds = options && options.preserveFeedbackIds instanceof Set
+        ? options.preserveFeedbackIds : null;
       if (current) {
         const source = reason === 'commit' ? 'review_unresolved' : 'review_closed';
         for (const candidate of current.candidates) {
+          if (preserveFeedbackIds && preserveFeedbackIds.has(candidate.id)) continue;
           if (!current.feedbackDone.has(candidate.id)) markReviewFeedback(current, candidate, 'unknown', source);
         }
       }
@@ -16033,6 +16072,75 @@
 
     function verificationLabel(status) {
       return AI_VERIFICATION_STATUS_LABELS[status] || AI_VERIFICATION_STATUS_LABELS.unknown;
+    }
+
+    // 审核确认是用户已经做出的本地操作，不应被 B 站 hash→UID 的慢反查
+    // 锁在前台。先关闭审核层，再在当前文档的异步任务中完成身份增强和名单写入；
+    // 身份不唯一、卡片失败或初始化异常时仍沿用已有 hash/UID，不扩大执行权限。
+    async function commitReviewSelection(current, selected, initialGroups) {
+      let groups = initialGroups;
+      let uidPreparation = { linked: 0, hashOnly: 0 };
+      let uidPreparationError = false;
+      let baseResults;
+      try {
+        // B站弹幕先写入已有 hash/UID，使用户确认后的本地屏蔽立即生效；
+        // 后台 UID 关联只负责补充经过唯一校验的身份，不再阻塞基础屏蔽。
+        baseResults = Store.addIdentityGroups(initialGroups);
+      } catch (error) {
+        for (const candidate of selected) {
+          try { markReviewFeedback(current, candidate, 'unknown', 'ai_commit_error'); } catch (feedbackError) {
+            EventLog.recordError('ai.review.commit-feedback', feedbackError);
+          }
+        }
+        EventLog.recordError('ai.review.commit', error);
+        showToast('AI 建议写入失败：' + (error && error.message || error));
+        return { ok: false, error };
+      }
+
+      let results = baseResults;
+      const persistenceBatches = [baseResults];
+      try {
+        if (currentAdapter && currentAdapter.id === 'bilibili'
+          && groups.some((group) => group && group.kind === 'danmaku')) {
+          const prepared = await biliDanmakuPrepareBlockRecords(groups);
+          groups = prepared.records;
+          uidPreparation = prepared;
+          const enrichmentResults = Store.addIdentityGroups(groups);
+          results = baseResults.concat(enrichmentResults);
+          persistenceBatches.push(enrichmentResults);
+        }
+      } catch (error) {
+        uidPreparationError = true;
+        EventLog.recordError('ai.review.uid-enrich', error);
+      }
+
+      const addedKeys = [];
+      for (const result of results) {
+        for (const key of result.addedKeys || []) if (!addedKeys.includes(key)) addedKeys.push(key);
+      }
+      const persisted = persistenceBatches.every((batch) => !batch.length || batch.persisted !== false);
+      for (const candidate of selected) markReviewFeedback(current, candidate, 'positive', 'ai_confirmed');
+      EventLog.record('ai.review.commit', {
+        background: true,
+        candidateCount: selected.length, addedKeyCount: addedKeys.length, persisted,
+        basePersisted: !baseResults.length || baseResults.persisted !== false,
+        linkedUidCount: Number(uidPreparation.linked) || 0,
+        hashOnlyCount: Number(uidPreparation.hashOnly) || 0,
+        uidPreparationError,
+      }, { immediate: true });
+      const identitySuffix = uidPreparationError
+        ? '（UID 识别/补充失败，已保留现有 hash/UID）'
+        : uidPreparation.hashOnly
+          ? '（其中 ' + uidPreparation.hashOnly + ' 个弹幕保留 hash）' : '';
+      showToast(persisted
+        ? 'AI 建议已确认：新增 ' + addedKeys.length + ' 个本地身份' + identitySuffix
+        : 'AI 建议已在本页生效但未确认落盘，请重试或导出备份' + identitySuffix,
+      addedKeys.length ? () => { Store.removeIdentities(addedKeys); if (currentScanner) currentScanner.schedule(); } : null);
+      if (typeof current.onCommit === 'function') {
+        try { current.onCommit(selected); } catch (error) { EventLog.recordError('ai.review.resolve', error); }
+      }
+      if (currentScanner) currentScanner.schedule();
+      return { ok: true, addedKeys, persisted, uidPreparation };
     }
 
     function showReview(candidates, source, batchCount, ruleCount, options) {
@@ -16182,7 +16290,7 @@
       overlay.querySelector('.ob-ai-close').onclick = close;
       overlay.querySelector('.ob-ai-cancel').onclick = close;
       overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
-      overlay.querySelector('.ob-ai-confirm').onclick = async () => {
+      overlay.querySelector('.ob-ai-confirm').onclick = () => {
         const current = review;
         if (!current) return;
         const selected = current.candidates.filter((candidate) => {
@@ -16198,57 +16306,44 @@
           note: 'AI 智能屏蔽建议：' + candidate.reason + '；代表内容：' + candidate.record.text.slice(0, 300),
           kind: candidate.record.kind,
         }));
-        const confirmButton = overlay.querySelector('.ob-ai-confirm');
-        const status = overlay.querySelector('.ob-ai-review-status');
-        if (confirmButton) confirmButton.disabled = true;
-        if (status) status.textContent = '正在按需识别所选 B站弹幕的 UID…';
-        let uidPreparation = { linked: 0, hashOnly: 0 };
-        try {
-          if (currentAdapter && currentAdapter.id === 'bilibili') {
-            const prepared = await biliDanmakuPrepareBlockRecords(groups);
-            if (review !== current) return;
-            groups = prepared.records;
-            uidPreparation = prepared;
-          }
-        } catch (error) {
-          if (confirmButton) confirmButton.disabled = false;
-          if (status) status.textContent = 'UID 识别失败，将按已有 hash/UID 身份提交';
-          EventLog.recordError('ai.review.uid-prepare', error);
-        }
-        if (status && review === current && (uidPreparation.linked || uidPreparation.hashOnly)) {
-          status.textContent = '已自动关联 ' + uidPreparation.linked + ' 个 UID'
-            + (uidPreparation.hashOnly ? '；' + uidPreparation.hashOnly + ' 个目标保留 hash' : '') + '，正在写入名单…';
-        }
-        let results = [];
-        try { results = Store.addIdentityGroups(groups); }
-        catch (error) {
-          if (confirmButton) confirmButton.disabled = false;
-          if (status) status.textContent = '写入失败，请重试';
-          EventLog.recordError('ai.review.commit', error); showToast('AI 建议写入失败：' + (error && error.message || error)); return;
-        }
-        const addedKeys = [];
-        for (const result of results) for (const key of result.addedKeys || []) if (!addedKeys.includes(key)) addedKeys.push(key);
-        const persisted = results.persisted !== false;
-        for (const candidate of selected) markReviewFeedback(current, candidate, 'positive', 'ai_confirmed');
-        closeReview('commit', true);
-        EventLog.record('ai.review.commit', {
-          candidateCount: selected.length, addedKeyCount: addedKeys.length, persisted,
-          linkedUidCount: Number(uidPreparation.linked) || 0,
-          hashOnlyCount: Number(uidPreparation.hashOnly) || 0,
+        const preserveFeedbackIds = new Set(selected.map((candidate) => candidate.id));
+        EventLog.record('ai.review.commit.start', {
+          background: true, candidateCount: selected.length,
+          danmakuCount: selected.filter((candidate) => candidate.record && candidate.record.kind === 'danmaku').length,
         }, { immediate: true });
-        showToast(persisted
-          ? 'AI 建议已确认：新增 ' + addedKeys.length + ' 个本地身份'
-          : 'AI 建议已在本页生效但未确认落盘，请重试或导出备份',
-        addedKeys.length ? () => { Store.removeIdentities(addedKeys); if (currentScanner) currentScanner.schedule(); } : null);
-        if (typeof current.onCommit === 'function') {
-          try { current.onCommit(selected); } catch (error) { EventLog.recordError('ai.review.resolve', error); }
-        }
-        if (currentScanner) currentScanner.schedule();
+        // 先释放审核浮层，让用户立即回到页面；选中的候选暂不记 unknown，
+        // 待后台提交成功后记录 positive，失败则记录为 unknown 并保留可重试的分析状态。
+        closeReview('background-commit', true, { preserveFeedbackIds });
+        void commitReviewSelection(current, selected, groups).catch((error) => {
+          for (const candidate of selected) {
+            try { markReviewFeedback(current, candidate, 'unknown', 'ai_commit_error'); } catch (feedbackError) {
+              EventLog.recordError('ai.review.commit-feedback', feedbackError);
+            }
+          }
+          EventLog.recordError('ai.review.commit', error);
+          showToast('AI 建议写入失败：' + (error && error.message || error));
+        });
       };
       EventLog.record('ai.review.open', { source, candidateCount: candidates.length, executableCount: candidates.filter((item) => item.record.keys.length).length }, { immediate: true });
     }
 
     async function run(pageRule, source, options) {
+      const runMeta = { id: ++analysisSequence, startedAt: monotonicNow() };
+      cancelActive('new-analysis');
+      activeRunCount++;
+      try {
+        return await runInternal(pageRule, source, options, runMeta);
+      } finally {
+        const wasLastRun = activeRunCount === 1;
+        activeRunCount = Math.max(0, activeRunCount - 1);
+        if (source !== 'auto' && wasLastRun && autoContentPending && !stopped) scheduleAuto(800, true);
+      }
+    }
+
+    async function runInternal(pageRule, source, options, runMeta) {
+      const runId = Number(runMeta && runMeta.id) || 0;
+      const runStartedAt = Number(runMeta && runMeta.startedAt) || monotonicNow();
+      const timing = { collectMs: 0, gatewayMs: 0 };
       if (stopped) return { ok: false, error: 'AI 会话已结束' };
       if (Store.getSetting('enabled') === false || Store.getSetting('aiEnabled') !== true) {
         setLast({ state: 'disabled', source, deferred: 0, lastError: '请先启用 AI 智能屏蔽' });
@@ -16268,7 +16363,6 @@
         setLast({ state: 'error', source, deferred: 0, lastError: '只允许使用 loopback AI 网关地址' });
         return { ok: false, error: '只允许使用 loopback AI 网关地址' };
       }
-      cancelActive('new-analysis');
       const runGeneration = generation;
       if (options && options.loadDouyin && currentAdapter.id === 'douyin') {
         try {
@@ -16285,11 +16379,14 @@
         }
       }
       let collected;
+      const collectStartedAt = monotonicNow();
       try { collected = collectRecords(); }
       catch (error) {
+        timing.collectMs = elapsedMs(collectStartedAt);
         setLast({ state: 'error', source, deferred: 0, lastError: error && error.message || '当前页内容采集失败' });
         return { ok: false, error: error && error.message || '当前页内容采集失败' };
       }
+      timing.collectMs = elapsedMs(collectStartedAt);
       const allRecords = collected.records;
       const pendingRecords = source === 'auto'
         ? allRecords.filter((record) => !autoAnalyzedRecordIds.has(record.id))
@@ -16326,6 +16423,7 @@
       setLast({ state: 'loading', source, records: allRecords.length, newRecords: pendingRecords.length, analyzed: analyzedBefore,
         batchIndex: 0, batchCount, batched: batchCount > 1, sampled: false, candidates: 0, deferred: 0, lastError: '' });
       EventLog.record('ai.analysis.start', {
+        runId, collectMs: timing.collectMs,
         source, recordCount: allRecords.length, newRecordCount: pendingRecords.length, batchCount, batchSize: AI_BATCH_SIZE,
         ruleCount: rules.length, sampled: false,
       }, { immediate: true });
@@ -16365,9 +16463,11 @@
           const request = requestJSON(gatewayUrl, payload, AI_REQUEST_TIMEOUT_MS);
           activeRequest = request;
           let response;
+          const gatewayStartedAt = monotonicNow();
           try {
             response = await request.promise;
           } finally {
+            timing.gatewayMs += elapsedMs(gatewayStartedAt);
             if (activeRequest === request) activeRequest = null;
           }
           if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
@@ -16388,6 +16488,7 @@
           newRecords: pendingRecords.length, analyzed: allRecords.length, batchIndex: batchCount, batchCount, batched: batchCount > 1,
           sampled: false, candidates: candidates.length, deferred, lastError: '' });
         EventLog.record('ai.analysis.finish', {
+          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, gatewayMs: timing.gatewayMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
           analyzedCount: allRecords.length, newAnalyzedCount: analyzed,
           batchCount, candidateCount: candidates.length, deferred, sampled: false,
@@ -16409,6 +16510,7 @@
           batchIndex: currentBatch, batchCount, batched: batchCount > 1, sampled: false,
           candidates: 0, deferred, lastError: message });
         EventLog.record('ai.analysis.error', {
+          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, gatewayMs: timing.gatewayMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
           analyzedCount: analyzedBefore + analyzed, newAnalyzedCount: analyzed,
           batchIndex: currentBatch, batchCount, deferred,
@@ -16420,8 +16522,9 @@
     function noteAutoContentChanged() {
       autoContentPending = true;
       // 自动分析本身可能正处于两个网络批次之间，此时 activeRequest 会暂时为
-      // null；用 autoRunActive 保护整次运行，等它完成后再排一个合并后的增量批次。
-      if (!autoRunActive && !activeRequest && !activeLoader) scheduleAuto(800, true);
+      // null；用 activeRunCount 保护所有分析运行，等它完成后再排一个合并后的
+      // 增量批次，避免手动分析的批次间隙被自动分析抢占。
+      if (!activeRunCount && !activeRequest && !activeLoader) scheduleAuto(800, true);
     }
 
     function scheduleAuto(delay = 1200, force = false) {
@@ -16436,11 +16539,13 @@
         autoTimerCancel = () => {};
         autoPendingKey = '';
         if (stopped || !PageLifecycle.isVisible() || (!force && autoRouteKey === key)) return;
+        if (activeRunCount || activeRequest || activeLoader) {
+          autoContentPending = true;
+          return;
+        }
         // 消费触发当前定时器的变化；运行期间新到达的变化会再次把该标记置回
         // true，并在本次运行结束后合并为下一次有界增量分析。
         autoContentPending = false;
-        autoRunActive = true;
-        const runToken = ++autoRunSequence;
         const runPromise = run('', 'auto');
         runPromise.then((result) => {
           // 评论/弹幕经常晚于首屏挂载。空采样只允许有限次重试，避免把低频
@@ -16458,11 +16563,7 @@
               scheduleAuto(800, true);
             }
           }
-        }).catch(() => {}).finally(() => {
-          if (runToken === autoRunSequence) autoRunActive = false;
-        });
-        // 不把 activeRequest 当作整次 run 的锁：批次之间它会短暂为空，内容
-        // 信号必须仍然等待本次 run 收尾，而不是取消当前进度另起一条请求。
+        }).catch(() => {});
       }, delay);
     }
 
