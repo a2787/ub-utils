@@ -65,13 +65,27 @@ window.GM_xmlhttpRequest = (options) => {
         + JSON.stringify(baselineInput).length;
       const actualChars = String(body.messages && body.messages[0] && body.messages[0].content || '').length
         + JSON.stringify(input).length;
+      const contextItems = items.map((item) => item && item.context).filter(Boolean);
+      const contextFieldCounts = {};
+      for (const context of contextItems) {
+        if (Array.isArray(context)) {
+          contextFieldCounts.timeTuple = (contextFieldCounts.timeTuple || 0) + 1;
+        } else {
+          for (const field of Object.keys(context)) contextFieldCounts[field] = (contextFieldCounts[field] || 0) + 1;
+        }
+      }
       window.__obAIProbe.summaries.push({
         itemCount: items.length,
         danmakuCount: items.filter((item) => item && item.kind === 'danmaku').length,
         contentCount: items.filter((item) => item && item.kind === 'content').length,
-        contextItemCount: items.filter((item) => item && item.context).length,
+        contextItemCount: contextItems.length,
         contextWorkCount: input.contextCatalog && Array.isArray(input.contextCatalog.works)
           ? input.contextCatalog.works.length : 0,
+        baselineChars,
+        actualChars,
+        contextCatalogChars: input.contextCatalog ? JSON.stringify(input.contextCatalog).length : 0,
+        contextItemsChars: contextItems.reduce((sum, context) => sum + JSON.stringify(context).length, 0),
+        contextFieldCounts,
         contextOverheadRatio: baselineChars ? Number(((actualChars - baselineChars) / baselineChars).toFixed(3)) : 0,
       });
     } catch (error) {
@@ -586,6 +600,8 @@ async function pickLocalCommentTarget(candidates) {
           completionToast: toastText.slice(0, 180),
           finalGlobalKeyUnchanged: !selectedKey || !finalData.includes(selectedKey),
           storageWriteCount: Number(window.__obProbeWrites) || 0,
+          networkSummary: (window.__obAIProbe && Array.isArray(window.__obAIProbe.summaries))
+            ? window.__obAIProbe.summaries.slice(-3) : [],
         };
       });
       if (!result.aiBackground || result.aiBackground.status !== 'passed') {

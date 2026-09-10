@@ -1,29 +1,28 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-10
-状态来源：v0.55.0 已 push/tag/Release；本轮匿名真实站点只读探针和发布读回已完成。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.56.0 候选已完成本轮源码、桥接、回归和匿名真实站点只读验证；公开发布读回将在本轮 commit/push/tag/Release 后补写。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.55.0`（已发布）
-- 构建：`0.55.0-context-aware-ai`
-- 当前公开版本/功能提交：`0.55.0` / `b865d4261e8f9fb27303d0c14dd22192e84f1544`
-- 最近验证的源码快照：`b865d4261e8f9fb27303d0c14dd22192e84f1544`
-- 当前候选源码 SHA-256：`037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`（即当前发布源码）
-- 发布状态：v0.55.0 已 commit/push/tag/Release；无登记部署链，未执行平台写入。
-- 当前公开 tag/Release：[v0.55.0](https://github.com/a2787/ub-utils/releases/tag/v0.55.0)。
+- 当前 userscript：`0.56.0`（候选已完成验证，待本轮公开发布读回）
+- 构建：`0.56.0-context-aware-ai-compact`
+- 当前公开版本/功能提交：`0.55.0` / `b865d4261e8f9fb27303d0c14dd22192e84f1544`；v0.56.0 功能提交待本轮生成
+- 最近验证的源码快照：`b865d4261e8f9fb27303d0c14dd22192e84f1544`（候选改动尚未生成新 commit）
+- 当前候选源码 SHA-256：`2c225b2649ac67f6b8673c98316bb5aad9560699af0ada7a38445e92adff3554`
+- 发布状态：v0.56.0 尚未 commit/push/tag/Release；无登记部署链，未执行平台写入。
+- 当前公开 tag/Release：[v0.55.0](https://github.com/a2787/ub-utils/releases/tag/v0.55.0)；v0.56.0 发布链接待生成。
 
-## 2026-09-10 作品语境感知的 AI 屏蔽（OB-AI-014，已发布）
+## 2026-09-10 作品语境感知的 AI 屏蔽与紧凑协议收口（OB-AI-014，v0.56.0，已验证）
 
-- 范围/文件：B 站视频详情页的作品标题/简介、分 P、真实评论父级关系、已观察弹幕进度进入脱敏 `WorkContext/LocalContext`；上下文候选默认确认到当前作品 `ScopedBlocks`，全局作者屏蔽仍需单独显式选择；改动集中在 `omniblock.user.js`、上下文/桥接/真实探针回归和 v0.55.0 文档。
-- `structure regression`：上下文契约 CTX-1..9、AI screening、内容 AI、提示词系统/评测、事实核查、检索、批次、桥接、自动加载、平台 AI、watchdog、quickblock、适配器、通用运行器和性能回归通过；持久开发扩展 11/11，页面/控制台错误 0；请求级上下文额外字符占比 `19.8%`，低于 `25%` 门槛；unknown rule/context 不足均延期，未把正文指令当规则。
-- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；最终源码/构建/哈希为 `0.55.0` / `0.55.0-context-aware-ai` / `037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`。两轮动态发现页面均加载成功、页面错误为空；第一轮采集作品 1、评论 3、弹幕 30 共 34 条，34 条带作品上下文、1 条带真实父评论、30 条带弹幕时间；第二轮采集作品 1、评论 2、弹幕 31 共 34 条，34 条带作品上下文、31 条带弹幕时间，出站 ID 仅为序号。
-- `real-site verified`：同日 AI mock 审核链路在真实页面确认 1 条弹幕候选；审核浮层立即关闭，当前作品作用域立即生效，全局键保持不变，作用域记录 1 条，数据写入 0 次；完成提示为“AI 建议已确认：当前作品 1 项，全局新增 0 个身份撤销”。未触发 B 站举报、官方拉黑、关注或发帖。
-- 本机 loopback 评测（2026-09-10）：人工合成 `ai-eval-v1` 24 条，baseline/work/full 各 3 次；schema 错误、未核查事实误阻断和身份越权均为 `0`，policy/context block recall 与 defer precision 均为 `1.0`，身份动作精确率为 `0.8/0.8667/0.8`。
-- 本机 p95：baseline/work/full 为 `5203/4951/5455ms`，full/baseline `1.048`；产品结构预算仍为 `19.8%`。混合批次 full 输入字符增长 `81.6%` 不代表单作品生产 payload，需另做基线。
-- `real-site verified`：2026-09-10 匿名隔离只读 B 站页面加载成功、错误为 0；标准文本轨道 `0`、`<track>` `0`，字幕记为 `blocked`；播放器仅有媒体存在证据，音频轨道元数据为 `0`，画面语义为 `blocked`，未读取正文、音频或视频帧。
-- `blocked`：真实用户内容长期精度、单作品输入预算和字幕/音频/画面语义仍无证据；登录状态未判定，根评论分页仍可能 partial。模型快照变化后必须重跑评测。
-- 发布状态：功能提交 `b865d4261e8f9fb27303d0c14dd22192e84f1544` 已推送到 `origin/master`；`v0.55.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.55.0) 已创建。无登记部署链，未执行平台写入。详细设计、回滚和下一阶段边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.55.0 changelog](../changelog/v0.55.0.md)。
+- 范围/文件：B 站视频详情页的作品标题/简介、分 P、真实评论父级关系、已观察弹幕进度进入脱敏 `WorkContext/LocalContext`；v0.56.0 新增 `contextSchemaVersion=2` 紧凑线协议；上下文候选默认确认到当前作品 `ScopedBlocks`，全局作者屏蔽仍需单独显式选择。
+- `structure regression`：上下文契约 CTX-1..9、AI screening、内容 AI、提示词系统/评测、事实核查、检索、批次、桥接、自动加载、平台 AI、watchdog、quickblock、适配器、通用运行器和性能回归通过；持久开发扩展 11/11，页面/控制台错误 0；v0.56.0 评测输入增长 `16.95%`，聚合 p95 比值 `1.0014`，unknown rule/context 不足均延期。
+- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；构建/哈希为 `0.56.0-context-aware-ai-compact` / `2c225b2649ac67f6b8673c98316bb5aad9560699af0ada7a38445e92adff3554`。动态页面采集作品 1、评论 3、弹幕 110 共 114 条，114 条带作品上下文、1 条带父评论、110 条带时间；三个实际 AI 批次额外输入 `21.8%/21.4%/21.8%`。
+- `real-site verified`：同轮 AI mock 审核确认 2 条弹幕候选；审核浮层立即关闭，当前作品作用域记录 2 条，全局键保持不变，数据写入 0 次；未触发 B 站举报、官方拉黑、关注或发帖。
+- 本机 loopback 评测（2026-09-10）：人工合成 `ai-eval-v1` 按 7 个不透明作品分组，baseline/full 各 3 次、42 次请求；输入字符 `15171/17742`，加权增长 `16.95%`，p95 `2174/2177ms`、比值 `1.0014`；误阻断率差 `0`，policy/context recall 与 defer precision 均 `1.0`，schema 错误、未核查事实误阻断和身份越权均 `0`。
+- `real-site verified`：同轮来源探针确认标准文本轨道 `0`、`<track>` `0`、播放器仅有媒体存在证据且音频轨道元数据为 `0`；字幕和画面语义保持 `blocked`，未读取正文、音频或视频帧。
+- `blocked`：真实用户内容长期精度没有标注集证据；登录状态未判定，根评论分页仍可能 partial。字幕/音频/画面语义已作为有前置条件的远期预留封存，不再作为 OB-AI-014 活动项。
+- 发布状态：v0.56.0 功能提交、tag/Release 待本轮生成；无登记部署链，未执行平台写入。详细设计、回滚和边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
 
 ## 已发布历史摘要
 

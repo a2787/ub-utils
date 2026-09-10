@@ -202,29 +202,48 @@ const isolatedBridge = String.raw`(() => {
   }
   function isAllowedAIContext(value) {
     if (typeof value === 'undefined') return true;
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
-      || !/^w\d{1,3}$/.test(String(value.workId || ''))
-      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
-      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
-      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    const validTime = (time) => {
+      if (Array.isArray(time)) return time.length === 2
+        && time.some((part) => part !== null)
+        && (time[0] === null || (Number.isFinite(time[0]) && time[0] >= 0))
+        && (time[1] === null || (Number.isInteger(time[1]) && time[1] >= 1));
+      return !!(time && typeof time === 'object' && !Array.isArray(time)
+        && Object.keys(time).every((key) => ['progressMs', 'segmentIndex'].includes(key))
+        && (time.progressMs === null || (Number.isFinite(time.progressMs) && time.progressMs >= 0))
+        && (time.segmentIndex === null || (Number.isInteger(time.segmentIndex) && time.segmentIndex >= 1))
+        && (time.progressMs !== null || time.segmentIndex !== null));
+    };
+    if (Array.isArray(value)) return validTime(value);
+    if (!value || typeof value !== 'object'
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))) return false;
+    const hasLegacyAnchor = value.workId !== undefined || value.itemId !== undefined
+      || value.partId !== undefined || value.sufficiency !== undefined;
+    const hasCompactDelta = value.parentId !== undefined || value.parent !== undefined || value.time !== undefined;
+    if (!hasLegacyAnchor && !hasCompactDelta) return false;
+    if (value.workId !== undefined && !/^w\d{1,3}$/.test(String(value.workId || ''))) return false;
+    if (value.itemId !== undefined && !/^i\d{1,3}$/.test(String(value.itemId || ''))) return false;
+    if (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || ''))) return false;
+    if (value.sufficiency !== undefined && !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
     if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
-    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
-      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
-      || !['reply', 'quote', 'root'].includes(value.parent.relation)
-      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
-    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
-      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
-      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
-      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
-    return true;
+    if (value.parent !== undefined) {
+      const parent = value.parent;
+      const parentOk = Array.isArray(parent)
+        ? parent.length === 2 && ['reply', 'quote', 'root'].includes(parent[0])
+          && typeof parent[1] === 'string' && parent[1].length <= 800
+        : !!(parent && typeof parent === 'object' && !Array.isArray(parent)
+          && Object.keys(parent).every((key) => ['relation', 'text'].includes(key))
+          && ['reply', 'quote', 'root'].includes(parent.relation)
+          && typeof parent.text === 'string' && parent.text.length <= 800);
+      if (!parentOk) return false;
+    }
+    return value.time === undefined || validTime(value.time);
   }
   function isAllowedAIContextCatalog(value) {
     if (typeof value === 'undefined') return true;
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => key !== 'works')
+      || Object.keys(value).some((key) => !['works', 'defaults'].includes(key))
       || !Array.isArray(value.works) || value.works.length > 80) return false;
-    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+    const worksOk = value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
       && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
       && /^w\d{1,3}$/.test(String(work.id || ''))
       && typeof work.title === 'string' && work.title.length <= 240
@@ -233,6 +252,14 @@ const isolatedBridge = String.raw`(() => {
       && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
       && ['reliable', 'partial', 'missing'].includes(work.confidence)
       && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+    if (!worksOk || value.defaults === undefined) return worksOk;
+    const defaults = value.defaults;
+    return defaults && typeof defaults === 'object' && !Array.isArray(defaults)
+      && Object.keys(defaults).every((key) => ['workId', 'partId', 'sufficiency'].includes(key))
+      && /^w\d{1,3}$/.test(String(defaults.workId || ''))
+      && (defaults.partId === undefined || /^p\d{1,3}$/.test(String(defaults.partId || '')))
+      && ['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(defaults.sufficiency)
+      && value.works.some((work) => work.id === defaults.workId);
   }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
@@ -250,7 +277,7 @@ const isolatedBridge = String.raw`(() => {
     if (!input || typeof input !== 'object' || Array.isArray(input)
       || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
-      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1 && input.contextSchemaVersion !== 2)
       || !Array.isArray(input.rules) || input.rules.length > 32
       || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
         || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)
@@ -499,29 +526,48 @@ const serviceWorker = String.raw`(() => {
   }
   function isAllowedAIContext(value) {
     if (typeof value === 'undefined') return true;
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
-      || !/^w\d{1,3}$/.test(String(value.workId || ''))
-      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
-      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
-      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    const validTime = (time) => {
+      if (Array.isArray(time)) return time.length === 2
+        && time.some((part) => part !== null)
+        && (time[0] === null || (Number.isFinite(time[0]) && time[0] >= 0))
+        && (time[1] === null || (Number.isInteger(time[1]) && time[1] >= 1));
+      return !!(time && typeof time === 'object' && !Array.isArray(time)
+        && Object.keys(time).every((key) => ['progressMs', 'segmentIndex'].includes(key))
+        && (time.progressMs === null || (Number.isFinite(time.progressMs) && time.progressMs >= 0))
+        && (time.segmentIndex === null || (Number.isInteger(time.segmentIndex) && time.segmentIndex >= 1))
+        && (time.progressMs !== null || time.segmentIndex !== null));
+    };
+    if (Array.isArray(value)) return validTime(value);
+    if (!value || typeof value !== 'object'
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))) return false;
+    const hasLegacyAnchor = value.workId !== undefined || value.itemId !== undefined
+      || value.partId !== undefined || value.sufficiency !== undefined;
+    const hasCompactDelta = value.parentId !== undefined || value.parent !== undefined || value.time !== undefined;
+    if (!hasLegacyAnchor && !hasCompactDelta) return false;
+    if (value.workId !== undefined && !/^w\d{1,3}$/.test(String(value.workId || ''))) return false;
+    if (value.itemId !== undefined && !/^i\d{1,3}$/.test(String(value.itemId || ''))) return false;
+    if (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || ''))) return false;
+    if (value.sufficiency !== undefined && !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
     if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
-    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
-      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
-      || !['reply', 'quote', 'root'].includes(value.parent.relation)
-      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
-    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
-      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
-      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
-      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
-    return true;
+    if (value.parent !== undefined) {
+      const parent = value.parent;
+      const parentOk = Array.isArray(parent)
+        ? parent.length === 2 && ['reply', 'quote', 'root'].includes(parent[0])
+          && typeof parent[1] === 'string' && parent[1].length <= 800
+        : !!(parent && typeof parent === 'object' && !Array.isArray(parent)
+          && Object.keys(parent).every((key) => ['relation', 'text'].includes(key))
+          && ['reply', 'quote', 'root'].includes(parent.relation)
+          && typeof parent.text === 'string' && parent.text.length <= 800);
+      if (!parentOk) return false;
+    }
+    return value.time === undefined || validTime(value.time);
   }
   function isAllowedAIContextCatalog(value) {
     if (typeof value === 'undefined') return true;
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => key !== 'works')
+      || Object.keys(value).some((key) => !['works', 'defaults'].includes(key))
       || !Array.isArray(value.works) || value.works.length > 80) return false;
-    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+    const worksOk = value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
       && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
       && /^w\d{1,3}$/.test(String(work.id || ''))
       && typeof work.title === 'string' && work.title.length <= 240
@@ -530,6 +576,14 @@ const serviceWorker = String.raw`(() => {
       && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
       && ['reliable', 'partial', 'missing'].includes(work.confidence)
       && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+    if (!worksOk || value.defaults === undefined) return worksOk;
+    const defaults = value.defaults;
+    return defaults && typeof defaults === 'object' && !Array.isArray(defaults)
+      && Object.keys(defaults).every((key) => ['workId', 'partId', 'sufficiency'].includes(key))
+      && /^w\d{1,3}$/.test(String(defaults.workId || ''))
+      && (defaults.partId === undefined || /^p\d{1,3}$/.test(String(defaults.partId || '')))
+      && ['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(defaults.sufficiency)
+      && value.works.some((work) => work.id === defaults.workId);
   }
   function allowedBody(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
@@ -547,7 +601,7 @@ const serviceWorker = String.raw`(() => {
     if (!input || typeof input !== 'object' || Array.isArray(input)
       || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
-      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1 && input.contextSchemaVersion !== 2)
       || !Array.isArray(input.rules) || input.rules.length > 32
       || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
         || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)
@@ -799,29 +853,48 @@ const mainBridge = String.raw`(() => {
   }
   function isAllowedAIContext(value) {
     if (typeof value === 'undefined') return true;
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
-      || !/^w\d{1,3}$/.test(String(value.workId || ''))
-      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
-      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
-      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    const validTime = (time) => {
+      if (Array.isArray(time)) return time.length === 2
+        && time.some((part) => part !== null)
+        && (time[0] === null || (Number.isFinite(time[0]) && time[0] >= 0))
+        && (time[1] === null || (Number.isInteger(time[1]) && time[1] >= 1));
+      return !!(time && typeof time === 'object' && !Array.isArray(time)
+        && Object.keys(time).every((key) => ['progressMs', 'segmentIndex'].includes(key))
+        && (time.progressMs === null || (Number.isFinite(time.progressMs) && time.progressMs >= 0))
+        && (time.segmentIndex === null || (Number.isInteger(time.segmentIndex) && time.segmentIndex >= 1))
+        && (time.progressMs !== null || time.segmentIndex !== null));
+    };
+    if (Array.isArray(value)) return validTime(value);
+    if (!value || typeof value !== 'object'
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))) return false;
+    const hasLegacyAnchor = value.workId !== undefined || value.itemId !== undefined
+      || value.partId !== undefined || value.sufficiency !== undefined;
+    const hasCompactDelta = value.parentId !== undefined || value.parent !== undefined || value.time !== undefined;
+    if (!hasLegacyAnchor && !hasCompactDelta) return false;
+    if (value.workId !== undefined && !/^w\d{1,3}$/.test(String(value.workId || ''))) return false;
+    if (value.itemId !== undefined && !/^i\d{1,3}$/.test(String(value.itemId || ''))) return false;
+    if (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || ''))) return false;
+    if (value.sufficiency !== undefined && !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
     if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
-    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
-      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
-      || !['reply', 'quote', 'root'].includes(value.parent.relation)
-      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
-    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
-      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
-      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
-      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
-    return true;
+    if (value.parent !== undefined) {
+      const parent = value.parent;
+      const parentOk = Array.isArray(parent)
+        ? parent.length === 2 && ['reply', 'quote', 'root'].includes(parent[0])
+          && typeof parent[1] === 'string' && parent[1].length <= 800
+        : !!(parent && typeof parent === 'object' && !Array.isArray(parent)
+          && Object.keys(parent).every((key) => ['relation', 'text'].includes(key))
+          && ['reply', 'quote', 'root'].includes(parent.relation)
+          && typeof parent.text === 'string' && parent.text.length <= 800);
+      if (!parentOk) return false;
+    }
+    return value.time === undefined || validTime(value.time);
   }
   function isAllowedAIContextCatalog(value) {
     if (typeof value === 'undefined') return true;
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => key !== 'works')
+      || Object.keys(value).some((key) => !['works', 'defaults'].includes(key))
       || !Array.isArray(value.works) || value.works.length > 80) return false;
-    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+    const worksOk = value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
       && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
       && /^w\d{1,3}$/.test(String(work.id || ''))
       && typeof work.title === 'string' && work.title.length <= 240
@@ -830,6 +903,14 @@ const mainBridge = String.raw`(() => {
       && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
       && ['reliable', 'partial', 'missing'].includes(work.confidence)
       && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+    if (!worksOk || value.defaults === undefined) return worksOk;
+    const defaults = value.defaults;
+    return defaults && typeof defaults === 'object' && !Array.isArray(defaults)
+      && Object.keys(defaults).every((key) => ['workId', 'partId', 'sufficiency'].includes(key))
+      && /^w\d{1,3}$/.test(String(defaults.workId || ''))
+      && (defaults.partId === undefined || /^p\d{1,3}$/.test(String(defaults.partId || '')))
+      && ['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(defaults.sufficiency)
+      && value.works.some((work) => work.id === defaults.workId);
   }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > 256 * 1024) return false;
@@ -847,7 +928,7 @@ const mainBridge = String.raw`(() => {
     if (!input || typeof input !== 'object' || Array.isArray(input)
       || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
-      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1 && input.contextSchemaVersion !== 2)
       || !Array.isArray(input.rules) || input.rules.length > 32
       || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
         || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)

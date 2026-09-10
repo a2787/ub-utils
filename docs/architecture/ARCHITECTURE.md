@@ -156,7 +156,7 @@ AI 结果还必须把 `claimType`、`verificationStatus`、`verificationMethod` 
 
 v0.55.0 起，B站视频详情页的 AI 记录可带 `WorkContext`/`LocalContext`：作品标题、简介和分 P；评论只在真实 DOM/API 回复关系成立时带一层 parent；弹幕只在已观察的 seg.so 消息中带 progress/segment。推荐卡、动态卡和其他平台不能复用当前视频语境；缺少独立作品来源时保持既有 partial/只读行为。
 
-语境不是屏蔽规则。AI block 仍必须命中本次 `ruleCatalog` 中的规则，`contextSufficiency=insufficient`、未知 `matchedRuleIds`、旧响应缺少语境字段和事实未核查路径均延期；客户端只接受输入中存在的规则 ID。请求按批次建立 `contextCatalog.works`，作品元数据只发送一次，item 仅发送 ordinal `workId/itemId/partId/parentId`、充分性、父评论和时间字段；开发扩展三层边界与 loopback 请求均拒绝平台 UID、弹幕 hash、URL、Cookie 和原始平台对象。
+语境不是屏蔽规则。AI block 仍必须命中本次 `ruleCatalog` 中的规则，`contextSufficiency=insufficient`、未知 `matchedRuleIds`、旧响应缺少语境字段和事实未核查路径均延期；客户端只接受输入中存在的规则 ID。v0.56.0 的 `contextSchemaVersion=2` 在同一作品、分 P 的批次建立 `contextCatalog.defaults`，无差异条目省略 context，弹幕时间使用 `[progressMs,segmentIndex]`，父评论使用 `[relation,text]`；作用域不一致时保留显式字段形态。开发扩展三层边界与 loopback 请求均拒绝平台 UID、弹幕 hash、URL、Cookie 和原始平台对象。
 
 审核确认默认写入内存 `ScopedBlocks`，作用域为 `work/part/item`，立即参与扫描器、B站弹幕过滤和后续同实例重绘；撤销只移除本次 token，SPA 换路由或 runtime dispose 清空整个当前作品作用域。用户明确选择「全局作者」且存在可靠身份时，才沿用 `Store.addIdentityGroups` 和既有 UID 增强链。反馈事件保存脱敏作用域指纹，旧的无语境事件和其他作品事件不作为当前候选的负反馈；作用域确认不改变全局名单，也不改变关键词/手动名单优先级。
 

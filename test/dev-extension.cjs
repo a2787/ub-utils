@@ -246,10 +246,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && aiExamples.every((example) => Object.keys(example).sort().join(',')
         === 'contentType,kind,label,note,reasonCode,role,text')
       && aiExamples.some((example) => example.contentType === 'comment');
-    const aiContextCatalogOk = !!(aiInput && aiInput.contextSchemaVersion === 1
+    const aiContextCatalogOk = !!(aiInput && aiInput.contextSchemaVersion === 2
       && aiInput.contextCatalog && Array.isArray(aiInput.contextCatalog.works)
       && aiInput.contextCatalog.works.every((work) => /^w\d+$/.test(work.id || '')
-        && typeof work.title === 'string' && !/space\.bilibili|bili:(?:uid|dmhash)/i.test(JSON.stringify(work))));
+        && typeof work.title === 'string' && !/space\.bilibili|bili:(?:uid|dmhash)/i.test(JSON.stringify(work)))
+      && (!aiInput.contextCatalog.defaults || (typeof aiInput.contextCatalog.defaults.workId === 'string'
+        && typeof aiInput.contextCatalog.defaults.sufficiency === 'string')));
     const aiUnsafeMatches = JSON.stringify(aiInput || {}).match(/bili:uid|bili:dmhash|space\.bilibili|["'](?:uid|mid|hash|keys)["']/gi) || [];
     const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules)
       && aiItems.length === 2

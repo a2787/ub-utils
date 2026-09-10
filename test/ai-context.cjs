@@ -40,7 +40,7 @@ window.addEventListener('unhandledrejection', (event) => window.__contextErrors.
 
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <div class="video-info-container"><h1 class="video-title">人工合成主题：实验室里的安全吐槽</h1><div class="video-desc-container"><div class="basic-desc-info">讨论实验室安全与同学之间的善意调侃。</div></div></div>
-<a class="up-name" href="https://space.bilibili.com/880001">人工合成作者</a>
+<a class="up-name" href="https://space.bilibili.com/8001">人工合成作者</a>
 <bili-comments id="comments"></bili-comments>
 <script>
   const comments = document.querySelector('#comments');
@@ -51,13 +51,13 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   const main = document.createElement('bili-comment-renderer');
   main.__data = { rpid: '10001', mid: '880002', member: { mid: '880002', uname: '根评论作者' } };
   const mainShadow = main.attachShadow({ mode: 'open' });
-  const mainLink = document.createElement('a'); mainLink.className = 'user-name'; mainLink.href = 'https://space.bilibili.com/880002'; mainLink.textContent = '根评论作者';
+  const mainLink = document.createElement('a'); mainLink.className = 'user-name'; mainLink.href = 'https://space.bilibili.com/8002'; mainLink.textContent = '根评论作者';
   const mainText = document.createElement('span'); mainText.className = 'text'; mainText.textContent = '这个实验也太硬核了，笑死';
   mainShadow.append(mainLink, mainText);
   const reply = document.createElement('bili-comment-reply-renderer');
   reply.__data = { rpid: '10002', root: '10001', mid: '880003', member: { mid: '880003', uname: '回复作者' } };
   const replyShadow = reply.attachShadow({ mode: 'open' });
-  const replyLink = document.createElement('a'); replyLink.className = 'user-name'; replyLink.href = 'https://space.bilibili.com/880003'; replyLink.textContent = '回复作者';
+  const replyLink = document.createElement('a'); replyLink.className = 'user-name'; replyLink.href = 'https://space.bilibili.com/8003'; replyLink.textContent = '回复作者';
   const replyText = document.createElement('span'); replyText.className = 'text'; replyText.textContent = '你说的硬核是夸奖还是在讽刺？';
   replyShadow.append(replyLink, replyText);
   threadShadow.append(main, reply);
@@ -176,6 +176,10 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       const baselineChars = systemChars + baselineUserChars;
       const contextChars = actualUserChars - baselineUserChars;
       budget = { baselineChars, contextChars, overheadRatio: baselineChars ? Number((contextChars / baselineChars).toFixed(3)) : 0 };
+      var compactWire = input.contextSchemaVersion === 2
+        && input.contextCatalog && input.contextCatalog.defaults
+        && Object.prototype.hasOwnProperty.call(input.contextCatalog.defaults, 'workId')
+        && items.some((item) => !Object.prototype.hasOwnProperty.call(item, 'context') || Array.isArray(item.context));
     } catch (error) {}
     return {
       review: !!review,
@@ -187,6 +191,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       body: payload,
       privateOutboundMatches: payloadText.match(/space\.bilibili|bili:uid|bili:dmhash|88000/g) || [],
       budget,
+      compactWire: typeof compactWire === 'boolean' ? compactWire : false,
     };
   });
   const payloadText = JSON.stringify(aiCommit.body || {});
@@ -198,10 +203,11 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     persons: aiCommit.persons === 0,
     context: /context/.test(payloadText),
     privateFree: !aiCommit.privateOutboundMatches.length,
+    compactWire: aiCommit.compactWire,
   };
   if (Object.values(ctxCommitChecks).every(Boolean)
     && /context/.test(payloadText) && !aiCommit.privateOutboundMatches.length) {
-    report.pass.push('CTX-6 语境候选默认确认到当前作品 ScopedBlocks，不污染全局名单，payload 带脱敏 context；context overhead=' + JSON.stringify(aiCommit.budget));
+    report.pass.push('CTX-6 语境候选默认确认到当前作品 ScopedBlocks，不污染全局名单，payload 使用 v2 紧凑语境；context overhead=' + JSON.stringify(aiCommit.budget));
   } else report.fail.push('CTX-6 语境候选确认/出站边界异常：' + JSON.stringify({ ...aiCommit, checks: ctxCommitChecks }));
   if (aiCommit.budget && aiCommit.budget.overheadRatio <= 0.25) {
     report.pass.push('CTX-9 共享 contextCatalog 后请求级上下文额外字符占比不超过 25%');
