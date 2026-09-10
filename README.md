@@ -138,11 +138,13 @@ node test/maintenance-check.cjs --dedicated-only
 
 后台任务只处理用户已经确认的 B站弹幕目标，页面隐藏时暂停，换路由、换视频、停用或运行时销毁时取消；UID 卡片查询使用有界 TTL/LRU 缓存与失败指数退避，碰撞、失败和上下文失效不猜 UID，继续保留 hash-only。当前版本仍只使用用户配置的 loopback 网关和 B站只读用户卡片请求，不接入公共事实检索或平台官方写入。
 
-### v0.54.0 — 独立 AI 评测与受控事实核查（本地候选）
+### v0.54.0 — 独立 AI 评测与受控事实核查（已发布）
 
 事实核查默认关闭，不改变已有 AI 候选链。设置中的 `shadow` 只在本机记录聚合状态，不改变候选；`canary` 只对事实性主张使用本机 allowlist broker 返回的受限证据，仍进入原有人工审核，不能自动屏蔽、扩大 UID 关联或写入平台。没有本机来源、来源冲突/过期/不可访问或证据不足时，统一保守延后。
 
 事实核查只向 `http://127.0.0.1:4001/v1/fact-check` 发送脱敏后的 ordinal claim，不发送 UID、`mid_hash`、昵称、页面 URL、Cookie、Key 或整页正文；插件不会自行访问公共搜索。broker 的来源 allowlist 默认为空，配置说明见 [`gateway/README.md`](gateway/README.md)。24 例人工合成评测集和 mock-oracle runner 只用于验证 schema、指标引擎和安全门禁，不等同于真实模型准确率。
+
+当前发布条目：[GitHub Release v0.54.0](https://github.com/a2787/ub-utils/releases/tag/v0.54.0)。
 
 ### v0.53.0 — 事实核查与屏蔽决策分离（已发布）
 

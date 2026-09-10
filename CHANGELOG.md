@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.54.0 - 独立 AI 评测与受控事实核查 - 2026-09-10（本地候选）
+## v0.54.0 - 独立 AI 评测与受控事实核查 - 2026-09-10（已发布）
 
 - 增加 24 条人工合成/脱敏独立评测集、schema/隐私校验和 mock-oracle 指标 runner；报告不把 mock 结果冒充真实模型精度。
 - 增加 loopback-only 本机事实 broker 和显式来源 allowlist；无来源、冲突、过期、不可访问或证据不足统一保守延后，不把事实证据变成 UID 或屏蔽键。

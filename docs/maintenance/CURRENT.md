@@ -1,19 +1,19 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-10
-状态来源：v0.53.1 是当前公开版本，v0.54.0 为本地候选；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.54.0 已 push/tag/Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.54.0`（本地候选，未发布）
+- 当前 userscript：`0.54.0`（已发布）
 - 构建：`0.54.0-ai-eval-fact-gates`
-- 当前公开版本/提交：`0.53.1` / `e372bea97bf70ebbc873d60b4d060ae477e0307c`
-- 最近验证的源码快照：`43d2bd16a4a4b7d0bb066ec90ae3783e17dae57a`
+- 当前公开版本/功能提交：`0.54.0` / `61bb394`
+- 最近验证的源码快照：`61bb3944398890f49314829374d22f6b0e528960`
 - 当前候选源码 SHA-256：`56e5d9f1a8400e311426a8900708ad6e34fea5b7ffe631025f95425cf446251f`
-- 发布状态：v0.54.0 尚未 push/tag/Release；v0.53.1 仍为公开版本，无登记部署链，未执行平台写入。
-- 当前公开 tag/Release：[v0.53.1](https://github.com/a2787/ub-utils/releases/tag/v0.53.1)。
+- 发布状态：v0.54.0 已 push/tag/Release；无登记部署链，未执行平台写入。
+- 当前公开 tag/Release：[v0.54.0](https://github.com/a2787/ub-utils/releases/tag/v0.54.0)。
 
-## 2026-09-10 独立 AI 评测与受控事实核查（OB-AI-013，候选）
+## 2026-09-10 独立 AI 评测与受控事实核查（OB-AI-013，已发布）
 
 - 范围/文件：人工合成 24 例独立评测集与指标 runner；loopback-only、本机 allowlist 事实 broker；userscript `off/shadow/canary` 两阶段核查、脱敏 ordinal claim、事实缓存和状态展示；版本构建为 `0.54.0-ai-eval-fact-gates`。
 - `structure regression`：评测集哈希 `4a7e2cc9403693c2ae3116ecc7f0ec985f65a47700c9a38dfb3a63527cfb84bc`；mock-oracle 门禁通过但不代表模型精度；broker RETRIEVAL-1..5、AI FACT-1..4、持久扩展桥 10/10、现有 AI screening 23 项及内容/提示词/批次回归通过，页面/控制台错误为 0。事实核查不产生 UID、不接收 Cookie/Key，不自动写名单。

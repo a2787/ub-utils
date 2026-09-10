@@ -170,15 +170,15 @@ proposed → approved → in_progress → verified
 
 - status: in_progress
 - priority: P1
-- scope: 评测、门禁、shadow/canary、回滚。
-- non-goals: 不接公共搜索/自动屏蔽；不放宽身份/写入/凭据。
+- scope: 评测、门禁、灰度、回滚。
+- non-goals: 不接公共搜索/自动屏蔽；不放宽身份边界。
 - dependencies: OB-AI-011, OB-AI-012
 - acceptance: required
   - [x] 协议、门槛、allowlist、rollout 固化。
   - [x] 离线评测、broker、shadow/canary 回归通过。
-  - [ ] 真实来源/线上精度观察；无来源保持 blocked。
-- evidence: `structure regression`：24例评测、broker、AI回归；`blocked`：真实来源/线上精度未配置。见[方案](plans/2026-09-10-ob-ai-013.md)。
-- next: 发布0.54.0。
+  - [ ] 真实来源/精度观察；无来源 blocked。
+- evidence: `structure regression`：24例评测/broker/AI；`blocked`：真实来源/精度未配置。见[方案](plans/2026-09-10-ob-ai-013.md)。
+- next: 等真实来源/模型条件，完成精度/成本门禁。
 - updated: 2026-09-10
 - supersedes: none
 
