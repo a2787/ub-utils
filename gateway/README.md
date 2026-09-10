@@ -17,6 +17,32 @@ http://127.0.0.1:4000/v1/chat/completions
 provider 的 URL、模型和 API Key 只保存在本机 `gateway\runtime\`，不会写入插件源码、
 Git 提交或浏览器页面。`runtime` 目录由 Git 忽略；不要把其中的文件复制到公开位置。
 
+## 可选的事实核查 broker
+
+v0.54.0 的事实核查是独立的 loopback-only 只读 sidecar，不是 LiteLLM 模型网关，也不是搜索引擎。
+插件默认关闭；只有在设置里选择 `shadow` 或 `canary` 后，才会向下面的本机地址发送脱敏后的事实 claim：
+
+```text
+http://127.0.0.1:4001/v1/fact-check
+```
+
+broker 默认读取 `gateway\runtime\fact-sources.local.json`。该文件处于 Git 忽略目录，默认不存在，
+因此没有来源时会返回 `not_checked`。需要配置时，复制 [`fact-sources.example.json`](fact-sources.example.json)
+到上述本机路径，再只填入自己允许访问的来源。来源 endpoint 必须是 HTTPS（本机测试地址除外），
+不能带账号、密码、query 或 hash；每个来源还要声明 `official`、`licensed` 或 `local` 等级和 JSON 字段映射。
+不要把 Cookie、Token、API Key 或真实页面抓取包放入来源配置。
+
+手动启动和检查：
+
+```powershell
+node .\gateway\scripts\fact-retrieval.cjs --port=4001 --sources=gateway\runtime\fact-sources.local.json
+Invoke-RestMethod http://127.0.0.1:4001/health
+```
+
+服务只绑定 `127.0.0.1`，请求最多 8 条 ordinal claim；插件不把 UID、hash、页面 URL 或整页正文发给
+broker，broker 也只返回有限来源元数据。没有结果、来源冲突、来源过期、读取失败或摘要不足时，
+插件仍按未核查处理。该 sidecar 没有登记为系统服务，停止它不会影响普通 AI 网关或本地名单。
+
 ## 第一次配置
 
 本机需要 Docker Desktop，并且 Docker Desktop 的 Linux 引擎可以正常运行。执行：

@@ -119,11 +119,12 @@ BFCache 的 persisted pagehide 只暂停，普通 pagehide 调用一次幂等 di
 经过边界校验。页面主世界不应被视为可信的特权调用者；若无法维持安全隔离，桥接默认降级为不可用。
 
 开发桥的当前协议使用构建期随机 HMAC-SHA256 密钥、固定来源和单调序列；GM 能力是包住 userscript 的词法变量，
-不挂到 `window`。存储只接受主名单、备份、日志索引、日期分片和版本化 AI 提示词/反馈 key；网络只接受脚本更新 GET、B站用户卡片 GET
-和用户明确配置的 loopback AI 网关 POST；AI 请求体不含身份键，也不由开发桥保存 provider 凭据。持久 MV3 开发扩展
+不挂到 `window`。存储只接受主名单、备份、日志索引、日期分片和版本化 AI 提示词/反馈 key；网络只接受脚本更新 GET、B站用户卡片 GET、
+用户明确配置的 loopback AI 网关 POST，以及默认关闭的受限事实 broker POST；AI/事实请求体不含身份键，也不由开发桥保存 provider 凭据。持久 MV3 开发扩展
 把窄 AI POST 转交给扩展 service worker 发起，避免内容脚本继承平台页面的跨源/混合内容限制；service worker
-再次校验 loopback、JSON 结构、反馈样例的 `role/label/kind/contentType/text/reasonCode/note` 字段、`kind/contentType/title/text` 内容字段、单请求样本上限和响应大小；三层桥接校验必须保持同一字段契约，桥接仍拒绝 UID、mid、hash
-等身份字段。多 provider、API Key、重试、配额和 cooldown 属于外部本地
+再次校验 loopback、AI JSON 结构、可选 `verificationSources` 的来源元数据、事实请求的 `schemaVersion/policyVersion/claims` 和 ordinal claim id，
+以及反馈样例的 `role/label/kind/contentType/text/reasonCode/note` 字段、`kind/contentType/title/text` 内容字段、单请求样本上限和响应大小；三层桥接校验必须保持同一字段契约，桥接仍拒绝 UID、mid、hash
+等身份字段。多 provider、API Key、重试、配额、cooldown 和事实来源 allowlist 属于外部本地
 网关，不是 userscript 的职责。
 ready 最多尝试 8 次，失败后释放 userscript 启动栅栏并标记 degraded。请求被白名单拒绝时保留受控错误码，页面只在桥状态 degraded 时提示刷新扩展；网关 HTTP/格式/超时错误不伪装成桥未就绪。
 
@@ -148,8 +149,8 @@ ready 最多尝试 8 次，失败后释放 userscript 启动栅栏并标记 degr
 AI 结果还必须把 `claimType`、`verificationStatus`、`verificationMethod` 与 `ruleMatched`
 分开返回。缺少引用、没有检索结果、模型不知道或语境不足只能是 `not_checked`/
 `insufficient_context`，不等于事实为假；客户端会丢弃仅凭这些状态或“未经证实/无可核实依据”
-生成的事实性屏蔽候选，并在状态中累计延后数。当前网关没有检索工具，userscript 不把模型内部
-知识冒充外部来源；只有非事实性规则违规，或带正面矛盾依据的事实性结果，才进入人工审核。
+生成的事实性屏蔽候选，并在状态中累计延后数。v0.54.0 的事实核查默认关闭；开启后只对模型标记的事实性主张，先向
+`127.0.0.1:4001/v1/fact-check` 发送脱敏 ordinal claim，再把受限来源摘要放入第二次 AI 请求。`shadow` 只观测，`canary` 才允许有来源的事实结果进入既有人工审核；没有来源、冲突、过期或失败仍延期。userscript 不把模型内部知识冒充外部来源，事实证据不直接生成屏蔽键、不增加 UID 可信度；只有非事实性规则违规，或带正面矛盾依据的事实性结果，才进入人工审核。
 
 ### B站 AI 弹幕确认后的后台增强
 

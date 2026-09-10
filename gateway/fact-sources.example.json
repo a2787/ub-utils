@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "official-example",
+      "endpoint": "https://example.invalid/fact-check",
+      "queryParam": "q",
+      "sourceTier": "official",
+      "parser": "json",
+      "resultPath": "results",
+      "fields": {
+        "title": "title",
+        "snippet": "snippet",
+        "publishedAt": "publishedAt",
+        "verdict": "verdict"
+      }
+    }
+  ]
+}

@@ -164,6 +164,42 @@ const isolatedBridge = String.raw`(() => {
       || out.accept.toLowerCase() !== 'application/json') return null;
     return out;
   }
+  function isAllowedFactText(value) {
+    const text = String(value || '');
+    return text.length > 0 && text.length <= 320
+      && !/(?:https?:\/\/|www\.|space\.bilibili|cookie|token|api[\s_-]?key|sec_uid|mid_hash|bili:(?:uid|dmhash))/i.test(text)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(text);
+  }
+  function isAllowedFactRequestData(data) {
+    if (typeof data !== 'string' || data.length > 32 * 1024) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['schemaVersion', 'policyVersion', 'claims'].includes(key))
+      || body.schemaVersion !== 1 || body.policyVersion !== 'fact-local-allowlist-v1'
+      || !Array.isArray(body.claims) || body.claims.length > 8) return false;
+    return body.claims.every((claim) => claim && typeof claim === 'object' && !Array.isArray(claim)
+      && Object.keys(claim).every((key) => ['id', 'text', 'language'].includes(key))
+      && /^c\d{1,2}$/.test(String(claim.id || ''))
+      && claim.language === 'zh-CN' && isAllowedFactText(claim.text));
+  }
+  function isAllowedVerificationSources(value) {
+    if (typeof value === 'undefined') return true;
+    if (!Array.isArray(value) || value.length > 8) return false;
+    const statuses = new Set(['supported', 'contradicted', 'unknown', 'not_checked', 'insufficient_context']);
+    const methods = new Set(['none', 'local_allowlist', 'external_source']);
+    const safe = (item, max) => typeof item === 'string' && item.length <= max
+      && !/(?:https?:\/\/|www\.|cookie|set-cookie|authorization|bearer|api[\s_-]?key|token|space\.bilibili|mid_hash|bili:(?:uid|dmhash))/i.test(item)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(item);
+    return value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.keys(item).every((key) => ['id', 'status', 'method', 'sources'].includes(key))
+      && safe(item.id, 80) && statuses.has(item.status) && methods.has(item.method)
+      && Array.isArray(item.sources) && item.sources.length <= 3
+      && item.sources.every((source) => source && typeof source === 'object' && !Array.isArray(source)
+        && Object.keys(source).every((key) => ['sourceId', 'sourceTier', 'title', 'snippet', 'publishedAt', 'verdict'].includes(key))
+        && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
+        && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
+  }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
     let body;
@@ -178,7 +214,7 @@ const isolatedBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
@@ -206,6 +242,7 @@ const isolatedBridge = String.raw`(() => {
     return profileTextListsOk && examplesOk
       && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
         && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
@@ -225,6 +262,9 @@ const isolatedBridge = String.raw`(() => {
     const headers = normalizeAIHeaders(message && message.headers);
     if (method === 'POST' && aiUrl && headers && isAllowedAIRequestData(message && message.data)) {
       return { url: aiUrl, method, headers, body: message.data, timeout: MAX_AI_REQUEST_TIMEOUT_MS };
+    }
+    if (method === 'POST' && aiUrl && headers && isAllowedFactRequestData(message && message.data)) {
+      return { url: aiUrl, method, headers, body: message.data, timeout: 10000 };
     }
     return null;
   }
@@ -379,6 +419,42 @@ const serviceWorker = String.raw`(() => {
     return out;
   }
 
+  function isAllowedFactText(value) {
+    const text = String(value || '');
+    return text.length > 0 && text.length <= 320
+      && !/(?:https?:\/\/|www\.|space\.bilibili|cookie|token|api[\s_-]?key|sec_uid|mid_hash|bili:(?:uid|dmhash))/i.test(text)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(text);
+  }
+  function isAllowedFactRequestData(data) {
+    if (typeof data !== 'string' || data.length > 32 * 1024) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['schemaVersion', 'policyVersion', 'claims'].includes(key))
+      || body.schemaVersion !== 1 || body.policyVersion !== 'fact-local-allowlist-v1'
+      || !Array.isArray(body.claims) || body.claims.length > 8) return false;
+    return body.claims.every((claim) => claim && typeof claim === 'object' && !Array.isArray(claim)
+      && Object.keys(claim).every((key) => ['id', 'text', 'language'].includes(key))
+      && /^c\d{1,2}$/.test(String(claim.id || ''))
+      && claim.language === 'zh-CN' && isAllowedFactText(claim.text));
+  }
+  function isAllowedVerificationSources(value) {
+    if (typeof value === 'undefined') return true;
+    if (!Array.isArray(value) || value.length > 8) return false;
+    const statuses = new Set(['supported', 'contradicted', 'unknown', 'not_checked', 'insufficient_context']);
+    const methods = new Set(['none', 'local_allowlist', 'external_source']);
+    const safe = (item, max) => typeof item === 'string' && item.length <= max
+      && !/(?:https?:\/\/|www\.|cookie|set-cookie|authorization|bearer|api[\s_-]?key|token|space\.bilibili|mid_hash|bili:(?:uid|dmhash))/i.test(item)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(item);
+    return value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.keys(item).every((key) => ['id', 'status', 'method', 'sources'].includes(key))
+      && safe(item.id, 80) && statuses.has(item.status) && methods.has(item.method)
+      && Array.isArray(item.sources) && item.sources.length <= 3
+      && item.sources.every((source) => source && typeof source === 'object' && !Array.isArray(source)
+        && Object.keys(source).every((key) => ['sourceId', 'sourceTier', 'title', 'snippet', 'publishedAt', 'verdict'].includes(key))
+        && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
+        && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
+  }
   function allowedBody(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
     let body;
@@ -393,7 +469,7 @@ const serviceWorker = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
@@ -421,6 +497,7 @@ const serviceWorker = String.raw`(() => {
     return profileTextListsOk && examplesOk
       && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
         && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
@@ -446,10 +523,13 @@ const serviceWorker = String.raw`(() => {
     const loopbackUrl = method === 'POST' ? normalizeLoopbackUrl(message.url) : '';
     const loopbackHeaders = method === 'POST' ? normalizeHeaders(message.headers) : null;
     const loopbackBodyOk = method === 'POST' && loopbackUrl && loopbackHeaders && allowedBody(message.body);
+    const factBodyOk = method === 'POST' && loopbackUrl && loopbackHeaders && isAllowedFactRequestData(message.body);
     const request = biliUrl && biliHeaders
       ? { url: biliUrl, method: 'GET', headers: {}, body: undefined, timeout: 15000 }
       : loopbackBodyOk
         ? { url: loopbackUrl, method: 'POST', headers: loopbackHeaders, body: message.body, timeout: MAX_AI_REQUEST_TIMEOUT_MS }
+        : factBodyOk
+          ? { url: loopbackUrl, method: 'POST', headers: loopbackHeaders, body: message.body, timeout: 10000 }
         : null;
     if (!request) {
       sendResponse({ type: 'xhr-response', id, ok: false, error: 'request-not-allowed' });
@@ -597,6 +677,42 @@ const mainBridge = String.raw`(() => {
       || out.accept.toLowerCase() !== 'application/json') return null;
     return out;
   }
+  function isAllowedFactText(value) {
+    const text = String(value || '');
+    return text.length > 0 && text.length <= 320
+      && !/(?:https?:\/\/|www\.|space\.bilibili|cookie|token|api[\s_-]?key|sec_uid|mid_hash|bili:(?:uid|dmhash))/i.test(text)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(text);
+  }
+  function isAllowedFactRequestData(data) {
+    if (typeof data !== 'string' || data.length > 32 * 1024) return false;
+    let body;
+    try { body = JSON.parse(data); } catch (error) { return false; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['schemaVersion', 'policyVersion', 'claims'].includes(key))
+      || body.schemaVersion !== 1 || body.policyVersion !== 'fact-local-allowlist-v1'
+      || !Array.isArray(body.claims) || body.claims.length > 8) return false;
+    return body.claims.every((claim) => claim && typeof claim === 'object' && !Array.isArray(claim)
+      && Object.keys(claim).every((key) => ['id', 'text', 'language'].includes(key))
+      && /^c\d{1,2}$/.test(String(claim.id || ''))
+      && claim.language === 'zh-CN' && isAllowedFactText(claim.text));
+  }
+  function isAllowedVerificationSources(value) {
+    if (typeof value === 'undefined') return true;
+    if (!Array.isArray(value) || value.length > 8) return false;
+    const statuses = new Set(['supported', 'contradicted', 'unknown', 'not_checked', 'insufficient_context']);
+    const methods = new Set(['none', 'local_allowlist', 'external_source']);
+    const safe = (item, max) => typeof item === 'string' && item.length <= max
+      && !/(?:https?:\/\/|www\.|cookie|set-cookie|authorization|bearer|api[\s_-]?key|token|space\.bilibili|mid_hash|bili:(?:uid|dmhash))/i.test(item)
+      && !/(?:^|[^\d])\d{8,}(?:$|[^\d])/.test(item);
+    return value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.keys(item).every((key) => ['id', 'status', 'method', 'sources'].includes(key))
+      && safe(item.id, 80) && statuses.has(item.status) && methods.has(item.method)
+      && Array.isArray(item.sources) && item.sources.length <= 3
+      && item.sources.every((source) => source && typeof source === 'object' && !Array.isArray(source)
+        && Object.keys(source).every((key) => ['sourceId', 'sourceTier', 'title', 'snippet', 'publishedAt', 'verdict'].includes(key))
+        && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
+        && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
+  }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > 256 * 1024) return false;
     let body;
@@ -611,7 +727,7 @@ const mainBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
       || !Array.isArray(input.rules) || input.rules.length > 32
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
@@ -639,6 +755,7 @@ const mainBridge = String.raw`(() => {
     return profileTextListsOk && examplesOk
       && input.profile.priority.every((value) => typeof value === 'string' && ['keyword', 'manual', 'ai'].includes(value))
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
+      && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
         && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
@@ -657,6 +774,9 @@ const mainBridge = String.raw`(() => {
     const aiUrl = normalizeLoopbackAIUrl(details && details.url);
     const headers = normalizeAIHeaders(details && details.headers);
     if (method === 'POST' && aiUrl && headers && isAllowedAIRequestData(details && details.data)) {
+      return { url: aiUrl, method, headers, data: details.data };
+    }
+    if (method === 'POST' && aiUrl && headers && isAllowedFactRequestData(details && details.data)) {
       return { url: aiUrl, method, headers, data: details.data };
     }
     return null;

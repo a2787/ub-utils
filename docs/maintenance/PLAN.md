@@ -168,17 +168,17 @@ proposed → approved → in_progress → verified
 
 ### OB-AI-013 — 独立 AI 评测集与事实检索部署方案
 
-- status: proposed
+- status: in_progress
 - priority: P1
-- scope: 本地评测/指标、来源隐私成本门禁、shadow/canary、可回滚检索。
-- non-goals: 未确认不改源码、网关、来源或平台写入。
+- scope: 评测、门禁、shadow/canary、回滚。
+- non-goals: 不接公共搜索/自动屏蔽；不放宽身份/写入/凭据。
 - dependencies: OB-AI-011, OB-AI-012
 - acceptance: required
-  - [ ] 确认协议、门槛、allowlist、成本和 rollout。
-  - [ ] 离线评测/安全回归通过后再进 shadow/canary。
-  - [ ] 越权、隐私、误阻断或成本异常可回退 baseline。
-- evidence: 仅规划，未实现；见[方案](plans/2026-09-10-ob-ai-013.md)。
-- next: 等确认后拆项；此前保持 v0.53.1 行为。
+  - [x] 协议、门槛、allowlist、rollout 固化。
+  - [x] 离线评测、broker、shadow/canary 回归通过。
+  - [ ] 真实来源/线上精度观察；无来源保持 blocked。
+- evidence: `structure regression`：24例评测、broker、AI回归；`blocked`：真实来源/线上精度未配置。见[方案](plans/2026-09-10-ob-ai-013.md)。
+- next: 发布0.54.0。
 - updated: 2026-09-10
 - supersedes: none
 

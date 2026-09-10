@@ -35,6 +35,7 @@ const fixtureUrls = [
 // 让该用例真正覆盖“缺少隔离桥”的 runtime-main 降级路径。
 const fallbackUrl = 'https://example.com/omniblock-bridge-timeout-fixture';
 let aiUrl = '';
+let factUrl = '';
 let aiServer = null;
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>OmniBlock extension fixture</title></head>
 <body><main data-ob-fixture="artificial"><h1>人工合成扩展回归页面</h1><p>不包含真实作品或账号标识。</p></main></body></html>`;
@@ -65,7 +66,35 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   } else {
     report.fail.push('提示词 profile/反馈存储键未在主世界和隔离世界存储桥中同步');
   }
+  if (bridgeSources.length === 3 && bridgeSources.every((source) => source.includes('isAllowedFactRequestData')
+    && source.includes('isAllowedVerificationSources') && source.includes('fact-local-allowlist-v1')
+    && source.includes('verificationSources'))) {
+    report.pass.push('事实核查请求和 verificationSources 在三层开发扩展桥中均受限校验');
+  } else {
+    report.fail.push('事实核查请求的开发扩展桥白名单未在三层同步');
+  }
   const aiRequests = [];
+  const factRequests = [];
+  const responseFor = (body) => {
+    if (body && body.policyVersion === 'fact-local-allowlist-v1') {
+      factRequests.push(body);
+      return { schemaVersion: 1, policyVersion: 'fact-local-allowlist-v1', items: (body.claims || []).map((claim) => ({
+        id: claim.id, status: 'contradicted', method: 'local_allowlist',
+        sources: [{ sourceId: 'synthetic-source', sourceTier: 'official', title: '人工合成来源',
+          snippet: '人工合成矛盾摘要', publishedAt: '2026-09-10' }],
+      })) };
+    }
+    let input = {};
+    try { input = JSON.parse(body && body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
+    if (input.rules && input.rules.includes('桥接事实核查规则') && input.items && input.items[0]) {
+      return { items: [{
+        id: input.items[0].id, decision: 'block', claimType: 'factual_claim', verificationStatus: 'contradicted',
+        verificationMethod: 'external_source', ruleMatched: false, category: 'synthetic', confidence: 0.8,
+        reasonCodes: ['synthetic-fact'], reason: '人工合成来源与内容共同满足', evidence: '人工合成矛盾摘要',
+      }] };
+    }
+    return { items: [] };
+  };
   // 扩展 service worker 发起的 fetch 不一定经过 Playwright 的 page/context
   // route；用一次性本地 HTTP mock 保证桥接回归验证的是“扩展 worker → loopback”
   // 真实路径，而不是依赖某个浏览器版本的网络拦截实现。
@@ -75,21 +104,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     request.on('end', () => {
       let body = {};
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (error) {}
-      let input = {};
-      try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
-      aiRequests.push({ body, input });
+      const input = body && body.messages ? (() => { try { return JSON.parse(body.messages[1] && body.messages[1].content || '{}'); } catch (error) { return {}; } })() : {};
+      if (!(body && body.policyVersion === 'fact-local-allowlist-v1')) aiRequests.push({ body, input });
+      const payload = responseFor(body);
       response.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
         'access-control-allow-origin': '*',
       });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [] }) } }] }));
+      response.end(JSON.stringify(body && body.policyVersion === 'fact-local-allowlist-v1'
+        ? payload : { choices: [{ message: { content: JSON.stringify(payload) } }] }));
     });
   });
   await new Promise((resolve, reject) => {
     aiServer.once('error', reject);
     aiServer.listen(0, '127.0.0.1', () => {
-      const address = aiServer.address();
+    const address = aiServer.address();
       aiUrl = 'http://127.0.0.1:' + address.port + '/v1/chat/completions';
+      factUrl = 'http://127.0.0.1:' + address.port + '/v1/fact-check';
       resolve();
     });
   });
@@ -109,15 +140,15 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await context.route('**/*', (route) => {
       const url = route.request().url();
-      if (url === aiUrl) {
+      if (url === aiUrl || url === factUrl) {
         let body = {};
         try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
-        let input = {};
-        try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
-        aiRequests.push({ body, input });
-        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify({
-          choices: [{ message: { content: JSON.stringify({ items: [] }) } }],
-        }) });
+        const input = body && body.messages ? (() => { try { return JSON.parse(body.messages[1] && body.messages[1].content || '{}'); } catch (error) { return {}; } })() : {};
+        if (!(body && body.policyVersion === 'fact-local-allowlist-v1')) aiRequests.push({ body, input });
+        const payload = responseFor(body);
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(
+          body && body.policyVersion === 'fact-local-allowlist-v1'
+            ? payload : { choices: [{ message: { content: JSON.stringify(payload) } }] }) });
       }
       if (fixtureUrls.some((fixtureUrl) => url.startsWith(fixtureUrl)) || url.startsWith(fallbackUrl)) {
         return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture });
@@ -221,6 +252,31 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     } else {
       report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput, aiFeedbackExampleOk }));
     }
+
+    const aiBeforeFact = aiRequests.length;
+    const factBefore = factRequests.length;
+    const factResult = await first.evaluate(async (endpoint) => {
+      window.OB.Store.setSetting('aiFactRetrievalMode', 'canary');
+      window.OB.Store.setSetting('aiFactRetrievalUrl', endpoint);
+      return window.OB.ai.analyzePage('桥接事实核查规则');
+    }, factUrl);
+    for (let attempt = 0; attempt < 40 && (aiRequests.length < aiBeforeFact + 2 || factRequests.length < factBefore + 1); attempt++) await sleep(50);
+    const factAiCalls = aiRequests.slice(aiBeforeFact);
+    const factBody = factRequests[factBefore] || {};
+    const factInput = factAiCalls[factAiCalls.length - 1] && factAiCalls[factAiCalls.length - 1].input || {};
+    const factBridgeOk = factResult && factResult.ok
+      && factAiCalls.length >= 2 && factRequests.length >= factBefore + 1
+      && Array.isArray(factBody.claims) && factBody.claims.length >= 1
+      && factBody.claims.every((claim) => /^c\d{1,2}$/.test(claim.id) && claim.language === 'zh-CN')
+      && Array.isArray(factInput.verificationSources) && factInput.verificationSources.length >= 1
+      && !/(?:bili:(?:uid|dmhash)|space\.bilibili|cookie|token|api[_ -]?key)/i.test(JSON.stringify({ factBody, factInput }));
+    if (factBridgeOk) {
+      report.pass.push('事实核查请求与带 verificationSources 的二次 AI 请求均经持久桥接返回');
+    } else {
+      report.fail.push('事实核查持久桥接失败：' + JSON.stringify({ factResult, aiCalls: factAiCalls.length,
+        factCalls: factRequests.length - factBefore, factBody, factInput }));
+    }
+    await first.evaluate(() => window.OB.Store.setSetting('aiFactRetrievalMode', 'off'));
 
     await first.evaluate(() => window.OB.Store.setSetting('skipCap', 11));
     await sleep(120);

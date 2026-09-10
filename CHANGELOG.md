@@ -2,6 +2,15 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.54.0 - 独立 AI 评测与受控事实核查 - 2026-09-10（本地候选）
+
+- 增加 24 条人工合成/脱敏独立评测集、schema/隐私校验和 mock-oracle 指标 runner；报告不把 mock 结果冒充真实模型精度。
+- 增加 loopback-only 本机事实 broker 和显式来源 allowlist；无来源、冲突、过期、不可访问或证据不足统一保守延后，不把事实证据变成 UID 或屏蔽键。
+- AI 事实核查默认关闭；`shadow` 只观测，`canary` 只有受限证据才能进入人工审核，仍不自动屏蔽、不扩大身份关联、不触发平台写入。
+- `structure regression`：评测、broker、FACT-1..4、AI screening、内容 AI、提示词、批次和既有平台矩阵通过；`blocked`：真实来源 allowlist、线上模型精度和成本基线未配置/未观察。
+
+详细变更、测试证据和限制：[v0.54.0 完整条目](docs/changelog/v0.54.0.md)。
+
 ## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（已发布）
 
 - B站 AI 审核确认后立即关闭浮层，基础 hash/已有 UID 先写入；右下状态条显示后台 UID 进度和撤销入口，完成后提示结果。

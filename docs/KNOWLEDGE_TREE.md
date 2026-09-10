@@ -26,9 +26,11 @@ AGENTS.md
 ├── docs/decisions/                         ← 不可频繁变化的单项架构决策
 │   ├── 0001-maintenance-control-plane.md
 │   └── 0002-ai-screening-gateway-boundary.md
-├── gateway/                                ← 本地 LiteLLM 网关向导、Compose 与生命周期脚本
+├── gateway/                                ← 本地 LiteLLM 网关与可选事实 broker
 │   ├── README.md
 │   ├── config.example.json
+│   ├── fact-sources.example.json            ← 无真实来源的 allowlist 配置示例
+│   ├── scripts/fact-retrieval.cjs           ← loopback-only 事实核查 sidecar
 │   ├── docker-compose.yml
 │   └── runtime/                             ← 本机生成物，含凭据，始终被 Git 忽略
 ├── 启动网关.cmd                             ← 双击调用 PowerShell 7 启动本地网关
@@ -39,13 +41,14 @@ AGENTS.md
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口
 └── docs/changelog/
     ├── INDEX.md                           ← 版本条目路由
-    ├── v0.53.1.md                         ← 当前公开版本：B站 AI 后台屏蔽生命周期与 UID 缓存
+    ├── v0.54.0.md                         ← 当前候选：独立 AI 评测与受控事实核查
+    ├── v0.53.1.md                         ← 上一公开版本：B站 AI 后台屏蔽生命周期与 UID 缓存
     ├── v0.53.0.md                         ← 已发布：事实核查与屏蔽决策分离
     ├── v0.52.0.md                         ← 当前公开版本：多平台内容入口与提示词反馈
     ├── v0.48.0.md                         ← 历史候选：AI 多平台采集与网关启动
     └── LEGACY-HISTORY.md                  ← 重组前只读完整变更日志
 
-本轮 B站 AI 后台实现说明：`docs/maintenance/plans/2026-09-10-ob-ai-012.md`；推荐 4 的评测/检索方案：
+本轮 B站 AI 后台实现说明：`docs/maintenance/plans/2026-09-10-ob-ai-012.md`；推荐 4 的评测/检索方案及实施记录：
 `docs/maintenance/plans/2026-09-10-ob-ai-013.md`。它们是计划的详细执行记录，不替代 `PLAN.md` 的活动状态。验证入口：`test/docs-check.cjs` 维护本知识树的大小、链接、计划、快照、版本和关键内容门禁；受影响平台的
 回归测试和真实探针仍按 `AGENTS.md` 的验证矩阵选择，不在本树中复制测试细节。
 ```

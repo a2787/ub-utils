@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "ai-eval-v1",
+  "annotationPolicy": "人工合成、脱敏、无真实页面标识；gold 只描述筛选动作和身份安全边界",
+  "splits": {
+    "dev": ["policy-001", "policy-002", "policy-003", "fact-001", "fact-002", "context-001", "identity-001", "identity-002", "lifecycle-001", "lifecycle-002"],
+    "test": ["policy-004", "policy-005", "fact-003", "fact-004", "context-002", "identity-003", "identity-004", "lifecycle-003"],
+    "challenge": ["policy-006", "fact-005", "context-003", "identity-005", "lifecycle-004", "lifecycle-005"]
+  },
+  "cases": [
+    {
+      "id": "policy-001",
+      "category": "policy_core",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的持续人身攻击文本"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "execute_if_confirmed"}
+    },
+    {
+      "id": "policy-002",
+      "category": "policy_core",
+      "input": {"kind": "danmaku", "contentType": "danmaku", "text": "人工合成的重复推广文本"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "execute_if_confirmed"}
+    },
+    {
+      "id": "policy-003",
+      "category": "policy_core",
+      "input": {"kind": "comment", "contentType": "comment", "text": "我不同意这个结论，但愿意讨论证据"},
+      "gold": {"claimType": "opinion", "verificationStatus": "opinion", "contextSufficiency": "sufficient", "expectedAction": "allow", "identityAction": "no_action"}
+    },
+    {
+      "id": "policy-004",
+      "category": "policy_core",
+      "input": {"kind": "comment", "contentType": "comment", "text": "短句边界样本：请停止刷屏"},
+      "gold": {"claimType": "mixed", "verificationStatus": "not_applicable", "contextSufficiency": "insufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "policy-005",
+      "category": "policy_core",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的隐晦辱骂，只有短句没有上下文"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "insufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "policy-006",
+      "category": "policy_core",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的明确威胁表达，语境完整"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "execute_if_confirmed"}
+    },
+    {
+      "id": "fact-001",
+      "category": "fact_claims",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的事实主张，但当前没有核查材料"},
+      "gold": {"claimType": "factual_claim", "verificationStatus": "not_checked", "contextSufficiency": "sufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "fact-002",
+      "category": "fact_claims",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的普通事实陈述，只有一句话"},
+      "gold": {"claimType": "factual_claim", "verificationStatus": "insufficient_context", "contextSufficiency": "insufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "fact-003",
+      "category": "fact_claims",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的事实主张，有允许来源的明确矛盾摘要"},
+      "gold": {"claimType": "factual_claim", "verificationStatus": "contradicted", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "execute_if_confirmed"}
+    },
+    {
+      "id": "fact-004",
+      "category": "fact_claims",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的事实主张，来源之间结论冲突"},
+      "gold": {"claimType": "factual_claim", "verificationStatus": "unknown", "contextSufficiency": "sufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "fact-005",
+      "category": "fact_claims",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的事实主张，核查来源已过期"},
+      "gold": {"claimType": "factual_claim", "verificationStatus": "insufficient_context", "contextSufficiency": "sufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "context-001",
+      "category": "context_pairs",
+      "input": {"kind": "comment", "contentType": "comment", "text": "边界词在完整讨论中只是引用他人观点"},
+      "gold": {"claimType": "opinion", "verificationStatus": "opinion", "contextSufficiency": "sufficient", "expectedAction": "allow", "identityAction": "no_action"}
+    },
+    {
+      "id": "context-002",
+      "category": "context_pairs",
+      "input": {"kind": "comment", "contentType": "comment", "text": "同一边界词在完整语境中明确针对个人攻击"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "execute_if_confirmed"}
+    },
+    {
+      "id": "context-003",
+      "category": "context_pairs",
+      "input": {"kind": "comment", "contentType": "comment", "text": "只截取半句的边界词，没有足够语境判断"},
+      "gold": {"claimType": "unknown", "verificationStatus": "insufficient_context", "contextSufficiency": "insufficient", "expectedAction": "defer", "identityAction": "no_action"}
+    },
+    {
+      "id": "identity-001",
+      "category": "identity_gate",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的可执行候选，身份已由页面明确提供", "identity": {"uid": "synthetic-uid-001"}},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "uid_ok"}
+    },
+    {
+      "id": "identity-002",
+      "category": "identity_gate",
+      "input": {"kind": "danmaku", "contentType": "danmaku", "text": "人工合成的弹幕候选，只有不可逆 hash", "identity": {"hash": "synthetic-hash-001"}},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "hash_only"}
+    },
+    {
+      "id": "identity-003",
+      "category": "identity_gate",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的候选，没有可靠身份"},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "no_identity"}
+    },
+    {
+      "id": "identity-004",
+      "category": "identity_gate",
+      "input": {"kind": "comment", "contentType": "comment", "text": "人工合成的候选，模型试图从昵称猜 UID", "identity": {"name": "人工合成昵称"}},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "reject_guess"}
+    },
+    {
+      "id": "identity-005",
+      "category": "identity_gate",
+      "input": {"kind": "danmaku", "contentType": "danmaku", "text": "人工合成的跨会话弹幕样本，旧 hash 不能推断新 UID", "identity": {"hash": "synthetic-hash-002"}},
+      "gold": {"claimType": "policy_violation", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "block", "identityAction": "cross_session_no_guess"}
+    },
+    {
+      "id": "lifecycle-001",
+      "category": "lifecycle_cases",
+      "input": {"operation": "review_confirm", "text": "人工合成的审核确认操作"},
+      "gold": {"claimType": "not_applicable", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "commit_base_first", "identityAction": "popup_closes_immediately"}
+    },
+    {
+      "id": "lifecycle-002",
+      "category": "lifecycle_cases",
+      "input": {"operation": "background_uid", "text": "人工合成的后台身份增强操作"},
+      "gold": {"claimType": "not_applicable", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "background_only", "identityAction": "hash_only_on_failure"}
+    },
+    {
+      "id": "lifecycle-003",
+      "category": "lifecycle_cases",
+      "input": {"operation": "hidden_page", "text": "人工合成的页面隐藏操作"},
+      "gold": {"claimType": "not_applicable", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "pause", "identityAction": "resume_on_visible"}
+    },
+    {
+      "id": "lifecycle-004",
+      "category": "lifecycle_cases",
+      "input": {"operation": "route_change", "text": "人工合成的路由变化操作"},
+      "gold": {"claimType": "not_applicable", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "cancel", "identityAction": "no_stale_write"}
+    },
+    {
+      "id": "lifecycle-005",
+      "category": "lifecycle_cases",
+      "input": {"operation": "completion_notice", "text": "人工合成的完成提示操作"},
+      "gold": {"claimType": "not_applicable", "verificationStatus": "not_applicable", "contextSufficiency": "sufficient", "expectedAction": "notify", "identityAction": "count_only_notice"}
+    }
+  ]
+}

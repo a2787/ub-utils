@@ -138,6 +138,12 @@ node test/maintenance-check.cjs --dedicated-only
 
 后台任务只处理用户已经确认的 B站弹幕目标，页面隐藏时暂停，换路由、换视频、停用或运行时销毁时取消；UID 卡片查询使用有界 TTL/LRU 缓存与失败指数退避，碰撞、失败和上下文失效不猜 UID，继续保留 hash-only。当前版本仍只使用用户配置的 loopback 网关和 B站只读用户卡片请求，不接入公共事实检索或平台官方写入。
 
+### v0.54.0 — 独立 AI 评测与受控事实核查（本地候选）
+
+事实核查默认关闭，不改变已有 AI 候选链。设置中的 `shadow` 只在本机记录聚合状态，不改变候选；`canary` 只对事实性主张使用本机 allowlist broker 返回的受限证据，仍进入原有人工审核，不能自动屏蔽、扩大 UID 关联或写入平台。没有本机来源、来源冲突/过期/不可访问或证据不足时，统一保守延后。
+
+事实核查只向 `http://127.0.0.1:4001/v1/fact-check` 发送脱敏后的 ordinal claim，不发送 UID、`mid_hash`、昵称、页面 URL、Cookie、Key 或整页正文；插件不会自行访问公共搜索。broker 的来源 allowlist 默认为空，配置说明见 [`gateway/README.md`](gateway/README.md)。24 例人工合成评测集和 mock-oracle runner 只用于验证 schema、指标引擎和安全门禁，不等同于真实模型准确率。
+
 ### v0.53.0 — 事实核查与屏蔽决策分离（已发布）
 
 v0.53.0 的发布构建为 `0.53.0-ai-background-bili-commit`；[GitHub Release v0.53.0](https://github.com/a2787/ub-utils/releases/tag/v0.53.0) 已创建。AI 提示词现在明确区分规则违规、事实性主张、观点和核查状态：没有引用、模型没有查到资料、单句断言或语境不足，不等于内容为假。当前 loopback 网关没有外部检索结果时，这类事实只会计入“尚未核查/延后”，不会仅凭“未经证实”进入屏蔽候选。
@@ -150,7 +156,7 @@ v0.53.0 的发布构建为 `0.53.0-ai-background-bili-commit`；[GitHub Release 
 
 关键词规则优先于 AI，命中后不消耗 token；AI 结果先进入审核，确认后才写入本地名单。「不屏蔽」是可撤销反馈：再次点击会删除对应反馈并恢复候选选择。反馈账本和待确认偏好仅保存在本机，接受提案后才进入提示词，不训练模型，也不会自动变成屏蔽规则。
 
-历史版本、完整变更、验证证据和当前限制见 [版本索引](docs/changelog/INDEX.md)、[v0.53.1 版本条目](docs/changelog/v0.53.1.md) 与 [当前维护状态](docs/maintenance/CURRENT.md)。README 不再重复旧候选的 push、tag、Release 或部署状态。
+历史版本、完整变更、验证证据和当前限制见 [版本索引](docs/changelog/INDEX.md)、[v0.54.0 版本条目](docs/changelog/v0.54.0.md) 与 [当前维护状态](docs/maintenance/CURRENT.md)。README 不再重复旧候选的 push、tag、Release 或部署状态。
 
 ---
 
