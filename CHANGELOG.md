@@ -2,6 +2,17 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（当前候选）
+
+- B站 AI 审核确认后立即关闭浮层，基础 hash/已有 UID 先写入；右下状态条显示后台 UID 进度和撤销入口，完成后提示结果。
+- hidden 时暂停，换路由/换视频/停用/撤销/运行时销毁时取消旧任务；迟到 UID 不写入新会话。
+- UID 卡片缓存增加有界 TTL/LRU 和失败指数退避；唯一正向校验才关联 UID，碰撞/失败仍保留 hash-only。
+- `structure regression`：AI screening 23 项、B站 quickblock 38/38；完整矩阵、真实只读探针和发布边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+
+详细用户变化和证据：[v0.53.1 完整条目](docs/changelog/v0.53.1.md)。
+
+发布状态：当前候选构建为 `0.53.1-ai-background-lifecycle-cache`；发布链完成后回写提交、tag/Release 和真实探针结果。没有登记的生产部署链。
+
 ## v0.53.0 - 事实核查与屏蔽决策分离 - 2026-09-09（已发布）
 
 - AI 现在区分规则违规、事实性主张、观点和核查状态；缺少引用、尚未核查或语境不足不再单独构成“虚假/谣言”的屏蔽候选。

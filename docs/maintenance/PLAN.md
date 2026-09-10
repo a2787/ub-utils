@@ -2,17 +2,14 @@
 
 更新时间：2026-09-09
 
-本文件是 OmniBlock 唯一的活动计划。它记录当前要解决的问题、范围、依赖、验收条件和
-下一步动作；当前事实放在 `CURRENT.md`，用户可见变化放在 README/版本 changelog，已经
-结束的计划移入历史索引，不在这里无限累积。
+本文件是 OmniBlock 唯一的活动计划：记录问题、范围、依赖、验收和下一步；当前事实放在
+`CURRENT.md`，用户可见变化放在 README/版本 changelog，结束项移入历史索引。
 
 ## 使用契约
 
-- 每项计划必须有稳定的 `OB-*` ID；代码、测试、ADR 和交接记录引用该 ID，而不是依赖对话中的临时称呼。
-- `status` 只能使用 `proposed`、`approved`、`in_progress`、`verified`、`deferred`、`blocked`、`superseded`。
-- `verified` 必须有可追溯证据；`blocked` 必须写明阻断原因和下一步，不能当作通过。
-- 依赖必须引用本文件已有 ID，不能形成循环；被替代的计划保留原文并链接新的决定。
-- 活动计划接近 24 KiB 时先拆分职责并更新知识树，不能把历史台账继续追加到本文件。
+- 每项计划有稳定 `OB-*` ID；`status` 只能为 `proposed`、`approved`、`in_progress`、`verified`、`deferred`、`blocked` 或 `superseded`。
+- `verified` 必须有可追溯证据，`blocked` 必须写原因和下一步；依赖引用本文件 ID 且不得成环。
+- 接近 24 KiB 时先拆分职责并更新知识树，不能继续追加历史台账。
 
 ## 状态流转
 
@@ -29,14 +26,14 @@ proposed → approved → in_progress → verified
 
 - status: in_progress
 - priority: P1
-- scope: B站评论/弹幕、规则/审核、OpenAI 兼容 loopback 网关。
+- scope: B站评论/弹幕、规则/人工审核和 OpenAI 兼容 loopback 网关。
 - non-goals: 不改 V2、Key、UID、自动屏蔽或无结构证据的平台。
 - dependencies: none
 - acceptance: required
   - [x] AI 配置、loopback 脱敏出站、人工审核和既有矩阵已通过。
   - [ ] 商汤 provider、额度、fallback 和 cooldown 另行评估。
-- evidence: `structure regression` 与 DeepSeek 既有证据见 `CURRENT.md`；未完成项保持 `blocked`。
-- next: 后续另行评估商汤 provider；不影响本轮桥接修复。
+- evidence: `structure regression` 与既有 DeepSeek 证据见 `CURRENT.md`；未完成项保持 `blocked`。
+- next: 另行评估商汤 provider；不影响本轮维护。
 - updated: 2026-09-09
 - supersedes: none
 
@@ -44,14 +41,14 @@ proposed → approved → in_progress → verified
 
 - status: blocked
 - priority: P1
-- scope: 保留 B站 AI；接入抖音当前页评论/弹幕和活动视频会话隔离；提供根目录网关启动文件，保持现有身份、审核和只读边界。
-- non-goals: 不引入系统级启动组件或私有接口；不自动展开/滚动收集；不改身份、审核、名单、V2 或公开发布边界。
+- scope: 保留 B站 AI；接入抖音当前页评论/弹幕和活动视频会话隔离；提供网关启动文件。
+- non-goals: 不引入系统启动组件/私有接口；不自动展开/滚动；不改身份、审核、名单、V2 或发布边界。
 - dependencies: OB-AI-001
 - acceptance: required
   - [x] B站/抖音当前页采集、持久化隔离、启动文件和只读边界已有验证。
   - [ ] 抖音同 URL 换片后的新会话隔离需稳定真实样本。
-- evidence: 完整历史验收见 `CURRENT.md` 和对应历史计划；抖音同 URL 换片新行仍为 `blocked`，匿名入口仍可能停在验证码中间页。
-- next: 在专用 Chrome 重放稳定同 URL 换片，确认新会话不继承旧 AI 记录；不公开发布。
+- evidence: 详见 `CURRENT.md`；抖音同 URL 换片仍 `blocked`，匿名入口可能停在验证码中间页。
+- next: 专用 Chrome 重放稳定换片并确认新会话隔离；不公开发布。
 - updated: 2026-09-09
 - supersedes: none
 
@@ -59,12 +56,12 @@ proposed → approved → in_progress → verified
 
 - status: verified
 - priority: P1
-- scope: B站/抖音关键词标签和默认即时本地屏蔽；AI 前置排除关键词命中；评论晚到的有界增量；微博/知乎评论 AI 入口。
+- scope: B站/抖音关键词标签与即时本地屏蔽；AI 排除关键词命中；评论增量；微博/知乎 AI 入口。
 - non-goals: 不调用平台写入；不伪造身份；不为关键词消耗 token；不绕过 AI 人工审核；不改 80 条批次、身份键或平台选择器。
 - dependencies: OB-AI-001
 - acceptance: required
   - [x] 关键词优先、评论增量和微博/知乎 AI 入口回归及真站证据已记录。
-- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md` 和 v0.51.0 条目；本轮依赖其已验证结果。
+- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md`/v0.51.0 条目。
 - next: 保持候选，发布前另行复核差异、哈希和隐私门禁并取得发布授权。
 - updated: 2026-09-09
 - supersedes: none
@@ -154,21 +151,37 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-09
 - supersedes: none
 
+### OB-AI-012 — B站 AI 确认后的后台任务闭环
+
+- status: verified
+- priority: P1
+- scope: 确认后即时生效、后台进度/撤销、隐藏/换路由/停用隔离、UID 卡片 TTL 缓存和失败退避。
+- non-goals: 不改 AI 判定/提示词、外部检索、平台写入、身份键和人工确认门槛。
+- dependencies: OB-AI-001, OB-AI-003, OB-AI-011
+- acceptance: required
+  - [x] 弹窗即时关闭，基础 hash/已有 UID 立即生效，后台状态和完成提示可见。
+  - [x] hidden/换路由/停用/撤销隔离旧结果；缓存有界且失败按退避重试。
+  - [x] B站 AI、quickblock、矩阵、文档门禁和真实只读探针通过。
+- evidence: `structure regression`：AI screening 23 项、quickblock 38/38、完整矩阵和文档门禁通过；`real-site verified`：2026-09-10 两次独立 B站只读探针，AI/入口/弹幕链路通过；`blocked`：登录未判定、根评论 partial、模型精度/真实后台写入/检索未验。详见 [实施说明](plans/2026-09-10-ob-ai-012.md)。
+- next: 按当轮授权完成 commit、push、tag 和 Release；发布后另立 OB-AI-013 规划事实评测/检索，等待确认后实现。
+- updated: 2026-09-10
+- supersedes: none
+
 ### OB-VALID-001 — 专用登录态探针与开发扩展同步
 
 - status: verified
 - priority: P1
-- scope: 修复真实站点验证默认启动隔离未登录浏览器、专用 Chrome 已加载解压扩展却停留在旧版本或无效 Service Worker 的双重断点；新增同一专用 profile 的登录态只读探针，覆盖扩展版本/桥接健康、平台入口发现、作者/作品与评论/弹幕 AI 读取计数，并让开发扩展构建后可检测当前已加载版本，必要时给出确定的刷新动作。
-- non-goals: 不读取或导出 Cookie、Token、密码或私有接口；不点击平台举报、官方拉黑、关注、发帖等写入控件；不把登录态探针改成平台写入自动化；不承诺规避平台验证码、限流、登录失效或 DOM 改版；不覆盖既有 tag/Release，不修改 `.env`、provider 凭据或平台选择器。
+- scope: 修复隔离/专用 Chrome 验证分流；专用 profile 只读探针覆盖版本、桥接、入口和 AI 读取计数，扩展同步后可刷新旧构建。
+- non-goals: 不读取凭证/Cookie/私有接口，不触发平台写入，不规避验证码/限流，不改 `.env`、凭据、选择器或既有发布物。
 - dependencies: OB-COVERAGE-001, OB-AI-009, OB-AI-010
 - acceptance: required
-  - [x] `maintenance-check` 保留隔离探针；`--dedicated-only` 先同步扩展再运行同 profile 登录态只读探针，`--dedicated` 追加该链路并保留匿名对照，两类结果分开输出。
-  - [x] 探针优先读取专用窗口现有页，必要时创建并关闭临时页；输出脱敏路由、计数和 `real-site verified`/`blocked`。
-  - [x] `dev-browser sync` 构建后核对版本、桥接和新页面；旧构建/桥接未就绪不能报告 ready，并可自动刷新已加载扩展。
+  - [x] `maintenance-check` 保留隔离探针；`--dedicated-only` 先同步扩展再读专用 profile，`--dedicated` 另保留匿名对照。
+  - [x] 探针优先读取现有页，必要时创建/关闭临时页；输出脱敏路由、计数和 `real-site verified`/`blocked`。
+  - [x] `dev-browser sync` 核对版本/桥接并刷新旧扩展；未就绪不能报告 ready。
   - [x] 人工合成分类回归 8/8 通过；不读取登录态、不注入源码、不触发平台写入。
   - [x] 2026-09-09 专用 Chrome 只读复验六平台：B站8条作品、抖音46条作品、微博6条帖子、知乎5条回答、贴吧1主题+2评论；X 当前为空壳，明确记 `blocked`。
-- evidence: `structure regression`：专用探针分类6/6、各新增脚本语法和维护矩阵通过；`real-site verified`：2026-09-09 当前专用 Chrome 读到 B站/抖音/微博/知乎/贴吧记录，全部 0.52.0、bridge ready；`blocked`：X 当前无帖子，B站/抖音详情导航受页面响应/目标不稳定影响，未伪装为详情全量。
-- next: 后续取得当轮登录态授权后直接使用 `node test/maintenance-check.cjs --dedicated-only`；需要匿名对照再用 `--dedicated`，平台外部门禁仍按当轮证据记录。
+- evidence: `structure regression`：分类6/6及维护矩阵通过；`real-site verified`：2026-09-09 专用 Chrome 读到五个平台记录且 bridge ready；`blocked`：X 空壳、B站/抖音详情目标不稳定。
+- next: 取得当轮授权后用 `node test/maintenance-check.cjs --dedicated-only`，匿名对照再用 `--dedicated`。
 - updated: 2026-09-09
 - supersedes: none
 

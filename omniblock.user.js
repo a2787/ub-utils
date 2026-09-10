@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.53.0
+// @version       0.53.1
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过本地网关进行 AI 建议筛选。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -54,7 +54,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.53.0-ai-background-bili-commit';
+  const RUNTIME_BUILD = '0.53.1-ai-background-lifecycle-cache';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -2893,6 +2893,12 @@
     #ob-panel .ob-ai-status, #ob-content-manager .ob-ai-status { color: #777; font-size: 11px; line-height: 1.5; margin-top: 6px; word-break: break-word; }
     #ob-panel .ob-ai-status[data-state="error"], #ob-content-manager .ob-ai-status[data-state="error"] { color: #c0392b; }
     #ob-panel .ob-ai-status[data-state="loading"], #ob-content-manager .ob-ai-status[data-state="loading"] { color: #5b6db1; }
+    #ob-ai-background-status { position: fixed; right: 14px; bottom: 112px; z-index: 2147483644; box-sizing: border-box; width: min(330px, calc(100vw - 28px)); padding: 9px 10px; border: 1px solid #cfd5ee; border-radius: 7px; background: rgba(250,251,255,.97); color: #3e4d94; box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 11px; line-height: 1.45; }
+    #ob-ai-background-status .ob-ai-background-title { font-weight: 600; }
+    #ob-ai-background-status .ob-ai-background-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+    #ob-ai-background-status .ob-ai-background-text { min-width: 0; overflow-wrap: anywhere; }
+    #ob-ai-background-status .ob-ai-background-undo { flex: 0 0 auto; border: 1px solid #c9cbd2; border-radius: 4px; padding: 2px 6px; background: #fff; color: #555; cursor: pointer; font-size: 10px; }
+    #ob-ai-background-status .ob-ai-background-undo:hover { background: #f2f3fa; }
     #ob-ai-review { position: fixed; inset: 0; z-index: 2147483645; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(0,0,0,.45); color: #222; font-size: 13px; }
     #ob-ai-review .ob-ai-review-box { box-sizing: border-box; width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24); }
     #ob-ai-review .ob-ai-review-head, #ob-ai-review .ob-ai-review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -13255,6 +13261,7 @@
   let biliDanmakuPrepareBlockRecords = async (records) => ({
     records: Array.isArray(records) ? records : [], linked: 0, hashOnly: 0,
   });
+  let biliDanmakuSessionKey = () => '';
   function setupBilibiliDanmaku() {
     if (!/(^|\.)bilibili\.com$/.test(location.hostname)) return;
     if (typeof window.fetch !== 'function' && typeof XMLHttpRequest === 'undefined') return;
@@ -13515,12 +13522,19 @@
     const selectedDmGroups = new Set();
     const expandedDmUidGroups = new Set();
     const dmUidLookups = new Map();
+    const dmUidLookupFailures = new Map();
     const dmUidCardCache = new Map();
+    const dmUidCardFailures = new Map();
     const DM_PAGE_SIZE = 100;
     const DM_SENDER_LIMIT = 5000;
     const DM_UID_LOOKUP_LIMIT = 5000;
     const DM_UID_LOOKUP_CONCURRENCY = 2;
-    const DM_UID_CARD_CACHE_LIMIT = 5000;
+    const DM_UID_CARD_CACHE_LIMIT = 512;
+    const DM_UID_CARD_CACHE_TTL_MS = 10 * 60 * 1000;
+    const DM_UID_LOOKUP_BACKOFF_BASE_MS = 1000;
+    const DM_UID_LOOKUP_BACKOFF_MAX_MS = 30000;
+    const DM_UID_CARD_BACKOFF_BASE_MS = 1000;
+    const DM_UID_CARD_BACKOFF_MAX_MS = 30000;
     let dmTool = null;
     let dmManager = null;
     let dmManagerKeyHandler = null;
@@ -13775,6 +13789,7 @@
       // 候选状态只属于当前视频；旧视频尚未完成的异步请求会在自己的 Promise
       // 中自然结束，但不应继续占用当前会话的查找 Map。
       dmUidLookups.clear();
+      dmUidLookupFailures.clear();
       resetDmAutoState();
       dmAutoStatus.videoKey = key;
       resetDmBootstrap();
@@ -14297,16 +14312,43 @@
       return true;
     }
 
+    function rememberDmRetry(map, key, baseMs, maxMs, limit) {
+      const previous = map.get(key);
+      const attempts = Math.min(6, (Number(previous && previous.attempts) || 0) + 1);
+      const delay = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attempts - 1)));
+      map.delete(key);
+      map.set(key, { attempts, retryAt: Date.now() + delay });
+      while (map.size > limit) {
+        const oldest = map.keys().next().value;
+        if (oldest == null) break;
+        map.delete(oldest);
+      }
+      return delay;
+    }
+
+    function dmRetryActive(map, key) {
+      const state = map.get(key);
+      if (!state) return false;
+      if (Number(state.retryAt) > Date.now()) return true;
+      map.delete(key);
+      return false;
+    }
+
     function requestDmUidCard(uid) {
       const normalizedUid = normalizeDigits(uid);
       if (!normalizedUid) return Promise.resolve(null);
-      if (dmUidCardCache.has(normalizedUid)) {
-        const cached = dmUidCardCache.get(normalizedUid);
+      const cached = dmUidCardCache.get(normalizedUid);
+      if (cached && (cached.expiresAt === 0 || cached.expiresAt > Date.now())) {
         // 以最近使用顺序维护有界缓存，避免跨多个视频打开 UID 查询后无限增长。
         dmUidCardCache.delete(normalizedUid);
         dmUidCardCache.set(normalizedUid, cached);
-        return cached;
+        return cached.promise;
       }
+      if (cached) dmUidCardCache.delete(normalizedUid);
+      if (dmRetryActive(dmUidCardFailures, normalizedUid)) {
+        return Promise.reject(new Error('user card retry backoff'));
+      }
+      const entry = { promise: null, expiresAt: 0 };
       const request = new Promise((resolve, reject) => {
         if (typeof GM_xmlhttpRequest !== 'function') { reject(new Error('GM_xmlhttpRequest unavailable')); return; }
         try {
@@ -14333,11 +14375,18 @@
             ontimeout() { reject(new Error('user card request timed out')); },
           });
         } catch (e) { reject(e); }
+      }).then((card) => {
+        dmUidCardFailures.delete(normalizedUid);
+        entry.expiresAt = Date.now() + DM_UID_CARD_CACHE_TTL_MS;
+        return card;
       }).catch((error) => {
-        dmUidCardCache.delete(normalizedUid);
+        if (dmUidCardCache.get(normalizedUid) === entry) dmUidCardCache.delete(normalizedUid);
+        rememberDmRetry(dmUidCardFailures, normalizedUid, DM_UID_CARD_BACKOFF_BASE_MS,
+          DM_UID_CARD_BACKOFF_MAX_MS, DM_UID_CARD_CACHE_LIMIT);
         throw error;
       });
-      dmUidCardCache.set(normalizedUid, request);
+      entry.promise = request;
+      dmUidCardCache.set(normalizedUid, entry);
       while (dmUidCardCache.size > DM_UID_CARD_CACHE_LIMIT) {
         const oldest = dmUidCardCache.keys().next().value;
         if (oldest == null) break;
@@ -14347,12 +14396,21 @@
     }
 
     async function lookupDmUidCandidates(hash, options) {
+      const normalizedHash = normalHash(hash);
       const render = !options || options.render !== false;
-      const previous = dmUidLookups.get(hash);
-      if (previous && previous.status === 'ready') return previous;
+      if (!normalizedHash) return { status: 'error', candidates: [], partial: false, error: 'invalid danmaku hash', promise: null };
+      const previous = dmUidLookups.get(normalizedHash);
+      if (previous && previous.status === 'ready') {
+        // 部分成功允许在退避窗口结束后由管理器再次尝试；完全成功或明确无账号
+        // 的结果则在当前视频内复用，避免重复初始化彩虹表。
+        if (!previous.partial || dmRetryActive(dmUidLookupFailures, normalizedHash)) return previous;
+        dmUidLookups.delete(normalizedHash);
+      }
       if (previous && previous.status === 'loading') return previous.promise;
+      if (previous && previous.status === 'error' && dmRetryActive(dmUidLookupFailures, normalizedHash)) return previous;
+      if (previous) dmUidLookups.delete(normalizedHash);
       const state = { status: 'loading', candidates: [], partial: false, error: '', promise: null };
-      dmUidLookups.set(hash, state);
+      dmUidLookups.set(normalizedHash, state);
       while (dmUidLookups.size > DM_UID_LOOKUP_LIMIT) {
         const oldest = dmUidLookups.keys().next().value;
         if (oldest == null) break;
@@ -14362,7 +14420,7 @@
       const run = (async () => {
         // 先让“正在查询”渲染出来，再初始化约 1 MB 的彩虹表。
         await new Promise((resolve) => setTimeout(resolve, 0));
-        const uids = crackUidHash(hash);
+        const uids = crackUidHash(normalizedHash);
         const candidates = [];
         let failed = false;
         let requestError = '';
@@ -14379,15 +14437,20 @@
         state.candidates = candidates;
         state.partial = failed && candidates.length > 0;
         state.error = requestError;
+        if (failed) rememberDmRetry(dmUidLookupFailures, normalizedHash,
+          DM_UID_LOOKUP_BACKOFF_BASE_MS, DM_UID_LOOKUP_BACKOFF_MAX_MS, DM_UID_LOOKUP_LIMIT);
+        else dmUidLookupFailures.delete(normalizedHash);
         return state;
       })().catch((error) => {
         state.status = 'error';
         state.candidates = [];
         state.error = String(error && error.message || error || 'unknown error').slice(0, 200);
+        rememberDmRetry(dmUidLookupFailures, normalizedHash, DM_UID_LOOKUP_BACKOFF_BASE_MS,
+          DM_UID_LOOKUP_BACKOFF_MAX_MS, DM_UID_LOOKUP_LIMIT);
         return state;
       }).finally(() => {
         state.promise = null;
-        if (render) renderDmManager();
+        if (render && dmUidLookups.get(normalizedHash) === state) renderDmManager();
       });
       state.promise = run;
       return run;
@@ -14408,8 +14471,22 @@
       return candidate && normalizeDigits(candidate.uid) ? candidate : null;
     }
 
-    async function prepareDmBlockRecords(records) {
+    function dmPrepareAbortError(reason) {
+      const error = new Error(String(reason || 'danmaku preparation cancelled'));
+      error.name = 'AbortError';
+      return error;
+    }
+
+    function assertDmPrepareLive(options, sessionKey) {
+      if (options && options.signal && options.signal.aborted) throw dmPrepareAbortError('danmaku preparation cancelled');
+      if (currentVideoKey() !== sessionKey) throw dmPrepareAbortError('danmaku video session changed');
+    }
+
+    async function prepareDmBlockRecords(records, options) {
+      const config = options && typeof options === 'object' ? options : {};
       const sourceRecords = Array.isArray(records) ? records : [];
+      const sessionKey = config.sessionKey ? String(config.sessionKey) : currentVideoKey();
+      assertDmPrepareLive(config, sessionKey);
       const result = [];
       const stateByHash = new Map();
       let linked = 0;
@@ -14424,20 +14501,34 @@
         }
         if (!seenHashes.has(hash)) { seenHashes.add(hash); hashes.push(hash); }
       }
+      const progress = { completed: 0, total: hashes.length, linked: 0, hashOnly: 0 };
+      const reportProgress = () => {
+        if (typeof config.onProgress !== 'function') return;
+        try { config.onProgress({ ...progress }); } catch (e) {}
+      };
+      reportProgress();
       // 目标动作才进入此路径；render:false 保证异步查询不会重建当前按钮/管理器。
       // 同一批不同 hash 最多并行两个候选链，既不让顺序反查拖长整批，也不向
       // B 站用户卡片接口制造无界突发请求；同一 hash 仍由 dmUidLookups 去重。
       let nextHash = 0;
       const lookupWorker = async () => {
         while (nextHash < hashes.length) {
+          assertDmPrepareLive(config, sessionKey);
           const hash = hashes[nextHash++];
           const state = await lookupDmUidCandidates(hash, { render: false });
+          assertDmPrepareLive(config, sessionKey);
           stateByHash.set(hash, state);
+          const candidate = verifiedUniqueDmUid(state);
+          if (candidate) progress.linked++;
+          else progress.hashOnly++;
+          progress.completed++;
+          reportProgress();
         }
       };
       const workerCount = Math.min(DM_UID_LOOKUP_CONCURRENCY, hashes.length);
       if (workerCount) await Promise.all(Array.from({ length: workerCount }, () => lookupWorker()));
 
+      assertDmPrepareLive(config, sessionKey);
       for (const record of sourceRecords) {
         const keys = normalizeIdentityKeys(record && record.keys);
         const hash = dmHashFromRecord({ keys });
@@ -14466,6 +14557,7 @@
           note: dmUidLinkNote(record && record.text ? record.text : '目标弹幕'),
         });
       }
+      assertDmPrepareLive(config, sessionKey);
       EventLog.record('action.dm.uid-prepare', { targetCount: result.length, linked, hashOnly }, { immediate: true });
       return { records: result, linked, hashOnly };
     }
@@ -14504,6 +14596,7 @@
     }
 
     biliDanmakuPrepareBlockRecords = prepareDmBlockRecords;
+    biliDanmakuSessionKey = currentVideoKey;
 
     async function lookupDmUidGroup(group) {
       expandedDmUidGroups.add(group.content);
@@ -15475,6 +15568,8 @@
     let activeRequest = null;
     let activeLoader = null;
     let review = null;
+    let backgroundJobSequence = 0;
+    const backgroundJobs = new Map();
     const subscriptions = [];
     let last = {
       state: 'idle', source: '', records: 0, analyzed: 0, batchIndex: 0, batchCount: 0,
@@ -15514,6 +15609,7 @@
         ruleCount: rules.filter((rule) => rule.enabled).length,
         supported: !!(currentAdapter && typeof currentAdapter.collectAIRecords === 'function'),
         platform: currentAdapter && currentAdapter.id || '',
+        background: backgroundSnapshot(),
         prompt: PromptSystem.status(),
       };
     }
@@ -15576,6 +15672,269 @@
       autoAnalyzedRecordIds.clear();
       autoCandidates.clear();
       autoContentPending = false;
+    }
+
+    function backgroundSnapshot() {
+      const jobs = Array.from(backgroundJobs.values());
+      let total = 0;
+      let completed = 0;
+      for (const job of jobs) {
+        total += Math.max(0, Number(job.total) || 0);
+        completed += Math.min(Math.max(0, Number(job.completed) || 0), Math.max(0, Number(job.total) || 0));
+      }
+      return {
+        active: jobs.filter((job) => job.state === 'running').length,
+        paused: jobs.filter((job) => job.state === 'paused').length,
+        total, completed, pending: Math.max(0, total - completed),
+        jobs: jobs.map((job) => ({
+          id: job.id, state: job.state, total: job.total, completed: job.completed,
+          linked: job.linked, hashOnly: job.hashOnly, canUndo: job.addedKeys.length > 0,
+        })),
+      };
+    }
+
+    function renderBackgroundStatus() {
+      if (!document.body) return;
+      const jobs = Array.from(backgroundJobs.values());
+      let node = document.getElementById('ob-ai-background-status');
+      if (!jobs.length) {
+        if (node) node.remove();
+        return;
+      }
+      if (!node) {
+        node = document.createElement('div');
+        node.id = 'ob-ai-background-status';
+        node.setAttribute('role', 'status');
+        node.setAttribute('aria-live', 'polite');
+        node.setAttribute('aria-atomic', 'false');
+        document.body.appendChild(node);
+      }
+      node.textContent = '';
+      const title = document.createElement('div');
+      title.className = 'ob-ai-background-title';
+      title.textContent = jobs.length > 1 ? 'AI 屏蔽后台任务' : 'AI 屏蔽已确认';
+      node.appendChild(title);
+      for (const job of jobs) {
+        const row = document.createElement('div');
+        row.className = 'ob-ai-background-row';
+        const text = document.createElement('span');
+        text.className = 'ob-ai-background-text';
+        const state = job.state === 'paused' ? '页面不可见，已暂停' : '正在后台补充 UID';
+        text.textContent = state + '（' + Math.min(job.completed, job.total) + '/' + job.total + '）';
+        row.appendChild(text);
+        if (job.addedKeys.length) {
+          const undo = document.createElement('button');
+          undo.type = 'button';
+          undo.className = 'ob-ai-background-undo';
+          undo.textContent = '撤销';
+          undo.title = '撤销这次已确认的本地屏蔽';
+          undo.addEventListener('click', () => undoBackgroundJob(job.id));
+          row.appendChild(undo);
+        }
+        node.appendChild(row);
+      }
+    }
+
+    function notifyBackgroundChange() {
+      renderBackgroundStatus();
+      emit();
+    }
+
+    function backgroundJobIsCurrent(job) {
+      return !!job && backgroundJobs.get(job.id) === job && !job.cancelled && !stopped
+        && routeKey() === job.routeKey;
+    }
+
+    function backgroundAbortController() {
+      if (typeof AbortController === 'function') return new AbortController();
+      const signal = { aborted: false };
+      return { signal, abort: () => { signal.aborted = true; } };
+    }
+
+    function appendAddedKeys(target, results) {
+      for (const result of Array.isArray(results) ? results : []) {
+        for (const key of Array.isArray(result && result.addedKeys) ? result.addedKeys : []) {
+          if (!target.includes(key)) target.push(key);
+        }
+      }
+    }
+
+    function undoIdentityKeys(keys) {
+      const normalized = normalizeIdentityKeys(keys);
+      const removed = Store.removeIdentities(normalized);
+      if (currentScanner) currentScanner.schedule();
+      return removed;
+    }
+
+    function createBackgroundJob(groups, baseResults) {
+      const candidates = (Array.isArray(groups) ? groups : [])
+        .filter((group) => group && group.kind === 'danmaku'
+          && normalizeIdentityKeys(group.keys).some((key) => /^bili:dmhash:[0-9a-f]{8}$/i.test(key))
+          && !normalizeIdentityKeys(group.keys).some((key) => /^bili:uid:\d+$/.test(key)))
+        .map((group) => ({ ...group, keys: normalizeIdentityKeys(group.keys) }));
+      const hashes = new Set(candidates.flatMap((group) => group.keys
+        .filter((key) => /^bili:dmhash:[0-9a-f]{8}$/i.test(key))));
+      if (!candidates.length || !hashes.size) return null;
+      const addedKeys = [];
+      appendAddedKeys(addedKeys, baseResults);
+      const job = {
+        id: 'ai-bg-' + (++backgroundJobSequence),
+        routeKey: routeKey(),
+        sessionKey: typeof biliDanmakuSessionKey === 'function' ? biliDanmakuSessionKey() : '',
+        groups: candidates,
+        total: hashes.size,
+        completed: 0,
+        linked: 0,
+        hashOnly: 0,
+        addedKeys,
+        basePersisted: !baseResults.length || baseResults.persisted !== false,
+        state: 'running',
+        running: false,
+        pauseRequested: false,
+        resumeRequested: false,
+        cancelled: false,
+        controller: null,
+      };
+      backgroundJobs.set(job.id, job);
+      EventLog.record('ai.review.uid-enrich.start', { total: job.total }, { immediate: true });
+      notifyBackgroundChange();
+      void runBackgroundJob(job);
+      return job;
+    }
+
+    async function runBackgroundJob(job) {
+      if (!backgroundJobIsCurrent(job)) {
+        if (backgroundJobs.get(job && job.id) === job) backgroundJobs.delete(job.id);
+        notifyBackgroundChange();
+        return;
+      }
+      // hidden 事件可能恰好落在任务入队与创建 AbortController 之间；
+      // 此时先保持 paused，不要让一个迟到的启动穿过可见性边界。
+      if (job.pauseRequested) {
+        job.state = 'paused';
+        notifyBackgroundChange();
+        return;
+      }
+      if (job.running) {
+        job.resumeRequested = true;
+        return;
+      }
+      job.running = true;
+      job.state = 'running';
+      const controller = backgroundAbortController();
+      job.controller = controller;
+      notifyBackgroundChange();
+      try {
+        const prepared = await biliDanmakuPrepareBlockRecords(job.groups, {
+          signal: controller.signal,
+          sessionKey: job.sessionKey,
+          onProgress: (progress) => {
+            if (!backgroundJobIsCurrent(job)) return;
+            job.completed = Number(progress && progress.completed) || 0;
+            notifyBackgroundChange();
+          },
+        });
+        if (!backgroundJobIsCurrent(job)) {
+          if (backgroundJobs.get(job.id) === job) { job.cancelled = true; backgroundJobs.delete(job.id); }
+          return;
+        }
+        const enrichmentResults = Store.addIdentityGroups(prepared.records);
+        appendAddedKeys(job.addedKeys, enrichmentResults);
+        job.linked = Number(prepared.linked) || 0;
+        job.hashOnly = Number(prepared.hashOnly) || 0;
+        const persisted = job.basePersisted && (!enrichmentResults.length || enrichmentResults.persisted !== false);
+        backgroundJobs.delete(job.id);
+        job.state = 'done';
+        notifyBackgroundChange();
+        EventLog.record('ai.review.uid-enrich.finish', {
+          total: job.total, completed: job.completed, linked: job.linked, hashOnly: job.hashOnly, persisted,
+        }, { immediate: true });
+        const detail = '后台补充完成：已关联 ' + job.linked + ' 个 UID，' + job.hashOnly + ' 个保留 hash';
+        showToast(persisted ? 'AI 建议已确认，' + detail : 'AI 建议已在本页生效但未确认落盘，' + detail + '，请重试或导出备份',
+          job.addedKeys.length ? () => undoIdentityKeys(job.addedKeys) : null);
+      } catch (error) {
+        const owned = backgroundJobs.get(job.id) === job;
+        const expectedPause = owned && (job.pauseRequested || job.resumeRequested)
+          && error && error.name === 'AbortError';
+        if (expectedPause) {
+          job.state = 'paused';
+          notifyBackgroundChange();
+        } else if (owned) {
+          const sameRoute = !stopped && routeKey() === job.routeKey;
+          job.cancelled = true;
+          backgroundJobs.delete(job.id);
+          if (sameRoute) {
+            EventLog.recordError('ai.review.uid-enrich', error);
+            showToast('UID 后台补充失败，已保留基础 hash/已有 UID，可稍后在弹幕管理器重试');
+          }
+          notifyBackgroundChange();
+        }
+      } finally {
+        if (job.controller === controller) job.controller = null;
+        job.running = false;
+        const shouldResume = job.resumeRequested && backgroundJobIsCurrent(job) && !job.pauseRequested;
+        job.resumeRequested = false;
+        if (shouldResume) Promise.resolve().then(() => runBackgroundJob(job));
+        else if (backgroundJobIsCurrent(job)) notifyBackgroundChange();
+      }
+    }
+
+    function pauseBackgroundJobs(reason) {
+      let changed = false;
+      for (const job of backgroundJobs.values()) {
+        if (job.state !== 'running') continue;
+        job.state = 'paused';
+        job.pauseRequested = true;
+        if (job.controller) { try { job.controller.abort(); } catch (e) {} }
+        changed = true;
+      }
+      if (changed) {
+        EventLog.record('ai.review.uid-enrich.pause', { reason: String(reason || 'hidden').slice(0, 32) }, { immediate: true });
+        notifyBackgroundChange();
+      }
+    }
+
+    function resumeBackgroundJobs() {
+      for (const job of Array.from(backgroundJobs.values())) {
+        if (routeKey() !== job.routeKey) {
+          cancelBackgroundJobs('route-change');
+          return;
+        }
+        if (job.state !== 'paused') continue;
+        job.pauseRequested = false;
+        if (job.running) job.resumeRequested = true;
+        else void runBackgroundJob(job);
+      }
+      if (backgroundJobs.size) {
+        EventLog.record('ai.review.uid-enrich.resume', { count: backgroundJobs.size }, { immediate: true });
+        notifyBackgroundChange();
+      }
+    }
+
+    function cancelBackgroundJobs(reason) {
+      const jobs = Array.from(backgroundJobs.values());
+      for (const job of jobs) {
+        job.cancelled = true;
+        if (job.controller) { try { job.controller.abort(); } catch (e) {} }
+        backgroundJobs.delete(job.id);
+      }
+      if (jobs.length) EventLog.record('ai.review.uid-enrich.cancel', {
+        reason: String(reason || 'cancel').slice(0, 32), count: jobs.length,
+      }, { immediate: true });
+      if (jobs.length) notifyBackgroundChange();
+    }
+
+    function undoBackgroundJob(id) {
+      const job = backgroundJobs.get(id);
+      if (!job) return false;
+      job.cancelled = true;
+      if (job.controller) { try { job.controller.abort(); } catch (e) {} }
+      backgroundJobs.delete(id);
+      const removed = undoIdentityKeys(job.addedKeys);
+      notifyBackgroundChange();
+      showToast('已撤销本次 AI 屏蔽（移除 ' + removed + ' 个新增身份）');
+      EventLog.record('ai.review.uid-enrich.undo', { removed }, { immediate: true });
+      return true;
     }
 
     function persistentBridgeError() {
@@ -16078,9 +16437,6 @@
     // 锁在前台。先关闭审核层，再在当前文档的异步任务中完成身份增强和名单写入；
     // 身份不唯一、卡片失败或初始化异常时仍沿用已有 hash/UID，不扩大执行权限。
     async function commitReviewSelection(current, selected, initialGroups) {
-      let groups = initialGroups;
-      let uidPreparation = { linked: 0, hashOnly: 0 };
-      let uidPreparationError = false;
       let baseResults;
       try {
         // B站弹幕先写入已有 hash/UID，使用户确认后的本地屏蔽立即生效；
@@ -16097,50 +16453,35 @@
         return { ok: false, error };
       }
 
-      let results = baseResults;
-      const persistenceBatches = [baseResults];
-      try {
-        if (currentAdapter && currentAdapter.id === 'bilibili'
-          && groups.some((group) => group && group.kind === 'danmaku')) {
-          const prepared = await biliDanmakuPrepareBlockRecords(groups);
-          groups = prepared.records;
-          uidPreparation = prepared;
-          const enrichmentResults = Store.addIdentityGroups(groups);
-          results = baseResults.concat(enrichmentResults);
-          persistenceBatches.push(enrichmentResults);
-        }
-      } catch (error) {
-        uidPreparationError = true;
-        EventLog.recordError('ai.review.uid-enrich', error);
-      }
-
       const addedKeys = [];
-      for (const result of results) {
-        for (const key of result.addedKeys || []) if (!addedKeys.includes(key)) addedKeys.push(key);
+      appendAddedKeys(addedKeys, baseResults);
+      const basePersisted = !baseResults.length || baseResults.persisted !== false;
+      for (const candidate of selected) {
+        try { markReviewFeedback(current, candidate, 'positive', 'ai_confirmed'); }
+        catch (error) { EventLog.recordError('ai.review.commit-feedback', error); }
       }
-      const persisted = persistenceBatches.every((batch) => !batch.length || batch.persisted !== false);
-      for (const candidate of selected) markReviewFeedback(current, candidate, 'positive', 'ai_confirmed');
-      EventLog.record('ai.review.commit', {
-        background: true,
-        candidateCount: selected.length, addedKeyCount: addedKeys.length, persisted,
-        basePersisted: !baseResults.length || baseResults.persisted !== false,
-        linkedUidCount: Number(uidPreparation.linked) || 0,
-        hashOnlyCount: Number(uidPreparation.hashOnly) || 0,
-        uidPreparationError,
-      }, { immediate: true });
-      const identitySuffix = uidPreparationError
-        ? '（UID 识别/补充失败，已保留现有 hash/UID）'
-        : uidPreparation.hashOnly
-          ? '（其中 ' + uidPreparation.hashOnly + ' 个弹幕保留 hash）' : '';
-      showToast(persisted
-        ? 'AI 建议已确认：新增 ' + addedKeys.length + ' 个本地身份' + identitySuffix
-        : 'AI 建议已在本页生效但未确认落盘，请重试或导出备份' + identitySuffix,
-      addedKeys.length ? () => { Store.removeIdentities(addedKeys); if (currentScanner) currentScanner.schedule(); } : null);
       if (typeof current.onCommit === 'function') {
         try { current.onCommit(selected); } catch (error) { EventLog.recordError('ai.review.resolve', error); }
       }
       if (currentScanner) currentScanner.schedule();
-      return { ok: true, addedKeys, persisted, uidPreparation };
+      const backgroundJob = currentAdapter && currentAdapter.id === 'bilibili'
+        ? createBackgroundJob(initialGroups, baseResults) : null;
+      EventLog.record('ai.review.commit', {
+        background: !!backgroundJob,
+        candidateCount: selected.length, addedKeyCount: addedKeys.length, persisted: basePersisted,
+        basePersisted,
+      }, { immediate: true });
+      if (backgroundJob) {
+        showToast(basePersisted
+          ? 'AI 建议已确认：基础屏蔽已生效，正在后台补充 UID'
+          : 'AI 建议已在本页生效但未确认落盘，正在后台补充 UID');
+        return { ok: true, addedKeys, persisted: basePersisted, background: true, jobId: backgroundJob.id };
+      }
+      showToast(basePersisted
+        ? 'AI 建议已确认：新增 ' + addedKeys.length + ' 个本地身份'
+        : 'AI 建议已在本页生效但未确认落盘，请重试或导出备份',
+      addedKeys.length ? () => undoIdentityKeys(addedKeys) : null);
+      return { ok: true, addedKeys, persisted: basePersisted, background: false };
     }
 
     function showReview(candidates, source, batchCount, ruleCount, options) {
@@ -16311,8 +16652,8 @@
           background: true, candidateCount: selected.length,
           danmakuCount: selected.filter((candidate) => candidate.record && candidate.record.kind === 'danmaku').length,
         }, { immediate: true });
-        // 先释放审核浮层，让用户立即回到页面；选中的候选暂不记 unknown，
-        // 待后台提交成功后记录 positive，失败则记录为 unknown 并保留可重试的分析状态。
+        // 先释放审核浮层，让用户立即回到页面；基础名单写入和 positive 反馈
+        // 在同一同步动作中完成，只有 B站弹幕的 UID 增强继续由后台任务处理。
         closeReview('background-commit', true, { preserveFeedbackIds });
         void commitReviewSelection(current, selected, groups).catch((error) => {
           for (const candidate of selected) {
@@ -16576,7 +16917,7 @@
         const changed = next !== configSignatureValue;
         configSignatureValue = next;
         if (!Store.getSetting('aiEnabled') || Store.getSetting('enabled') === false) {
-          cancelAutoTimer(); cancelActive('disabled'); clearAutoAnalysis(); closeReview('disabled', true);
+          cancelAutoTimer(); cancelActive('disabled'); cancelBackgroundJobs('disabled'); clearAutoAnalysis(); closeReview('disabled', true);
           setLast({ state: 'disabled', deferred: 0, lastError: '' });
         } else if (changed) {
           autoRouteKey = '';
@@ -16606,6 +16947,7 @@
         autoRouteKey = '';
         autoRetryCount = 0;
         clearAutoAnalysis();
+        cancelBackgroundJobs('route-change');
         closeReview('route-change', true);
         scheduleAuto(1200);
       }));
@@ -16626,6 +16968,7 @@
           autoRetryCount = 0;
           clearAutoAnalysis();
           cancelActive('content-session-change');
+          cancelBackgroundJobs('content-session-change');
           closeReview('content-session-change', true);
           scheduleAuto(800, true);
           return;
@@ -16642,15 +16985,15 @@
         noteAutoContentChanged();
       }));
       subscriptions.push(PageLifecycle.subscribe((visible) => {
-        if (visible) scheduleAuto(500);
-        else cancelAutoTimer();
+        if (visible) { resumeBackgroundJobs(); scheduleAuto(500); }
+        else { cancelAutoTimer(); pauseBackgroundJobs('hidden'); }
       }));
       RuntimeResources.add(() => {
         stopped = true;
         for (const unsubscribe of subscriptions.splice(0)) {
           try { unsubscribe(); } catch (e) {}
         }
-        cancelAutoTimer(); cancelActive('runtime-dispose'); closeReview('runtime-dispose', true);
+        cancelAutoTimer(); cancelActive('runtime-dispose'); cancelBackgroundJobs('runtime-dispose'); closeReview('runtime-dispose', true);
         listeners.length = 0;
       });
       scheduleAuto(1400);
@@ -17010,7 +17353,11 @@
       if (!statusEl) return;
       const status = AI.status();
       statusEl.dataset.state = status.state || 'idle';
-      statusEl.textContent = statusText(status) + ' ' + gatewayNote(status);
+      const background = status.background || {};
+      const backgroundText = (Number(background.total) || 0) > 0
+        ? ' 后台 UID：' + (Number(background.completed) || 0) + '/' + (Number(background.total) || 0)
+          + ((Number(background.paused) || 0) > 0 ? '（页面不可见，已暂停）' : '（进行中）') : '';
+      statusEl.textContent = statusText(status) + backgroundText + ' ' + gatewayNote(status);
     };
     const refreshRules = () => {
       const list = query('#ob-ai-rule-list');

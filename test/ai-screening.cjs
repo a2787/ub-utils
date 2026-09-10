@@ -42,7 +42,12 @@ window.GM_xmlhttpRequest = (opts) => {
     try { uid = new URL(requestUrl).searchParams.get('mid') || ''; } catch (error) {}
     window.__cardCalls.push(uid);
     setTimeout(() => {
-      const card = uid === '33' ? { mid: '33', name: 'AI Danmaku User', level_info: { current_level: 5 } } : null;
+      const cards = {
+        '33': { mid: '33', name: 'AI Danmaku User', level_info: { current_level: 5 } },
+        '222': { mid: '222', name: 'AI Paused User', level_info: { current_level: 5 } },
+        '1001': { mid: '1001', name: 'AI Route User', level_info: { current_level: 5 } },
+      };
+      const card = cards[uid] || null;
       if (opts.onload) opts.onload({ status: 200, responseText: JSON.stringify(card
         ? { code: 0, data: { card } }
         : { code: -404, data: null }) });
@@ -74,6 +79,11 @@ const AI_DM_SEGMENT = Buffer.from([
   ...varint(10),
   ...varint(fieldVarint(2, 1000).length + fieldText(6, '0a6216d9').length + fieldText(7, 'AI弹幕拉踩内容').length),
   ...fieldVarint(2, 1000), ...fieldText(6, '0a6216d9'), ...fieldText(7, 'AI弹幕拉踩内容'),
+]);
+const AI_DM_SEGMENT_ROUTE = Buffer.from([
+  ...varint(10),
+  ...varint(fieldVarint(2, 3000).length + fieldText(6, 'c3209381').length + fieldText(7, 'AI弹幕路由拉踩内容').length),
+  ...fieldVarint(2, 3000), ...fieldText(6, 'c3209381'), ...fieldText(7, 'AI弹幕路由拉踩内容'),
 ]);
 
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站 AI 人工合成回归页</title></head><body>
@@ -139,7 +149,12 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   await page.route('**/*', async (route) => {
     const request = route.request();
     if (/\/x\/v2\/dm\/(?:wbi\/)?web\/seg\.so/.test(request.url())) {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: AI_DM_SEGMENT });
+      let segment = AI_DM_SEGMENT;
+      try {
+        const index = new URL(request.url()).searchParams.get('segment_index');
+        if (index === '3') segment = AI_DM_SEGMENT_ROUTE;
+      } catch (error) {}
+      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: segment });
       return;
     }
     if (request.url() === GATEWAY_URL) {
@@ -477,21 +492,109 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       review: !!document.querySelector('#ob-ai-review'),
       elapsed: performance.now() - Number(window.__aiConfirmClickAt || 0),
       hasImmediateDmHash: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:0a6216d9'),
+      background: window.OB && window.OB.ai ? window.OB.ai.status().background : null,
+      backgroundText: document.querySelector('#ob-ai-background-status') && document.querySelector('#ob-ai-background-status').textContent,
+      hasBackgroundUndo: !!document.querySelector('#ob-ai-background-status .ob-ai-background-undo'),
     }));
-    if (!immediateCommit.review && immediateCommit.elapsed < 250 && immediateCommit.hasImmediateDmHash) {
-      report.pass.push('AI-20 B站 AI 弹幕确认后审核弹窗立即关闭，基础 hash 立即生效，UID 识别移到后台');
+    if (!immediateCommit.review && immediateCommit.elapsed < 250 && immediateCommit.hasImmediateDmHash
+      && immediateCommit.background && immediateCommit.background.active === 1
+      && immediateCommit.background.total >= 1 && /正在后台补充 UID/.test(immediateCommit.backgroundText || '')
+      && immediateCommit.hasBackgroundUndo) {
+      report.pass.push('AI-20 B站 AI 弹幕确认后审核弹窗立即关闭，基础 hash 立即生效，后台状态/撤销入口可见');
     } else {
       report.fail.push('AI-20 B站 AI 弹幕确认仍阻塞审核弹窗：' + JSON.stringify(immediateCommit));
     }
-    await page.waitForFunction(() => {
-      const state = String(window.__gm['omniblock:data:v1'] || '');
-      return state.includes('bili:uid:789') && state.includes('bili:dmhash:0a6216d9') && state.includes('bili:uid:33');
-    }, null, { timeout: 5000 }).catch(() => {});
-    await page.waitForFunction(() => {
-      const toast = document.querySelector('#ob-toast');
-      return !!toast && /AI 建议已确认/.test(toast.textContent || '');
-    }, null, { timeout: 5000 }).catch(() => {});
-  }
+    // 当前任务先模拟页面隐藏；隐藏时应暂停 UID 补充，恢复可见后继续完成。
+    const pauseState = await page.evaluate(async () => {
+    const result = { supported: false, paused: false, text: '', hash: false };
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    try {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await pause(120);
+      const status = window.OB.ai.status();
+      result.supported = true;
+      result.paused = status.background && status.background.paused === 1 && status.background.active === 0;
+      result.text = document.querySelector('#ob-ai-background-status') && document.querySelector('#ob-ai-background-status').textContent || '';
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await pause(80);
+    } catch (error) {
+      result.error = String(error);
+    } finally {
+      try {
+        if (originalHidden) Object.defineProperty(document, 'hidden', originalHidden); else delete document.hidden;
+        if (originalVisibility) Object.defineProperty(document, 'visibilityState', originalVisibility); else delete document.visibilityState;
+      } catch (error) {}
+    }
+    result.hash = String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:0a6216d9');
+    return result;
+  });
+  await page.waitForFunction(() => String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:33'), null, { timeout: 6000 }).catch(() => {});
+  const afterPause = await page.evaluate(() => ({
+    hasHash: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:0a6216d9'),
+    hasUid: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:33'),
+    hasCard33: (window.__cardCalls || []).includes('33'),
+    background: window.OB.ai.status().background,
+    statusNode: !!document.querySelector('#ob-ai-background-status'),
+    toast: document.querySelector('#ob-toast') && document.querySelector('#ob-toast').textContent,
+  }));
+  if (pauseState.supported && pauseState.paused && /页面不可见，已暂停/.test(pauseState.text)
+     && pauseState.hash && afterPause.hasHash && afterPause.hasUid && afterPause.hasCard33
+     && afterPause.background.total === 0 && !afterPause.statusNode && /后台补充完成/.test(afterPause.toast || '')) {
+    report.pass.push('AI-22 B站 UID 后台任务在 hidden 时暂停，恢复可见后继续且不重复写基础 hash');
+  } else report.fail.push('AI-22 B站后台任务 hidden/resume 生命周期异常：' + JSON.stringify({ pauseState, afterPause }));
+
+    // 再载入一个新的弹幕段，启动第二个后台任务后切换 SPA 路由；旧任务
+    // 可以保留已经确认的 hash，但不能把迟到的 UID 写入新会话。
+    const loadedRouteDm = await page.evaluate(async () => {
+      try {
+        const response = await fetch('https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=67890&segment_index=3');
+        await response.arrayBuffer();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        return {
+          ok: response.ok,
+          content: window.OB.adapters.bilibili.collectAIRecords(document)
+            .some((item) => item.kind === 'danmaku' && item.text === 'AI弹幕路由拉踩内容'),
+        };
+      } catch (error) { return { ok: false, error: String(error) }; }
+    });
+    await sleep(1800);
+    await page.evaluate(() => window.OB && window.OB.ai && window.OB.ai.closeReview());
+    await page.evaluate(() => {
+      if (!document.querySelector('#ob-content-manager')) window.OB.openOptions();
+      window.OB.openContentManager(window.OB.adapters.bilibili, 'ai');
+    });
+    await page.waitForSelector('#ob-content-manager #ob-ai-page-rule', { timeout: 5000 }).catch(() => {});
+    await page.locator('#ob-content-manager #ob-ai-page-rule').fill('不许拉踩');
+    await page.locator('#ob-content-manager #ob-ai-analyze').click();
+    await page.waitForSelector('#ob-ai-review', { timeout: 5000 }).catch(() => {});
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('#ob-ai-review .ob-ai-candidate-text'))
+      .some((node) => /AI弹幕路由拉踩内容/.test(node.textContent || '')), null, { timeout: 5000 }).catch(() => {});
+    const routeCandidate = await page.evaluate(() => Array.from(document.querySelectorAll('#ob-ai-review .ob-ai-candidate-text'))
+      .some((node) => /AI弹幕路由拉踩内容/.test(node.textContent || '')));
+    let routeState = { hash: false, uid: false, background: null, statusNode: false };
+    if (routeCandidate) {
+      await page.evaluate(() => { window.__cardCalls.length = 0; window.__cardDelayMs = 1500; });
+      await page.locator('#ob-ai-review .ob-ai-confirm').click();
+      await page.evaluate(() => { history.pushState({}, '', '/video/ai-screening-route-cancel'); });
+      await sleep(1800);
+      routeState = await page.evaluate(() => ({
+        hash: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:dmhash:c3209381'),
+        uid: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:1001'),
+        background: window.OB.ai.status().background,
+        statusNode: !!document.querySelector('#ob-ai-background-status'),
+      }));
+    }
+    if (loadedRouteDm.ok && loadedRouteDm.content && routeCandidate && routeState.hash && !routeState.uid
+      && routeState.background && routeState.background.total === 0 && !routeState.statusNode)
+      report.pass.push('AI-23 B站 SPA 换路由后取消旧 UID 任务，保留已确认 hash 且不写入迟到 UID');
+    else report.fail.push('AI-23 B站后台任务路由隔离异常：' + JSON.stringify({ loadedRouteDm, routeCandidate, routeState }));
+
   const finalState = await page.evaluate(() => ({
     has123: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:123'),
     has321: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('bili:uid:321'),
@@ -504,9 +607,9 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     persistedSettings: String(window.__gm['omniblock:data:v1'] || '').includes('aiEnabled'),
     errors: window.__aiBodies.length,
   }));
-  if (finalState.has123 && finalState.has321 && finalState.has789 && finalState.hasDmHash && finalState.hasDmUid
-    && finalState.cardCalls.includes('33') && /AI 建议已确认/.test(finalState.toast || '')
-    && finalState.persistedSettings) report.pass.push('AI-6 页面附加规则确认进入现有名单持久化链路，并仅为命中的弹幕按需关联 UID，完成后提示');
+   if (finalState.has123 && finalState.has321 && finalState.has789 && finalState.hasDmHash && finalState.hasDmUid
+     && afterPause.hasCard33 && /后台补充完成/.test(afterPause.toast || '')
+     && finalState.persistedSettings) report.pass.push('AI-6 页面附加规则确认进入现有名单持久化链路，并仅为命中的弹幕按需关联 UID，完成后提示');
   else report.fail.push('AI-6 页面附加规则确认未完成：' + JSON.stringify(finalState));
 
   const timing = await page.evaluate(() => {
@@ -520,6 +623,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     report.pass.push('AI-21 AI 分析日志拆分记录采集、网关和总耗时，不含正文或身份键');
   } else report.fail.push('AI-21 AI 分析耗时日志缺少分段字段：' + JSON.stringify(timing));
 
+  }
   await browser.close();
   console.log('PASS:', report.pass.join(' | ') || '无');
   console.log('FAIL:', report.fail.join(' | ') || '无');

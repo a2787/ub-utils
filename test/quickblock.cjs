@@ -1834,6 +1834,22 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     report.fail.push('FATAL: ' + (error && error.message || error));
   }
 
+  // 人工合成：运行时 QB-N 已验证成功 UID 查询会被同一页面内的卡片缓存复用；
+  // 这里再锁住失败路径的有界缓存、指数退避和错误后不留成功项契约，避免把
+  // 依赖测试末态管理器行的偶发 UI 交互误报成缓存回归。
+  const dmUidBackoffContract = USERSCRIPT.includes('const DM_UID_CARD_CACHE_LIMIT = 512;')
+    && USERSCRIPT.includes('const DM_UID_CARD_CACHE_TTL_MS = 10 * 60 * 1000;')
+    && USERSCRIPT.includes('const DM_UID_LOOKUP_BACKOFF_MAX_MS = 30000;')
+    && USERSCRIPT.includes('const DM_UID_CARD_BACKOFF_MAX_MS = 30000;')
+    && USERSCRIPT.includes('function rememberDmRetry(')
+    && USERSCRIPT.includes('function dmRetryActive(')
+    && USERSCRIPT.includes('dmUidCardFailures')
+    && USERSCRIPT.includes('dmUidLookupFailures')
+    && USERSCRIPT.includes('if (dmUidCardCache.get(normalizedUid) === entry) dmUidCardCache.delete(normalizedUid);');
+  if (dmUidBackoffContract)
+    report.pass.push('QB-Y B站 UID 卡片缓存有 TTL/LRU 上限，失败不留成功项并受指数退避窗口约束');
+  else report.fail.push('QB-Y UID 卡片缓存/失败退避契约缺失');
+
   const ok = report.fail.length === 0;
   fs.writeFileSync(path.join(ROOT, 'test', '_qb_lastrun.json'), JSON.stringify(report, null, 2) + '\n', 'utf8');
   console.log('==== OmniBlock B站回归测试 ====');

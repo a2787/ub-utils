@@ -796,13 +796,16 @@ async function pickLocalCommentTarget(candidates) {
         const initialRows = panel ? Array.from(panel.querySelectorAll('.ob-dm-sender')) : [];
         if (!panel || initialRows.length < 3) return { found: true, panel: !!panel, groupCount: initialRows.length };
 
-        const first = initialRows[0];
+        const first = initialRows.find((row) => row.querySelector('.ob-dm-single')) || initialRows[0];
         const firstHashes = (first.getAttribute('data-ob-dm-hashes') || '').split(',').filter(Boolean);
         const single = first.querySelector('.ob-dm-single');
+        if (!single) return { found: true, panel: true, groupCount: initialRows.length, singleConfirm: false, reason: '当前首行已屏蔽或没有单条按钮' };
         single.click(); await pause(100);
         let confirm = await waitForConfirm();
         if (!confirm) return { found: true, panel: true, groupCount: initialRows.length, singleConfirm: false };
-        confirm.querySelector('.ob-ok').click(); await pause(200);
+        const singleConfirmButton = confirm.querySelector('.ob-ok');
+        if (!singleConfirmButton) return { found: true, panel: true, groupCount: initialRows.length, singleConfirm: false, reason: '单条确认按钮缺失' };
+        singleConfirmButton.click(); await pause(200);
         const singleBlocked = !!firstHashes.length && firstHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
         let toast = document.getElementById('ob-toast');
         const singleUndo = toast && toast.querySelector('button');
@@ -822,7 +825,8 @@ async function pickLocalCommentTarget(candidates) {
         if (batchReady) batch.click();
         await pause(100);
         confirm = await waitForConfirm();
-        if (confirm) { confirm.querySelector('.ob-ok').click(); await pause(200); }
+        const batchConfirmButton = confirm && confirm.querySelector('.ob-ok');
+        if (batchConfirmButton) { batchConfirmButton.click(); await pause(200); }
         const batchBlocked = batchReady && !!confirm && batchHashes.every((hash) => window.OB.Index.isBlocked('bili:dmhash:' + hash));
         const persons = Object.values(window.OB.Store.persons());
         const batchSeparate = !!batchHashes.length && persons.filter((person) =>
@@ -1216,18 +1220,22 @@ async function pickLocalCommentTarget(candidates) {
         const commonBefore = common && common.getBoundingClientRect();
         const before = target.getBoundingClientRect();
         const nextBefore = next && next.getBoundingClientRect();
+        if (!button || typeof button.click !== 'function') return { found: true, confirm: false, reason: '本地拉黑按钮在操作前已被页面回收' };
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         const confirm = document.getElementById('ob-confirm');
         const result = {
           found: true,
           confirm: !!confirm,
+          confirmButton: !!(confirm && confirm.querySelector('.ob-ok')),
           hasName: !!(confirm && !confirm.textContent.includes('该用户')),
           containerTag: target.tagName,
           beforeHeight: Math.round(before.height),
         };
         if (!confirm) return result;
-        confirm.querySelector('.ob-ok').click();
+        const confirmButton = confirm.querySelector('.ob-ok');
+        if (!confirmButton) return result;
+        confirmButton.click();
         await new Promise((resolve) => setTimeout(resolve, 300));
         const after = target.getBoundingClientRect();
         const nextAfter = next && next.getBoundingClientRect();
@@ -1526,7 +1534,7 @@ async function pickLocalCommentTarget(candidates) {
          || !/^🚫 内容屏蔽（评论\/(?:弹幕\/)?AI\/关键词）$/.test(result.bulkBeforeInteraction.text || '')) {
         failed.push('已加载评论作者批量入口未出现');
       }
-      if (!local.found || !local.confirm || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
+      if (!local.found || !local.confirm || !local.confirmButton || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
       if (local.containerTag !== 'BILI-COMMENT-THREAD-RENDERER' || !local.hidden || local.barCount !== 0 || !local.layoutClosed) failed.push('真实评论未按完整线程无提示、零占位隐藏');
       if (!local.restored) failed.push('撤销本地拉黑后真实评论未恢复');
       if (!local.thread || !local.thread.found || !local.thread.confirm || local.thread.authorCount < 2
