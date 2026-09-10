@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-09
+更新时间：2026-09-10
 
 本文件是 OmniBlock 唯一的活动计划：记录问题、范围、依赖、验收和下一步；当前事实放在
 `CURRENT.md`，用户可见变化放在 README/版本 changelog，结束项移入历史索引。
@@ -155,15 +155,30 @@ proposed → approved → in_progress → verified
 
 - status: verified
 - priority: P1
-- scope: 确认后即时生效、后台进度/撤销、隐藏/换路由/停用隔离、UID 卡片 TTL 缓存和失败退避。
-- non-goals: 不改 AI 判定/提示词、外部检索、平台写入、身份键和人工确认门槛。
+- scope: 即时生效、后台状态/撤销、会话隔离、UID 缓存和失败退避。
+- non-goals: 不改 AI 判定/提示词、检索、平台写入、身份键和确认门槛。
 - dependencies: OB-AI-001, OB-AI-003, OB-AI-011
 - acceptance: required
-  - [x] 弹窗即时关闭，基础 hash/已有 UID 立即生效，后台状态和完成提示可见。
-  - [x] hidden/换路由/停用/撤销隔离旧结果；缓存有界且失败按退避重试。
-  - [x] B站 AI、quickblock、矩阵、文档门禁和真实只读探针通过。
-- evidence: `structure regression`：AI screening 23 项、quickblock 38/38、完整矩阵和文档门禁通过；`real-site verified`：2026-09-10 两次独立 B站只读探针，AI/入口/弹幕链路通过；`blocked`：登录未判定、根评论 partial、模型精度/真实后台写入/检索未验。详见 [实施说明](plans/2026-09-10-ob-ai-012.md)。
-- next: 按当轮授权完成 commit、push、tag 和 Release；发布后另立 OB-AI-013 规划事实评测/检索，等待确认后实现。
+  - [x] 即时关闭/基础写入/状态/撤销及 hidden、路由、停用隔离通过。
+  - [x] 缓存、退避、矩阵、文档门禁和两次 B站探针通过。
+- evidence: 矩阵与 2026-09-10 B站两探针；阻断项见 CURRENT。详见[实施说明](plans/2026-09-10-ob-ai-012.md)。
+- next: 发布链完成；OB-AI-013 仅规划，等待确认。
+- updated: 2026-09-10
+- supersedes: none
+
+### OB-AI-013 — 独立 AI 评测集与事实检索部署方案
+
+- status: proposed
+- priority: P1
+- scope: 本地评测/指标、来源隐私成本门禁、shadow/canary、可回滚检索。
+- non-goals: 未确认不改源码、网关、来源或平台写入。
+- dependencies: OB-AI-011, OB-AI-012
+- acceptance: required
+  - [ ] 确认协议、门槛、allowlist、成本和 rollout。
+  - [ ] 离线评测/安全回归通过后再进 shadow/canary。
+  - [ ] 越权、隐私、误阻断或成本异常可回退 baseline。
+- evidence: 仅规划，未实现；见[方案](plans/2026-09-10-ob-ai-013.md)。
+- next: 等确认后拆项；此前保持 v0.53.1 行为。
 - updated: 2026-09-10
 - supersedes: none
 
@@ -300,15 +315,15 @@ proposed → approved → in_progress → verified
 
 - status: deferred
 - priority: P3
-- scope: 本地命令入口、CI status check、源码/构建 hash、版本/tag/Release 一致性。
-- non-goals: 不在未获当前任务明确授权时 push、覆盖 tag 或公开发布。
+- scope: 本地命令、CI status、源码/构建 hash、版本/tag/Release 一致性。
+- non-goals: 未获当轮授权不改 CI、push、覆盖 tag 或公开发布。
 - dependencies: OB-PERF-001
 - acceptance: required
   - [ ] 获得 CI/CD 配置修改授权后，CI 可运行不依赖维护者机器上的隐含路径或未锁定依赖。
   - [x] 候选说明分别列出 real-site verified、structure regression 和 blocked。
   - [x] Release 门禁只接受明确授权和可追溯的构建产物。
-- evidence: 本地完整矩阵、源码 hash 和发布边界已落地；当前任务未授权修改 CI/CD、push、tag 或 Release。
-- next: 用户明确授权 CI/CD 修改时再新增最小工作流；公开发布需另获当轮 push/tag/Release 授权。
+- evidence: 本地矩阵、源码 hash 和发布边界已落地；CI/CD 尚未改动。
+- next: 取得授权后再新增最小工作流；push/tag/Release 按当轮授权。
 - updated: 2026-08-30
 - supersedes: none
 

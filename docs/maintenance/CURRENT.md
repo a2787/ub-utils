@@ -1,26 +1,26 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-10
-状态来源：v0.53.1 当前候选，v0.53.0 已 push/Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.53.1 已 push/tag/Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.53.1`（本轮候选）
+- 当前 userscript：`0.53.1`（已发布）
 - 构建：`0.53.1-ai-background-lifecycle-cache`
-- 当前公开版本/提交：`0.53.0` / `2fdf801b5c9727365c51dc6302032f38cec47793`
-- 最近验证的源码快照：`77ae55c00ab741a6d080ee45e9c94df134c6de82`
-- 当前候选源码 SHA-256：`86c5f9d9ba0e0f44c02b4a251f1cac1656a1c71f3e7e92b66fc2e6ad8858df92`
-- 发布状态：`v0.53.1` 尚未提交/推送；`v0.53.0` 已 push、创建 tag/Release；无登记部署链，未执行平台写入。
-- 当前公开 tag/Release：[`v0.53.0`](https://github.com/a2787/ub-utils/releases/tag/v0.53.0)。
+- 当前公开版本/提交：`0.53.1` / `e372bea97bf70ebbc873d60b4d060ae477e0307c`
+- 最近验证的源码快照：`e372bea97bf70ebbc873d60b4d060ae477e0307c`
+- 当前候选源码 SHA-256：`86c5f9d9ba0e0f44c02b4a251f1cac1656a1c71f3e7e92b66fc2e6ad8858df92`（已发布）
+- 发布状态：`v0.53.1` 已 push、创建 tag/Release；无登记部署链，未执行平台写入。
+- 当前公开 tag/Release：[v0.53.1](https://github.com/a2787/ub-utils/releases/tag/v0.53.1)。
 
-## 2026-09-10 B站 AI 后台屏蔽生命周期与 UID 缓存（OB-AI-012，候选）
+## 2026-09-10 B站 AI 后台屏蔽生命周期与 UID 缓存（OB-AI-012，已发布）
 
 - 范围/文件：确认后先写基础 hash/已有 UID并关闭审核浮层；右下状态条显示后台 UID 进度和撤销；hidden 暂停/恢复，停用、换路由、换视频、撤销和 runtime dispose 取消；用户卡片成功 TTL/LRU 与失败退避；涉及 `omniblock.user.js`、`test/ai-screening.cjs`、`test/quickblock.cjs`、真实探针和维护文档。AI 判定、人工确认、hash→UID 身份边界和平台只读边界不变。
 - `structure regression`：AI screening 全部新增/既有断言通过（23 项）；B站 quickblock 38/38；完整矩阵中运行器 20/20、适配器 28/28、内容 AI、AI 多平台、提示词/评测、批次、自动加载均通过；页面/控制台错误均为 0。新增回归覆盖即时 hash、状态条、hidden/resume、SPA 迟到 UID 丢弃、完成提示、缓存 TTL/LRU/退避契约。
 - `real-site verified`：2026-09-10 独立只读探针动态发现 `bilibili.com/video/...`，当前版本/构建一致；AI mock 自身 UI 链路采集 1 作品、3 评论、153 弹幕（157 条均带身份），1 个弹幕候选确认后审核层立即消失、基础 key 首次写入、后台提示出现；UID mock 返回不存在账号时只保留基础 hash。未执行平台写入。
 - `real-site verified`：同日独立弹幕/评论探针观察 1 作品、3 评论、47 弹幕，弹幕管理器 49 组/47 位发送者，单条、批量、浮动弹幕屏蔽与撤销均通过；评论入口/楼回复屏蔽与撤销通过。未执行平台写入。
 - `blocked`：登录状态未判定，根评论分页仍为 partial；真实线上模型精度、真实 AI UID 后台写入、外部事实检索和平台写入不在本轮验收范围，夹具/mock 结果不能替代这些结论。
-- 计划：完整矩阵和发布链通过后标记 `verified`；发布后另立 OB-AI-013，规划独立本地 AI 评测集和未来事实检索部署，但需用户再次确认才实现。
+- 发布与验证已闭环：功能提交、远端分支、`v0.53.1` tag/Release 已读回；已另立 OB-AI-013 详细规划，未实现评测集或事实检索。
 
 ## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，已发布）
 
@@ -115,13 +115,13 @@
 ## 历史事实路由
 
 - 2026-08-29 至 2026-09-05 的治理、B站入口/身份、微博虚拟列表与作品级读取等已关闭或阶段性条目，保留在 [HISTORY_INDEX.md](HISTORY_INDEX.md) 指向的计划和 `LEGACY-HISTORY.md`；本页只保留当前发布构建、最近证据和仍影响当前决策的限制。
-- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.0 事实。
+- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.1 事实。
 
 ## 汇总证据
 
 ### `structure regression`
 
-- 当前 v0.53.0 发布构建回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 21/21、多平台 7/7、自动弹幕 7/7、quickblock 37/37、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
+- 当前 v0.53.1 发布构建回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 23 项、AI 多平台 7/7、自动弹幕 7/7、quickblock 38/38、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
 - `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
 
 ### `real-site verified`
@@ -152,9 +152,9 @@ node test/real-platform-probe.cjs --verify-local
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-09 新候选维护探针真实读取 B站15、抖音12、微博6、知乎5、贴吧6，X 空壳记 `blocked`；未执行平台写入。
-v0.52.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-10 v0.53.1 B站只读探针结果见顶部 OB-AI-012 条目，未执行平台写入。
+v0.53.1 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-下一项最有价值的工作是另立受控事实检索通道计划；在此之前不把模型内部知识或未核查状态当作虚假，也不把详情页阻断当作全量通过。
+下一项最有价值的工作是评审 OB-AI-013 的独立评测集、指标、来源 allowlist、隐私/成本门禁和分阶段回滚方案；在用户确认前不实现事实检索，不把模型内部知识或未核查状态当作虚假。

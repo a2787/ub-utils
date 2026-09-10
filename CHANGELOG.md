@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（当前候选）
+## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（已发布）
 
 - B站 AI 审核确认后立即关闭浮层，基础 hash/已有 UID 先写入；右下状态条显示后台 UID 进度和撤销入口，完成后提示结果。
 - hidden 时暂停，换路由/换视频/停用/撤销/运行时销毁时取消旧任务；迟到 UID 不写入新会话。
@@ -11,7 +11,7 @@
 
 详细用户变化和证据：[v0.53.1 完整条目](docs/changelog/v0.53.1.md)。
 
-发布状态：当前候选构建为 `0.53.1-ai-background-lifecycle-cache`；发布链完成后回写提交、tag/Release 和真实探针结果。没有登记的生产部署链。
+发布状态：功能提交 `e372bea97bf70ebbc873d60b4d060ae477e0307c` 已推送到 `origin/master`，`v0.53.1` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.53.1) 已创建；构建为 `0.53.1-ai-background-lifecycle-cache`。没有登记的生产部署链，未执行平台写入。
 
 ## v0.53.0 - 事实核查与屏蔽决策分离 - 2026-09-09（已发布）
 
@@ -24,7 +24,7 @@
 
 详细用户变化、验证证据、未接入检索的限制和发布边界：[v0.53.0 完整条目](docs/changelog/v0.53.0.md)。
 
-发布状态：当前公开版本为 [OmniBlock v0.53.0](https://github.com/a2787/ub-utils/releases/tag/v0.53.0)；构建为 `0.53.0-ai-background-bili-commit`，提交/tag/Release 已完成；本仓库没有登记的生产部署链。
+发布状态：v0.53.0 的构建为 `0.53.0-ai-background-bili-commit`，提交/tag/Release 已完成；当前公开版本已推进到 [OmniBlock v0.53.1](https://github.com/a2787/ub-utils/releases/tag/v0.53.1)，本仓库没有登记的生产部署链。
 
 ## v0.52.0 - 多平台内容入口与可学习 AI 提示词反馈 - 2026-09-09（已创建 GitHub Release）
 
