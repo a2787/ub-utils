@@ -1,26 +1,26 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-10
-状态来源：v0.55.0 候选已完成本轮本地回归和匿名真实站点只读探针；发布读回完成后再把本段状态改为已发布。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.55.0 已 push/tag/Release；本轮匿名真实站点只读探针和发布读回已完成。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.55.0`（候选）
+- 当前 userscript：`0.55.0`（已发布）
 - 构建：`0.55.0-context-aware-ai`
-- 当前公开版本/功能提交：`0.54.0` / `61bb394`
-- 最近验证的源码快照：`475e0c9d798249a179d36ad74f6faf5e34a211d2`（候选改动尚未提交）
-- 当前候选源码 SHA-256：`037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`
-- 发布状态：v0.55.0 尚未 commit/push/tag/Release；无登记部署链，未执行平台写入。
-- 当前公开 tag/Release：[v0.54.0](https://github.com/a2787/ub-utils/releases/tag/v0.54.0)。
+- 当前公开版本/功能提交：`0.55.0` / `b865d4261e8f9fb27303d0c14dd22192e84f1544`
+- 最近验证的源码快照：`b865d4261e8f9fb27303d0c14dd22192e84f1544`
+- 当前候选源码 SHA-256：`037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`（即当前发布源码）
+- 发布状态：v0.55.0 已 commit/push/tag/Release；无登记部署链，未执行平台写入。
+- 当前公开 tag/Release：[v0.55.0](https://github.com/a2787/ub-utils/releases/tag/v0.55.0)。
 
-## 2026-09-10 作品语境感知的 AI 屏蔽（OB-AI-014，候选）
+## 2026-09-10 作品语境感知的 AI 屏蔽（OB-AI-014，已发布）
 
 - 范围/文件：B 站视频详情页的作品标题/简介、分 P、真实评论父级关系、已观察弹幕进度进入脱敏 `WorkContext/LocalContext`；上下文候选默认确认到当前作品 `ScopedBlocks`，全局作者屏蔽仍需单独显式选择；改动集中在 `omniblock.user.js`、上下文/桥接/真实探针回归和 v0.55.0 文档。
 - `structure regression`：上下文契约 CTX-1..9、AI screening、内容 AI、提示词系统/评测、事实核查、检索、批次、桥接、自动加载、平台 AI、watchdog、quickblock、适配器、通用运行器和性能回归通过；持久开发扩展 11/11，页面/控制台错误 0；请求级上下文额外字符占比 `19.8%`，低于 `25%` 门槛；unknown rule/context 不足均延期，未把正文指令当规则。
 - `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；最终源码/构建/哈希为 `0.55.0` / `0.55.0-context-aware-ai` / `037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`。两轮动态发现页面均加载成功、页面错误为空；第一轮采集作品 1、评论 3、弹幕 30 共 34 条，34 条带作品上下文、1 条带真实父评论、30 条带弹幕时间；第二轮采集作品 1、评论 2、弹幕 31 共 34 条，34 条带作品上下文、31 条带弹幕时间，出站 ID 仅为序号。
 - `real-site verified`：同日 AI mock 审核链路在真实页面确认 1 条弹幕候选；审核浮层立即关闭，当前作品作用域立即生效，全局键保持不变，作用域记录 1 条，数据写入 0 次；完成提示为“AI 建议已确认：当前作品 1 项，全局新增 0 个身份撤销”。未触发 B 站举报、官方拉黑、关注或发帖。
 - `blocked`：没有运行真实线上模型，不能据此声称语境分类准确率或 p95 在线模型耗时；当前版本不读取字幕、音频或视频画面语义。登录状态未判定，根评论分页仍可能 partial；无稳定证据时继续延期，不把 mock/夹具结果升级为模型效果。
-- 发布状态（记录时）：候选尚未 commit/push/tag/Release；无登记部署链。详细设计、回滚和下一阶段边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.55.0 changelog](../changelog/v0.55.0.md)。
+- 发布状态：功能提交 `b865d4261e8f9fb27303d0c14dd22192e84f1544` 已推送到 `origin/master`；`v0.55.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.55.0) 已创建。无登记部署链，未执行平台写入。详细设计、回滚和下一阶段边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.55.0 changelog](../changelog/v0.55.0.md)。
 
 ## 已发布历史摘要
 
