@@ -52,41 +52,13 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-09
 - supersedes: none
 
-### OB-RULE-002 — 平台关键词屏蔽与评论 AI 建议提醒
-
-- status: verified
-- priority: P1
-- scope: B站/抖音关键词标签与即时本地屏蔽；AI 排除关键词命中；评论增量；微博/知乎 AI 入口。
-- non-goals: 不调用平台写入；不伪造身份；不为关键词消耗 token；不绕过 AI 人工审核；不改 80 条批次、身份键或平台选择器。
-- dependencies: OB-AI-001
-- acceptance: required
-  - [x] 关键词优先、评论增量和微博/知乎 AI 入口回归及真站证据已记录。
-- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md`/v0.51.0 条目。
-- next: 保持候选，发布前另行复核差异、哈希和隐私门禁并取得发布授权。
-- updated: 2026-09-09
-- supersedes: none
-
-### OB-AI-003 — B站新增内容的累计增量 AI 分析
-
-- status: verified
-- priority: P1
-- scope: 首轮后新增评论、楼中楼和弹幕数据段触发稳定 ID 去重的有界增量；`analyzed` 显示页面累计数。
-- non-goals: 不移除每批 80 条上限；不自动滚动/展开；不改 hash→UID、审核、关键词、身份或平台写入边界。
-- dependencies: OB-RULE-002
-- acceptance: required
-  - [x] 评论/楼中楼/弹幕新增记录触发去重增量，`analyzed` 保持页面累计数。
-- evidence: `structure regression` 与 2026-09-08 B站 `real-site verified` 数字详见 `CURRENT.md`；根评论分页仍 partial。
-- next: 依赖结果已交给 OB-AI-004；不公开发布。
-- updated: 2026-09-09
-- supersedes: none
-
 ### OB-AI-004 — 可学习的 AI 提示词系统（v0.52.0）
 
 - status: in_progress
 - priority: P1
 - scope: 提示词/反馈/偏好；审计六平台作者/作品/评论/弹幕/帖子，含抖音精选/搜索/主页、无身份样本。
 - non-goals: 不自动转规则、微调或训练；不改关键词/审核/脱敏/网关；无内容路由不显示入口；不调用平台写入。
-- dependencies: OB-AI-003
+- dependencies: OB-AI-001
 - acceptance: required
   - [x] schema、迁移、脱敏、预算通过。
   - [x] 反馈三态/理由、提示词、提案、离线评测通过。
@@ -100,79 +72,13 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-09
 - supersedes: none
 
-### OB-AI-009 — 提示词反馈样例与开发扩展桥协议修复
-
-- status: verified
-- priority: P1
-- scope: 修复提示词系统输出的反馈样例与持久化开发扩展桥请求白名单不一致的问题；保留 `contentType` 作为 AI 内容形态上下文；让桥接拒绝、网关 HTTP、超时和桥状态错误在页面上可区分；补充带反馈样例的端到端开发扩展回归，并在用户授权的专用 Chrome 当前页面复验。
-- non-goals: 不改 provider、模型路由、API Key、提示词隐私边界、80 条批次上限、关键词/人工审核/身份键或任何平台写入；不删除已有反馈或重置用户浏览器存储；不公开发布。
-- dependencies: OB-AI-004
-- acceptance: required
-  - [x] `contentType` 反馈样例在主世界、隔离世界和 service worker 三层白名单中保持一致，并到达 loopback mock 网关。
-  - [x] `request-not-allowed` 等桥接错误不再伪装成“AI 网关请求失败”；只有桥状态降级时才提示刷新扩展。
-  - [x] 持久化开发扩展带含 `contentType` 的反馈样例分析成功，既有无反馈样例路径继续通过，页面/控制台错误为 0。
-  - [x] `node --check`、受影响 AI/提示词/扩展回归、文档门禁和专用 Chrome 当前微博页真实只读验证均已按 `structure regression` 或 `real-site verified` 记录。
-- evidence: `structure regression`：开发扩展7/7、内容 AI12/12、screening18/18、提示词12/12、评测5/5、多平台7/7；三层白名单与拒绝路径通过。`real-site verified`：2026-09-09 专用 Chrome 微博页 bridge ready，分析6/6、HTTP 200、无 lastError；未执行平台写入。
-- next: 源码已随 v0.52.0 推送；若要创建 tag/Release，另行复核最终差异、源码哈希、隐私门禁和对应授权；DeepSeek 真实语义精度继续由独立评测衡量。
-- updated: 2026-09-09
-- supersedes: none
-
-### OB-AI-010 — AI 审核负向反馈可撤销切换
-
-- status: verified
-- priority: P1
-- scope: 审核弹窗「不屏蔽」按钮；负向反馈精确删除、候选重新可选、再次记录，以及持久化开发扩展刷新后的状态读回。
-- non-goals: 不写入主屏蔽名单；不改平台写入、提示词隐私、批次上限或 AI 判定。
-- dependencies: OB-AI-009
-- acceptance: required
-  - [x] 首次点击仍记录 `ai_rejected` 负反馈且按钮保持可点击的灰态。
-  - [x] 再次点击删除对应反馈、恢复可靠身份候选的勾选能力；第三次点击可重新记录。
-  - [x] 新记录经持久化开发扩展保存后，刷新页面仍能恢复灰态反馈并允许撤销。
-  - [x] 夹具回归和专用 Chrome 当前审核弹窗验证通过，未执行平台写入。
-- evidence: `structure regression`：AI screening 19/19、持久化开发扩展 8/8，无页面/控制台错误；`real-site verified`：2026-09-09 专用 Chrome 当前微博审核弹窗完成负反馈四步切换，并验证新记录刷新后恢复灰态、再次撤销，最终反馈 0、候选可选、bridge ready。
-- next: 已随 v0.52.0 源码推送并创建匹配的 tag/Release；DeepSeek 真实语义准确率和后续提示词迭代仍按新计划处理。
-- updated: 2026-09-09
-- supersedes: none
-
-### OB-AI-011 — 事实核查状态与屏蔽决策分离
-
-- status: verified
-- priority: P1
-- scope: AI 提示词和响应解析；区分规则违规、事实性主张、观点与“未核查/语境不足”；默认不因缺少引用或模型未查证而生成屏蔽候选，并在状态/审核说明中保留延后计数。
-- non-goals: 不把平台正文发往公共搜索；不新增隐私扩展权限或非 loopback 通道；不把模型臆测当外部证据；不改关键词优先级、身份键、人工确认、80 条批次或平台写入边界。
-- dependencies: OB-AI-004, OB-AI-009, OB-AI-010
-- acceptance: required
-  - [x] 提示词明确“缺少来源不等于虚假”，要求返回 `claimType`、`verificationStatus`、`verificationMethod` 和 `ruleMatched`。
-  - [x] 客户端拒绝仅凭 `unverified/not_checked/insufficient_context` 的事实性屏蔽候选；兼容旧响应中的“未经证实/无可核实依据”误判。
-  - [x] 规则性攻击、广告等非事实性违规仍能进入人工审核；未核查数量在 AI 状态和审核说明中可见，不写入名单。
-  - [x] 人工合成回归覆盖“真实/未核查短句不误杀、明确违规仍候选、无身份仍不可执行”，专用 Chrome 当前页面复验。
-- evidence: `structure regression` 与 `real-site verified` 详见 `CURRENT.md` 和 `docs/changelog/v0.53.0.md`；`blocked` 仅表示当前网关尚未接入外部检索，不是事实判断通过。
-- next: 保持 0.53.0 已发布；若接入检索，另立计划并先评审来源、隐私、缓存、回退和成本。
-- updated: 2026-09-09
-- supersedes: none
-
-### OB-AI-012 — B站 AI 确认后的后台任务闭环
-
-- status: verified
-- priority: P1
-- scope: 即时生效、后台状态/撤销、会话隔离、UID 缓存和失败退避。
-- non-goals: 不改 AI 判定/提示词、检索、平台写入、身份键和确认门槛。
-- dependencies: OB-AI-001, OB-AI-003, OB-AI-011
-- acceptance: required
-  - [x] 即时关闭/基础写入/状态/撤销及 hidden、路由、停用隔离通过。
-  - [x] 缓存、退避、矩阵、文档门禁和两次 B站探针通过。
-- evidence: 矩阵与 2026-09-10 B站两探针；阻断项见 CURRENT。详见[实施说明](plans/2026-09-10-ob-ai-012.md)。
-- next: 发布链完成；OB-AI-013 仅规划，等待确认。
-- updated: 2026-09-10
-- supersedes: none
-
 ### OB-AI-013 — 独立 AI 评测集与事实检索部署方案
 
 - status: in_progress
 - priority: P1
 - scope: 评测、门禁、灰度、回滚。
 - non-goals: 不接公共搜索/自动屏蔽；不放宽身份边界。
-- dependencies: OB-AI-011, OB-AI-012
+- dependencies: OB-AI-001, OB-AI-004
 - acceptance: required
   - [x] 协议、门槛、allowlist、rollout 固化。
   - [x] 离线评测、broker、shadow/canary 回归通过。
@@ -182,40 +88,26 @@ proposed → approved → in_progress → verified
 - updated: 2026-09-10
 - supersedes: none
 
-### OB-VALID-001 — 专用登录态探针与开发扩展同步
+### OB-AI-014 — 作品语境感知的 AI 屏蔽
 
-- status: verified
+- status: in_progress
+- stage: 阶段 A-D 已完成；阶段 E 的线上模型/字幕实验保持 `blocked`
 - priority: P1
-- scope: 修复隔离/专用 Chrome 验证分流；专用 profile 只读探针覆盖版本、桥接、入口和 AI 读取计数，扩展同步后可刷新旧构建。
-- non-goals: 不读取凭证/Cookie/私有接口，不触发平台写入，不规避验证码/限流，不改 `.env`、凭据、选择器或既有发布物。
-- dependencies: OB-COVERAGE-001, OB-AI-009, OB-AI-010
+- scope: 先在 B 站视频详情页建立作品/分 P/评论楼/弹幕位置的最小语境包；AI 只给出带语境充分性和规则证据的人工审核候选；确认后的语境依赖项默认写入当前作品会话内的可撤销本地屏蔽，显式选择全局作者后才进入既有全局名单。
+- non-goals: 不把作品标题或上下文单独变成屏蔽规则；不自动屏蔽；不把 hash-only 伪装成 UID；不读取或写入 B 站官方状态；不把事实检索、字幕/音频理解或其他平台适配混入本项；不把旧的无语境反馈跨作品复用。
+- dependencies: OB-AI-004, OB-AI-013
 - acceptance: required
-  - [x] `maintenance-check` 保留隔离探针；`--dedicated-only` 先同步扩展再读专用 profile，`--dedicated` 另保留匿名对照。
-  - [x] 探针优先读取现有页，必要时创建/关闭临时页；输出脱敏路由、计数和 `real-site verified`/`blocked`。
-  - [x] `dev-browser sync` 核对版本/桥接并刷新旧扩展；未就绪不能报告 ready。
-  - [x] 人工合成分类回归 8/8 通过；不读取登录态、不注入源码、不触发平台写入。
-  - [x] 2026-09-09 专用 Chrome 只读复验六平台：B站8条作品、抖音46条作品、微博6条帖子、知乎5条回答、贴吧1主题+2评论；X 当前为空壳，明确记 `blocked`。
-- evidence: `structure regression`：分类6/6及维护矩阵通过；`real-site verified`：2026-09-09 专用 Chrome 读到五个平台记录且 bridge ready；`blocked`：X 空壳、B站/抖音详情目标不稳定。
-- next: 取得当轮授权后用 `node test/maintenance-check.cjs --dedicated-only`，匿名对照再用 `--dedicated`。
-- updated: 2026-09-09
+  - [x] 语境契约、脱敏字段、作品/内容实例键、父评论关系和缺失语境降级规则有离线回归。
+  - [x] B 站视频详情页可稳定区分当前作品、分 P、根评论/回复和已观察弹幕；动态/推荐流不复用视频详情页语境。
+  - [x] payload 只发送短、结构化、脱敏的上下文；正文中的指令不改变系统规则；同一句文本在不同作品/父评论下不会共享候选或负反馈。
+  - [x] AI 输出缺少语境时只能 `uncertain`/延后；明确命中规则才可进入审核；事实核验状态与政策违规判定继续分离。
+  - [x] 语境依赖候选默认只在当前作品内隐藏且可撤销；全局作者屏蔽是单独、显式、可靠身份操作；已有关键词/手动名单优先级不变。
+  - [x] 结构预算：上下文输入相对当前基线增加 `19.8%`，不超过 25%；[ ] p95 分析耗时增加不超过 30%（`blocked`：本轮没有可重复的线上模型运行条件）；指标不得通过全部延后候选取得。
+  - [x] 通过 B 站 AI/弹幕/通用回归、文档门禁和真实只读探针；未具备稳定字幕/音频证据时明确标记 `blocked`，不声称理解视频声音。
+- evidence: `structure regression`（CTX-1..9、AI/桥接/平台/通用矩阵）；`real-site verified`（2026-09-10 匿名隔离 B 站只读探针，0.55.0，34+34 条上下文记录，背景确认后当前作品作用域立即生效且全局键不变）；`blocked`（线上模型 p95/精度、字幕/音频/画面语义）。计划说明见[实施方案](plans/2026-09-10-ob-ai-014.md)。
+- next: 完成发布读回后，若取得稳定线上模型条件，再按阶段 E 做三次固定配置评测和 p95 基线；字幕/音频仍先保持只读实验，不满足证据条件不得进入生产路径。
+- updated: 2026-09-10
 - supersedes: none
-
-### OB-AI-005 — DeepSeek Flash 网关型号刷新（本机运行时）
-
-- status: verified
-- priority: P1
-- dependencies: OB-AI-001
-- scope: 本机 LiteLLM provider 切换至用户提供的内测型号 `deepseek-v4.1-flash-expires-on-0910`；保持 `omni-default`、官方地址、thinking、重试/限流和 API Key 不变。
-- non-goals: 不改 `.env`/凭据、userscript、提示词/审核/身份/平台/版本；不测试视觉输入，不公开发布。
-- acceptance: required
-  - [x] 官方 `GET /models` 脱敏查询完成；公开列表未列出内测 ID，随后按用户提供的精确 ID 做直连路由验证。
-  - [x] manifest 保持别名、地址和 primary 边界，health 与 loopback 窄 JSON 请求均通过。
-  - [x] gateway smoke、语法、文档和差异门禁通过。
-- evidence: `structure regression`：本机 manifest/health、gateway smoke、经目标 ID 路由的合成 HTTP 200；公开目录未列出内测 ID。
-- next: 到期复核；精度另建人工标注评测。
-- updated: 2026-09-08
-- supersedes: none
-- files: `gateway/runtime/*`（Git 忽略）；详见 `CURRENT.md`
 
 ### OB-WEIBO-003 — 详情页作品级评论统计作用域
 

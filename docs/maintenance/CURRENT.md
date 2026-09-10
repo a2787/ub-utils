@@ -1,33 +1,31 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-10
-状态来源：v0.54.0 已 push/tag/Release；历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.55.0 候选已完成本轮本地回归和匿名真实站点只读探针；发布读回完成后再把本段状态改为已发布。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.54.0`（已发布）
-- 构建：`0.54.0-ai-eval-fact-gates`
+- 当前 userscript：`0.55.0`（候选）
+- 构建：`0.55.0-context-aware-ai`
 - 当前公开版本/功能提交：`0.54.0` / `61bb394`
-- 最近验证的源码快照：`61bb3944398890f49314829374d22f6b0e528960`
-- 当前候选源码 SHA-256：`56e5d9f1a8400e311426a8900708ad6e34fea5b7ffe631025f95425cf446251f`
-- 发布状态：v0.54.0 已 push/tag/Release；无登记部署链，未执行平台写入。
+- 最近验证的源码快照：`475e0c9d798249a179d36ad74f6faf5e34a211d2`（候选改动尚未提交）
+- 当前候选源码 SHA-256：`037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`
+- 发布状态：v0.55.0 尚未 commit/push/tag/Release；无登记部署链，未执行平台写入。
 - 当前公开 tag/Release：[v0.54.0](https://github.com/a2787/ub-utils/releases/tag/v0.54.0)。
 
-## 2026-09-10 独立 AI 评测与受控事实核查（OB-AI-013，已发布）
+## 2026-09-10 作品语境感知的 AI 屏蔽（OB-AI-014，候选）
 
-- 范围/文件：人工合成 24 例独立评测集与指标 runner；loopback-only、本机 allowlist 事实 broker；userscript `off/shadow/canary` 两阶段核查、脱敏 ordinal claim、事实缓存和状态展示；版本构建为 `0.54.0-ai-eval-fact-gates`。
-- `structure regression`：评测集哈希 `4a7e2cc9403693c2ae3116ecc7f0ec985f65a47700c9a38dfb3a63527cfb84bc`；mock-oracle 门禁通过但不代表模型精度；broker RETRIEVAL-1..5、AI FACT-1..4、持久扩展桥 10/10、现有 AI screening 23 项及内容/提示词/批次回归通过，页面/控制台错误为 0。事实核查不产生 UID、不接收 Cookie/Key，不自动写名单。
-- `real-site verified`：2026-09-10，隔离匿名只读会话，脱敏页面形式 `bilibili.com/video/...`；版本/构建/源码哈希为 `0.54.0` / `0.54.0-ai-eval-fact-gates` / `56e5d9f1a8400e311426a8900708ad6e34fea5b7ffe631025f95425cf446251f`。普通探针观察到作品 1、评论 3、弹幕 46 共 50 条 AI 内容，弹幕分组 77、发送者 46、浮动弹幕 7；AI 后台探针生成 1 个弹幕候选，确认后审核浮层关闭、基础 hash 写入 1 次并生效，完成提示已出现，最终键生效；未触发平台官方写入。
-- `blocked`：未配置真实来源 allowlist，未进行公共搜索、线上模型三次精度运行或成本基线；无结果/冲突/过期/失败统一保守延期。专用浏览器 CDP 同步因 `127.0.0.1:9222` 不可用而 blocked，平台官方写入仍不执行。
+- 范围/文件：B 站视频详情页的作品标题/简介、分 P、真实评论父级关系、已观察弹幕进度进入脱敏 `WorkContext/LocalContext`；上下文候选默认确认到当前作品 `ScopedBlocks`，全局作者屏蔽仍需单独显式选择；改动集中在 `omniblock.user.js`、上下文/桥接/真实探针回归和 v0.55.0 文档。
+- `structure regression`：上下文契约 CTX-1..9、AI screening、内容 AI、提示词系统/评测、事实核查、检索、批次、桥接、自动加载、平台 AI、watchdog、quickblock、适配器、通用运行器和性能回归通过；持久开发扩展 11/11，页面/控制台错误 0；请求级上下文额外字符占比 `19.8%`，低于 `25%` 门槛；unknown rule/context 不足均延期，未把正文指令当规则。
+- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；最终源码/构建/哈希为 `0.55.0` / `0.55.0-context-aware-ai` / `037810ab3b11fc4fa1e57d8ccd4dcaff0439dd88d2c0701d046b167f67db29f6`。两轮动态发现页面均加载成功、页面错误为空；第一轮采集作品 1、评论 3、弹幕 30 共 34 条，34 条带作品上下文、1 条带真实父评论、30 条带弹幕时间；第二轮采集作品 1、评论 2、弹幕 31 共 34 条，34 条带作品上下文、31 条带弹幕时间，出站 ID 仅为序号。
+- `real-site verified`：同日 AI mock 审核链路在真实页面确认 1 条弹幕候选；审核浮层立即关闭，当前作品作用域立即生效，全局键保持不变，作用域记录 1 条，数据写入 0 次；完成提示为“AI 建议已确认：当前作品 1 项，全局新增 0 个身份撤销”。未触发 B 站举报、官方拉黑、关注或发帖。
+- `blocked`：没有运行真实线上模型，不能据此声称语境分类准确率或 p95 在线模型耗时；当前版本不读取字幕、音频或视频画面语义。登录状态未判定，根评论分页仍可能 partial；无稳定证据时继续延期，不把 mock/夹具结果升级为模型效果。
+- 发布状态（记录时）：候选尚未 commit/push/tag/Release；无登记部署链。详细设计、回滚和下一阶段边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.55.0 changelog](../changelog/v0.55.0.md)。
 
-## 2026-09-10 B站 AI 后台屏蔽生命周期与 UID 缓存（OB-AI-012，已发布）
+## 已发布历史摘要
 
-- 范围/文件：确认后先写基础 hash/已有 UID并关闭审核浮层；右下状态条显示后台 UID 进度和撤销；hidden 暂停/恢复，停用、换路由、换视频、撤销和 runtime dispose 取消；用户卡片成功 TTL/LRU 与失败退避；涉及 `omniblock.user.js`、`test/ai-screening.cjs`、`test/quickblock.cjs`、真实探针和维护文档。AI 判定、人工确认、hash→UID 身份边界和平台只读边界不变。
-- `structure regression`：AI screening 全部新增/既有断言通过（23 项）；B站 quickblock 38/38；完整矩阵中运行器 20/20、适配器 28/28、内容 AI、AI 多平台、提示词/评测、批次、自动加载均通过；页面/控制台错误均为 0。新增回归覆盖即时 hash、状态条、hidden/resume、SPA 迟到 UID 丢弃、完成提示、缓存 TTL/LRU/退避契约。
-- `real-site verified`：2026-09-10 独立只读探针动态发现 `bilibili.com/video/...`，当前版本/构建一致；AI mock 自身 UI 链路采集 1 作品、3 评论、153 弹幕（157 条均带身份），1 个弹幕候选确认后审核层立即消失、基础 key 首次写入、后台提示出现；UID mock 返回不存在账号时只保留基础 hash。未执行平台写入。
-- `real-site verified`：同日独立弹幕/评论探针观察 1 作品、3 评论、47 弹幕，弹幕管理器 49 组/47 位发送者，单条、批量、浮动弹幕屏蔽与撤销均通过；评论入口/楼回复屏蔽与撤销通过。未执行平台写入。
-- `blocked`：登录状态未判定，根评论分页仍为 partial；真实线上模型精度、真实 AI UID 后台写入、外部事实检索和平台写入不在本轮验收范围，夹具/mock 结果不能替代这些结论。
-- 发布与验证已闭环：功能提交、远端分支、`v0.53.1` tag/Release 已读回；已另立 OB-AI-013 详细规划，未实现评测集或事实检索。
+- v0.54.0 独立 AI 评测与受控事实核查：细节、数据集哈希和真实站点证据见 [v0.54.0 changelog](../changelog/v0.54.0.md)。
+- v0.53.1 B 站 AI 后台屏蔽生命周期与 UID 缓存：细节和回滚见 [v0.53.1 changelog](../changelog/v0.53.1.md)。
 
 ## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，已发布）
 

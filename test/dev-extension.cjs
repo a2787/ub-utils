@@ -73,6 +73,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   } else {
     report.fail.push('事实核查请求的开发扩展桥白名单未在三层同步');
   }
+  if (bridgeSources.length === 3 && bridgeSources.every((source) => source.includes('isAllowedAIContext')
+    && source.includes('isAllowedAIContextCatalog') && source.includes('contextSchemaVersion'))) {
+    report.pass.push('作品语境 context/contextCatalog 在三层开发扩展桥中均受 ordinal 白名单校验');
+  } else {
+    report.fail.push('作品语境 context/contextCatalog 未在三层开发扩展桥同步校验');
+  }
   const aiRequests = [];
   const factRequests = [];
   const responseFor = (body) => {
@@ -240,17 +246,24 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && aiExamples.every((example) => Object.keys(example).sort().join(',')
         === 'contentType,kind,label,note,reasonCode,role,text')
       && aiExamples.some((example) => example.contentType === 'comment');
+    const aiContextCatalogOk = !!(aiInput && aiInput.contextSchemaVersion === 1
+      && aiInput.contextCatalog && Array.isArray(aiInput.contextCatalog.works)
+      && aiInput.contextCatalog.works.every((work) => /^w\d+$/.test(work.id || '')
+        && typeof work.title === 'string' && !/space\.bilibili|bili:(?:uid|dmhash)/i.test(JSON.stringify(work))));
+    const aiUnsafeMatches = JSON.stringify(aiInput || {}).match(/bili:uid|bili:dmhash|space\.bilibili|["'](?:uid|mid|hash|keys)["']/gi) || [];
     const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules)
       && aiItems.length === 2
-      && aiItems.every((item) => ['contentType,id,kind,text', 'contentType,id,kind,text,title'].includes(Object.keys(item).sort().join(',')))
+      && aiItems.every((item) => ['contentType,id,kind,text', 'contentType,id,kind,text,title',
+        'contentType,context,id,kind,text', 'contentType,context,id,kind,text,title'].includes(Object.keys(item).sort().join(',')))
       && aiItems.some((item) => item.kind === 'comment' && item.contentType === 'comment')
       && aiItems.some((item) => item.kind === 'content' && item.contentType === 'video' && item.title === '人工合成作品标题')
-      && !/uid|mid|hash|keys/i.test(JSON.stringify(aiRequests[0].body)));
+      && !/bili:uid|bili:dmhash|space\.bilibili|["'](?:uid|mid|hash|keys)["']/i.test(JSON.stringify(aiInput)));
     if (aiResult && aiResult.ok && aiBridgeState.state === 'ready' && aiRequests.length === 1
-      && aiHasOnlySafeItems && aiFeedbackExampleOk) {
+      && aiHasOnlySafeItems && aiContextCatalogOk && aiFeedbackExampleOk) {
       report.pass.push('page-1 loopback AI 作品/评论/反馈样例窄 JSON 经持久桥接返回，未携带身份字段');
     } else {
-      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput, aiFeedbackExampleOk }));
+      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput, aiFeedbackExampleOk,
+        aiContextCatalogOk, aiHasOnlySafeItems, aiUnsafeMatches, itemShapes: aiItems.map((item) => Object.keys(item).sort().join(',')) }));
     }
 
     const aiBeforeFact = aiRequests.length;

@@ -152,6 +152,16 @@ AI 结果还必须把 `claimType`、`verificationStatus`、`verificationMethod` 
 生成的事实性屏蔽候选，并在状态中累计延后数。v0.54.0 的事实核查默认关闭；开启后只对模型标记的事实性主张，先向
 `127.0.0.1:4001/v1/fact-check` 发送脱敏 ordinal claim，再把受限来源摘要放入第二次 AI 请求。`shadow` 只观测，`canary` 才允许有来源的事实结果进入既有人工审核；没有来源、冲突、过期或失败仍延期。userscript 不把模型内部知识冒充外部来源，事实证据不直接生成屏蔽键、不增加 UID 可信度；只有非事实性规则违规，或带正面矛盾依据的事实性结果，才进入人工审核。
 
+### AI 作品语境与作用域
+
+v0.55.0 起，B站视频详情页的 AI 记录可带 `WorkContext`/`LocalContext`：作品标题、简介和分 P；评论只在真实 DOM/API 回复关系成立时带一层 parent；弹幕只在已观察的 seg.so 消息中带 progress/segment。推荐卡、动态卡和其他平台不能复用当前视频语境；缺少独立作品来源时保持既有 partial/只读行为。
+
+语境不是屏蔽规则。AI block 仍必须命中本次 `ruleCatalog` 中的规则，`contextSufficiency=insufficient`、未知 `matchedRuleIds`、旧响应缺少语境字段和事实未核查路径均延期；客户端只接受输入中存在的规则 ID。请求按批次建立 `contextCatalog.works`，作品元数据只发送一次，item 仅发送 ordinal `workId/itemId/partId/parentId`、充分性、父评论和时间字段；开发扩展三层边界与 loopback 请求均拒绝平台 UID、弹幕 hash、URL、Cookie 和原始平台对象。
+
+审核确认默认写入内存 `ScopedBlocks`，作用域为 `work/part/item`，立即参与扫描器、B站弹幕过滤和后续同实例重绘；撤销只移除本次 token，SPA 换路由或 runtime dispose 清空整个当前作品作用域。用户明确选择「全局作者」且存在可靠身份时，才沿用 `Store.addIdentityGroups` 和既有 UID 增强链。反馈事件保存脱敏作用域指纹，旧的无语境事件和其他作品事件不作为当前候选的负反馈；作用域确认不改变全局名单，也不改变关键词/手动名单优先级。
+
+本边界只处理标题/简介、回复关系和弹幕位置，不能声称理解视频画面、字幕或音频；未来接入这些来源必须先有独立捕获、隐私/成本门禁和单独计划。
+
 ### B站 AI 弹幕确认后的后台增强
 
 AI 审核确认只先把选中记录的基础 `bili:dmhash`/已有 UID 写入本地名单并关闭审核浮层；只有

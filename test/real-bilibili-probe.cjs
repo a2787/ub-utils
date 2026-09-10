@@ -51,10 +51,26 @@ window.GM_xmlhttpRequest = (options) => {
       const body = JSON.parse(options.data || '{}');
       const input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}');
       const items = Array.isArray(input.items) ? input.items : [];
+      const baselineItems = items.map((item) => {
+        const copy = { ...item };
+        delete copy.context;
+        return copy;
+      });
+      const baselineInput = { ...input, items: baselineItems };
+      delete baselineInput.contextSchemaVersion;
+      delete baselineInput.contextCatalog;
+      const baselineChars = String(body.messages && body.messages[0] && body.messages[0].content || '').length
+        + JSON.stringify(baselineInput).length;
+      const actualChars = String(body.messages && body.messages[0] && body.messages[0].content || '').length
+        + JSON.stringify(input).length;
       window.__obAIProbe.summaries.push({
         itemCount: items.length,
         danmakuCount: items.filter((item) => item && item.kind === 'danmaku').length,
         contentCount: items.filter((item) => item && item.kind === 'content').length,
+        contextItemCount: items.filter((item) => item && item.context).length,
+        contextWorkCount: input.contextCatalog && Array.isArray(input.contextCatalog.works)
+          ? input.contextCatalog.works.length : 0,
+        contextOverheadRatio: baselineChars ? Number(((actualChars - baselineChars) / baselineChars).toFixed(3)) : 0,
       });
     } catch (error) {
       window.__obAIProbe.summaries.push({ parseError: true });
@@ -274,7 +290,9 @@ async function pickLocalCommentTarget(candidates) {
         } catch (error) {}
         const item = Array.isArray(input.items)
           ? input.items.find((candidate) => candidate && candidate.kind === 'danmaku')
+            || input.items.find((candidate) => candidate && candidate.context)
           : null;
+        const ruleIds = Array.isArray(input.ruleCatalog) ? input.ruleCatalog.map((rule) => rule && rule.id).filter(Boolean) : [];
         const response = {
           choices: [{ message: { content: JSON.stringify({
             items: item ? [{
@@ -284,6 +302,8 @@ async function pickLocalCommentTarget(candidates) {
               verificationStatus: 'not_applicable',
               verificationMethod: 'none',
               ruleMatched: true,
+              matchedRuleIds: ruleIds.slice(0, 1),
+              contextSufficiency: 'sufficient',
               confidence: 0.99,
               reasonCodes: ['probe_rule_match'],
               reason: '命中探针规则',
@@ -416,6 +436,29 @@ async function pickLocalCommentTarget(candidates) {
           contentTypes,
           withIdentity: records.filter((record) => Array.isArray(record && record.keys) && record.keys.length).length,
           withoutIdentity: records.filter((record) => !Array.isArray(record && record.keys) || !record.keys.length).length,
+          context: (() => {
+            const contextRecords = records.filter((record) => record && record.context && record.context.work);
+            const registry = window.OB && window.OB.ai && window.OB.ai.context
+              && typeof window.OB.ai.context.createRegistry === 'function'
+              ? window.OB.ai.context.createRegistry() : null;
+            const outbound = registry && window.OB.ai && window.OB.ai.context
+              && typeof window.OB.ai.context.toOutbound === 'function'
+              ? contextRecords.map((record) => window.OB.ai.context.toOutbound(record.context, registry)).filter(Boolean)
+              : [];
+            const outboundText = JSON.stringify(outbound);
+            return {
+              records: contextRecords.length,
+              work: contextRecords.filter((record) => record.context.work && record.context.work.title).length,
+              parent: contextRecords.filter((record) => record.context.parent).length,
+              time: contextRecords.filter((record) => record.context.time).length,
+              byKind: contextRecords.reduce((counts, record) => {
+                const kind = String(record.kind || 'unknown');
+                counts[kind] = (counts[kind] || 0) + 1;
+                return counts;
+              }, {}),
+              outboundOrdinalOnly: !!outbound.length && !/(space\.bilibili|bili:uid|bili:dmhash|BV[0-9A-Za-z]{8,}|https?:\/\/)/i.test(outboundText),
+            };
+          })(),
           contentRoute: !!(adapter && typeof adapter.contentRouteAvailable === 'function' && adapter.contentRouteAvailable()),
         };
       } catch (error) {
@@ -442,7 +485,9 @@ async function pickLocalCommentTarget(candidates) {
         if (!window.OB || !window.OB.ai) return { status: 'blocked', reason: '脚本 AI 接口未就绪' };
         window.OB.ai.closeReview();
         const analysis = await window.OB.ai.analyzePage('探针选定的弹幕内容');
-        const before = recordList().find((record) => record && record.kind === 'danmaku' && record.keys && record.keys.length);
+        const records = recordList();
+        const before = records.find((record) => record && record.kind === 'danmaku' && record.keys && record.keys.length)
+          || records.find((record) => record && record.context && record.keys && record.keys.length);
         const review = document.querySelector('#ob-ai-review');
         const candidate = review && review.querySelector('.ob-ai-candidate input[type="checkbox"]:not(:disabled)');
         if (!review || !candidate || !before) {
@@ -456,14 +501,21 @@ async function pickLocalCommentTarget(candidates) {
           };
         }
         const selectedKey = String(before.keys.find((key) => /^bili:dmhash:/.test(String(key || ''))) || before.keys[0] || '');
+        const selectedContext = before.context || null;
         if (!candidate.checked) candidate.click();
         const confirm = review.querySelector('.ob-ai-confirm');
         if (!confirm) return { status: 'blocked', reason: 'AI 审核确认按钮未找到' };
         confirm.click();
         const dataImmediately = String(window.__gm && window.__gm['omniblock:data:v1'] || '');
+        const scopedMatches = !!(selectedContext && window.OB.ai.scopedBlocks
+          && typeof window.OB.ai.scopedBlocks.matches === 'function'
+          && window.OB.ai.scopedBlocks.matches({ context: selectedContext }));
         const immediate = {
           reviewClosed: !document.querySelector('#ob-ai-review'),
-          baseKeyEffective: !!selectedKey && dataImmediately.includes(selectedKey),
+          scopedEffective: scopedMatches,
+          globalKeyUnchanged: !selectedKey || !dataImmediately.includes(selectedKey),
+          scopedCount: window.OB.ai.scopedBlocks && typeof window.OB.ai.scopedBlocks.snapshot === 'function'
+            ? window.OB.ai.scopedBlocks.snapshot().length : 0,
           dataWriteCount: Number(window.__obProbeWrites) || 0,
         };
         let toastText = '';
@@ -476,13 +528,13 @@ async function pickLocalCommentTarget(candidates) {
         }
         const finalData = String(window.__gm && window.__gm['omniblock:data:v1'] || '');
         return {
-          status: immediate.reviewClosed && immediate.baseKeyEffective && /AI 建议已确认/.test(toastText)
+          status: immediate.reviewClosed && immediate.scopedEffective && immediate.globalKeyUnchanged && /AI 建议已确认/.test(toastText)
             ? 'passed' : 'failed',
           analysis: analysis && { ok: !!analysis.ok, candidates: Array.isArray(analysis.candidates) ? analysis.candidates.length : 0 },
           selectedKind: before.kind,
           immediate,
           completionToast: toastText.slice(0, 180),
-          finalKeyEffective: !!selectedKey && finalData.includes(selectedKey),
+          finalGlobalKeyUnchanged: !selectedKey || !finalData.includes(selectedKey),
           storageWriteCount: Number(window.__obProbeWrites) || 0,
         };
       });

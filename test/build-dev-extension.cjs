@@ -200,6 +200,40 @@ const isolatedBridge = String.raw`(() => {
         && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
         && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
   }
+  function isAllowedAIContext(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
+      || !/^w\d{1,3}$/.test(String(value.workId || ''))
+      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
+      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
+      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
+    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
+      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
+      || !['reply', 'quote', 'root'].includes(value.parent.relation)
+      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
+    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
+      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
+      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
+      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
+    return true;
+  }
+  function isAllowedAIContextCatalog(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => key !== 'works')
+      || !Array.isArray(value.works) || value.works.length > 80) return false;
+    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+      && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
+      && /^w\d{1,3}$/.test(String(work.id || ''))
+      && typeof work.title === 'string' && work.title.length <= 240
+      && typeof work.description === 'string' && work.description.length <= 800
+      && Array.isArray(work.sources) && work.sources.length <= 4
+      && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
+      && ['reliable', 'partial', 'missing'].includes(work.confidence)
+      && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+  }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
     let body;
@@ -214,9 +248,16 @@ const isolatedBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
+        || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)
+          || Object.keys(rule).some((key) => !['id', 'text'].includes(key))
+          || !/^ai_[a-z0-9_-]{1,80}$/i.test(String(rule.id || ''))
+          || typeof rule.text !== 'string' || rule.text.length > 500)))
+      || !isAllowedAIContextCatalog(input.contextCatalog)
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
       || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
       || input.profile.schemaVersion !== 1
@@ -244,12 +285,13 @@ const isolatedBridge = String.raw`(() => {
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text', 'context'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
         && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
         && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
         && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
-        && typeof item.text === 'string' && item.text.length <= 800);
+        && typeof item.text === 'string' && item.text.length <= 800
+        && isAllowedAIContext(item.context));
   }
   function normalizeAllowedRequest(message) {
     const method = String(message && message.method || 'GET').toUpperCase();
@@ -455,6 +497,40 @@ const serviceWorker = String.raw`(() => {
         && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
         && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
   }
+  function isAllowedAIContext(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
+      || !/^w\d{1,3}$/.test(String(value.workId || ''))
+      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
+      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
+      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
+    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
+      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
+      || !['reply', 'quote', 'root'].includes(value.parent.relation)
+      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
+    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
+      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
+      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
+      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
+    return true;
+  }
+  function isAllowedAIContextCatalog(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => key !== 'works')
+      || !Array.isArray(value.works) || value.works.length > 80) return false;
+    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+      && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
+      && /^w\d{1,3}$/.test(String(work.id || ''))
+      && typeof work.title === 'string' && work.title.length <= 240
+      && typeof work.description === 'string' && work.description.length <= 800
+      && Array.isArray(work.sources) && work.sources.length <= 4
+      && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
+      && ['reliable', 'partial', 'missing'].includes(work.confidence)
+      && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+  }
   function allowedBody(data) {
     if (typeof data !== 'string' || data.length > MAX_AI_REQUEST_CHARS) return false;
     let body;
@@ -469,9 +545,16 @@ const serviceWorker = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
+        || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)
+          || Object.keys(rule).some((key) => !['id', 'text'].includes(key))
+          || !/^ai_[a-z0-9_-]{1,80}$/i.test(String(rule.id || ''))
+          || typeof rule.text !== 'string' || rule.text.length > 500)))
+      || !isAllowedAIContextCatalog(input.contextCatalog)
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
       || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
       || input.profile.schemaVersion !== 1
@@ -499,12 +582,13 @@ const serviceWorker = String.raw`(() => {
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text', 'context'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
         && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
         && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
         && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
-        && typeof item.text === 'string' && item.text.length <= 800);
+        && typeof item.text === 'string' && item.text.length <= 800
+        && isAllowedAIContext(item.context));
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -713,6 +797,40 @@ const mainBridge = String.raw`(() => {
         && safe(source.sourceId, 64) && safe(source.sourceTier, 24) && safe(source.title, 240)
         && safe(source.snippet, 600) && safe(source.publishedAt, 40) && safe(source.verdict, 32)));
   }
+  function isAllowedAIContext(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['workId', 'itemId', 'partId', 'sufficiency', 'parentId', 'parent', 'time'].includes(key))
+      || !/^w\d{1,3}$/.test(String(value.workId || ''))
+      || !/^i\d{1,3}$/.test(String(value.itemId || ''))
+      || (value.partId !== undefined && !/^p\d{1,3}$/.test(String(value.partId || '')))
+      || !['sufficient', 'partial', 'insufficient', 'not_applicable'].includes(value.sufficiency)) return false;
+    if (value.parentId !== undefined && !/^r\d{1,3}$/.test(String(value.parentId || ''))) return false;
+    if (value.parent !== undefined && (!value.parent || typeof value.parent !== 'object'
+      || Object.keys(value.parent).some((key) => !['relation', 'text'].includes(key))
+      || !['reply', 'quote', 'root'].includes(value.parent.relation)
+      || typeof value.parent.text !== 'string' || value.parent.text.length > 800)) return false;
+    if (value.time !== undefined && (!value.time || typeof value.time !== 'object'
+      || Object.keys(value.time).some((key) => !['progressMs', 'segmentIndex'].includes(key))
+      || (value.time.progressMs !== null && (!Number.isFinite(value.time.progressMs) || value.time.progressMs < 0))
+      || (value.time.segmentIndex !== null && (!Number.isInteger(value.time.segmentIndex) || value.time.segmentIndex < 1)))) return false;
+    return true;
+  }
+  function isAllowedAIContextCatalog(value) {
+    if (typeof value === 'undefined') return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => key !== 'works')
+      || !Array.isArray(value.works) || value.works.length > 80) return false;
+    return value.works.every((work) => work && typeof work === 'object' && !Array.isArray(work)
+      && Object.keys(work).every((key) => ['id', 'title', 'description', 'sources', 'confidence', 'revision'].includes(key))
+      && /^w\d{1,3}$/.test(String(work.id || ''))
+      && typeof work.title === 'string' && work.title.length <= 240
+      && typeof work.description === 'string' && work.description.length <= 800
+      && Array.isArray(work.sources) && work.sources.length <= 4
+      && work.sources.every((source) => ['title', 'description', 'page_state', 'dom'].includes(source))
+      && ['reliable', 'partial', 'missing'].includes(work.confidence)
+      && typeof work.revision === 'string' && /^[a-z0-9_-]{1,64}$/i.test(work.revision));
+  }
   function isAllowedAIRequestData(data) {
     if (typeof data !== 'string' || data.length > 256 * 1024) return false;
     let body;
@@ -727,9 +845,16 @@ const mainBridge = String.raw`(() => {
     let input;
     try { input = JSON.parse(body.messages[1].content); } catch (error) { return false; }
     if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some((key) => !['promptSchemaVersion', 'rules', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
+      || Object.keys(input).some((key) => !['promptSchemaVersion', 'contextSchemaVersion', 'rules', 'ruleCatalog', 'contextCatalog', 'profile', 'examples', 'verificationSources', 'items'].includes(key))
       || input.promptSchemaVersion !== 1
+      || (input.contextSchemaVersion !== undefined && input.contextSchemaVersion !== 1)
       || !Array.isArray(input.rules) || input.rules.length > 32
+      || (input.ruleCatalog !== undefined && (!Array.isArray(input.ruleCatalog) || input.ruleCatalog.length > 32
+        || input.ruleCatalog.some((rule) => !rule || typeof rule !== 'object' || Array.isArray(rule)
+          || Object.keys(rule).some((key) => !['id', 'text'].includes(key))
+          || !/^ai_[a-z0-9_-]{1,80}$/i.test(String(rule.id || ''))
+          || typeof rule.text !== 'string' || rule.text.length > 500)))
+      || !isAllowedAIContextCatalog(input.contextCatalog)
       || !input.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)
       || Object.keys(input.profile).some((key) => !['schemaVersion', 'language', 'objective', 'blockCriteria', 'allowCriteria', 'priority', 'reviewRequired', 'acceptedPreferences'].includes(key))
       || input.profile.schemaVersion !== 1
@@ -757,12 +882,13 @@ const mainBridge = String.raw`(() => {
       && input.rules.every((rule) => typeof rule === 'string' && rule.length <= 500)
       && isAllowedVerificationSources(input.verificationSources)
       && input.items.every((item) => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text'].includes(key))
+        && Object.keys(item).every((key) => ['id', 'kind', 'contentType', 'title', 'text', 'context'].includes(key))
         && typeof item.id === 'string' && item.id.length <= 80
         && (item.kind === 'comment' || item.kind === 'danmaku' || item.kind === 'content')
         && typeof item.contentType === 'string' && AI_CONTENT_TYPES.has(item.contentType)
         && (item.title === undefined || (typeof item.title === 'string' && item.title.length <= 240))
-        && typeof item.text === 'string' && item.text.length <= 800);
+        && typeof item.text === 'string' && item.text.length <= 800
+        && isAllowedAIContext(item.context));
   }
   function normalizeAllowedRequest(details) {
     const method = String(details && details.method || 'GET').toUpperCase();
