@@ -6,12 +6,12 @@
 
 - loopback AI 请求升级为 context schema v2：同一作品批次共享默认语境，弹幕时间和父评论使用紧凑表示；无法安全归并时保留显式上下文，不改变语义边界。
 - 持久化开发扩展三层桥同步校验 v2 字段，继续拒绝 UID、hash、URL、Cookie、Token 和原始平台对象。
-- `structure regression` 与真实 B站只读探针通过；实际三个 AI 批次上下文额外输入为 `21.8%/21.4%/21.8%`，loopback 单作品分组评测总输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
+- `structure regression` 与真实 B站只读探针通过；最近三个 AI 批次上下文额外输入为 `16.4%/19.8%/16.8%`，loopback 单作品分组评测总输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
 - 真实用户内容长期精度、字幕/音频/画面语义没有可验证输入，已从活动计划移出并作为远期预留封存，不宣称已支持。
 
 详细变更、证据和边界：[v0.56.0 完整条目](docs/changelog/v0.56.0.md)。
 
-发布状态：功能提交、`v0.56.0` tag 与 GitHub Release 见[当前维护状态](docs/maintenance/CURRENT.md)的最终读回；无登记部署链，未执行平台写入。
+发布状态：功能提交 `3f94c1bb7cfa75f2a5f223387492ee90b18b1de3` 已推送到 `origin/master`，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建；无登记部署链，未执行平台写入。
 
 ## v0.55.0 - 作品语境感知的 AI 屏蔽 - 2026-09-10（已发布）
 

@@ -138,7 +138,7 @@ node test/maintenance-check.cjs --dedicated-only
 
 发往本机 loopback 网关的上下文改用 v2 紧凑协议：同一作品批次共享 `contextCatalog.defaults`，无额外差异的条目不重复携带上下文，弹幕时间使用紧凑数组，父评论使用紧凑关系/文本数组。同一批次无法安全归并时会退回显式上下文形态。浏览器内的完整作品/条目语义和当前作品作用域不变，开发扩展三层桥仍拒绝 UID、弹幕 hash、URL、Cookie、Token 和原始平台对象。
 
-本版本关闭 OB-AI-014 的活动实现工作。真实 B站只读探针的三个 AI 批次额外输入为 `21.8%/21.4%/21.8%`；长期真实内容精度、字幕/音频/画面语义没有可用证据，已作为有前置条件的远期预留封存，不写成已支持能力。详细变更和证据见 [v0.56.0 版本条目](docs/changelog/v0.56.0.md) 与 [当前维护状态](docs/maintenance/CURRENT.md)。
+本版本关闭 OB-AI-014 的活动实现工作。真实 B站只读探针最近三个 AI 批次额外输入为 `16.4%/19.8%/16.8%`；长期真实内容精度、字幕/音频/画面语义没有可用证据，已作为有前置条件的远期预留封存，不写成已支持能力。详细变更和证据见 [v0.56.0 版本条目](docs/changelog/v0.56.0.md)、[当前维护状态](docs/maintenance/CURRENT.md) 和 [GitHub Release v0.56.0](https://github.com/a2787/ub-utils/releases/tag/v0.56.0)。
 
 ### v0.55.0 — 作品语境感知的 AI 屏蔽（已发布）
 
