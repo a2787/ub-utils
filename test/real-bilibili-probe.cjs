@@ -2,6 +2,7 @@
  * 使用隔离的临时 Chrome 配置和内存 GM 存储；只修改该临时本地名单，
  * 不会读取用户 Cookie，也不会触发平台写操作或官方拉黑。
  * 运行：node test/real-bilibili-probe.cjs [--verify-auto-danmaku] [--verify-ai-background]
+ *       [--verify-context-sources]
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { discoverTargets, redactTarget } = require('./discover.cjs');
@@ -21,6 +22,7 @@ const VERIFY_DANMAKU_TOOL = process.argv.includes('--verify-danmaku-tool') || VE
 const VERIFY_FLOATING_DANMAKU = process.argv.includes('--verify-floating-danmaku');
 const VERIFY_AUTO_DANMAKU = process.argv.includes('--verify-auto-danmaku');
 const VERIFY_AI_BACKGROUND = process.argv.includes('--verify-ai-background');
+const VERIFY_CONTEXT_SOURCES = process.argv.includes('--verify-context-sources');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
 const AI_PROBE_GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
@@ -229,7 +231,10 @@ async function pickLocalCommentTarget(candidates) {
 }
 
 (async () => {
-  const result = { target: '', discovered: false, version, sourceHash, build, pageLoaded: false, errors: [], probe: null };
+  const result = {
+    target: '', discovered: false, version, sourceHash, build, pageLoaded: false,
+    errors: [], probe: null, contextSources: null,
+  };
   let browser;
   try {
     browser = await launchChromium({
@@ -465,6 +470,51 @@ async function pickLocalCommentTarget(candidates) {
         return { error: String(error && error.message || error).slice(0, 160) };
       }
     });
+
+    if (VERIFY_CONTEXT_SOURCES) {
+      // 只读取浏览器标准媒体轨道和脱敏的资源计数；不读取字幕正文、音频内容、视频帧、
+      // URL 查询参数或页面标识。没有标准文本轨道时记录 blocked，不把标题/简介推断成字幕。
+      result.contextSources = await page.evaluate(() => {
+        const video = document.querySelector('video');
+        const textTracks = video && video.textTracks ? Array.from(video.textTracks) : [];
+        const trackElements = Array.from(document.querySelectorAll('track'));
+        const audioTracks = video && video.audioTracks ? Array.from(video.audioTracks) : [];
+        const resourceEntries = performance.getEntriesByType('resource');
+        const subtitleLikeResourceCount = resourceEntries.filter((entry) => {
+          const name = String(entry && entry.name || '');
+          return /(?:subtitle|caption|texttrack|closed[-_]?caption)/i.test(name);
+        }).length;
+        const initialState = window.__INITIAL_STATE__ && typeof window.__INITIAL_STATE__ === 'object'
+          ? window.__INITIAL_STATE__ : null;
+        const initialStateSignalKeys = initialState
+          ? Object.keys(initialState).filter((key) => /subtitle|caption|audio|video/i.test(key)).slice(0, 12)
+          : [];
+        return {
+          subtitle: {
+            status: textTracks.length || trackElements.length ? 'available' : 'blocked',
+            standardTextTrackApi: !!(video && video.textTracks),
+            textTrackCount: textTracks.length,
+            trackElementCount: trackElements.length,
+            kinds: textTracks.map((track) => String(track && track.kind || '')).filter(Boolean),
+            languages: textTracks.map((track) => String(track && track.language || '')).filter(Boolean),
+            subtitleLikeResourceCount,
+            initialStateSignalKeys,
+          },
+          audio: {
+            status: video ? 'media_present_only' : 'blocked',
+            mediaElementPresent: !!video,
+            audioTrackApi: !!(video && video.audioTracks),
+            audioTrackCount: audioTracks.length,
+            semanticTranscriptAvailable: false,
+          },
+          visual: {
+            status: 'blocked',
+            semanticVideoUnderstanding: false,
+            reason: '只读探针不读取视频帧或推断画面语义',
+          },
+        };
+      });
+    }
 
     if (VERIFY_AI_BACKGROUND) {
       // 这里仍使用真实 B 站 DOM、真实脚本和真实事件路径，但网关与 GM 存储均为
