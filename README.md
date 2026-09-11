@@ -146,9 +146,9 @@ node test/userscript-product.cjs
 维护/实验产物，当前不属于用户安装路径，也不计入平板验收。它们暂不删除，避免覆盖工作区中尚未单独确认的文件；
 如果未来要保留，只能作为历史兼容夹具维护。
 
-### v0.57.0 — Tampermonkey 移动端适配、API 直连与账户级加密同步（本地候选）
+### v0.57.0 — Tampermonkey 移动端适配、API 直连与账户级加密同步（已发布）
 
-当前工作区候选构建为 `0.57.0-tampermonkey-mobile-direct-sync`。桌面与平板共用同一个
+当前发布构建为 `0.57.0-tampermonkey-mobile-direct-sync`。桌面与平板共用同一个
 `omniblock.user.js`，通过 Tampermonkey 注入页面；设置、审核浮层、内容管理器和输入控件增加窄屏/触控适配。
 AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 Key，不再把网关作为主链路，也不加入本地模型。
 
@@ -161,8 +161,9 @@ API Key、密码、同步口令、访问令牌、设备标识和日志不进入�
 观察到 OmniBlock 齿轮；真实 provider 调用和电脑/平板账户同步仍待本轮完成，因此仍记为 `blocked` 或未观测，不写成已完成。
 
 迁移和同步的详细边界见 [v0.57.0 版本条目](docs/changelog/v0.57.0.md)、[当前维护状态](docs/maintenance/CURRENT.md)
-和 [架构说明](docs/architecture/ARCHITECTURE.md)。userscript 仍是本地候选，未 push/tag/Release；同步服务是独立的线上部署，
-未修改平台数据，也不会自动执行平台操作。
+和 [架构说明](docs/architecture/ARCHITECTURE.md)。v0.57.0 已推送到更新地址对应的仓库，并创建了
+[GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0)；同步服务是独立的线上部署，
+电脑/平板真实账户同步仍待本轮完成，未修改平台数据，也不会自动执行平台操作。
 
 ### v0.56.0 — 作品语境 AI 请求压缩与边界收口（已发布）
 

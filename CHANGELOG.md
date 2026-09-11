@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（本地候选）
+## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（已发布）
 
 - 保持 `omniblock.user.js` 为电脑与平板共同交付物，设置、审核浮层、内容管理器和输入控件增加窄屏/触控适配；不再把 MV3 扩展作为本版本安装路径。
 - AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 Key；Key 只进入 `Authorization` 请求头，不进入页面对象、请求正文、导出文件或同步文档，不加入本地模型和网关主链路。
@@ -11,7 +11,7 @@
 
 详细变更、证据和边界：[v0.57.0 完整条目](docs/changelog/v0.57.0.md)。
 
-发布状态：本地候选，未 commit/push/tag/Release、未部署、未执行平台写入；当前公开版本仍为 v0.56.0。
+发布状态：功能提交 `3c11525f3cac69f310d58294a62f6ac89afd9e5a` 已推送到 `origin/master`；`v0.57.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0) 已创建；独立同步服务已部署，目标平板真实 provider 与电脑/平板双设备同步仍待本轮验证，未执行平台写入。
 
 ## v0.56.0 - 作品语境 AI 请求压缩与 OB-AI-014 收口 - 2026-09-10（已发布）
 

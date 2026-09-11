@@ -1,19 +1,19 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-11
-状态来源：v0.57.0 是 userscript 主线的本地候选；移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据，目标平板真实同步、真实 provider 和固定域名仍未完成。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.57.0 已成为 userscript 主线公开版本；移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据，目标平板真实同步、真实 provider 和固定域名仍未完成。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.57.0`（本地候选，未公开发布）
+- 当前 userscript：`0.57.0`（已公开发布）
 - 构建：`0.57.0-tampermonkey-mobile-direct-sync`
-- 当前公开版本/功能提交：`0.56.0` / `3f94c1bb7cfa75f2a5f223387492ee90b18b1de3`
-- 最近验证的源码快照：`3f94c1bb7cfa75f2a5f223387492ee90b18b1de3`
+- 当前公开版本/功能提交：`0.57.0` / `3c11525f3cac69f310d58294a62f6ac89afd9e5a`
+- 最近验证的源码快照：`3c11525f3cac69f310d58294a62f6ac89afd9e5a`
 - 当前候选源码 SHA-256：`40c8ffe0de745036cbc5e198e7fde6f372e4de602287c0b68d6bd0a18ded72b4`
-- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release/部署；v0.56.0 仍是公开版本，未执行平台写入。
-- 当前公开 tag/Release：[v0.56.0](https://github.com/a2787/ub-utils/releases/tag/v0.56.0)。
+- 发布状态：v0.57.0 功能提交已推送到 `origin/master`，`v0.57.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0) 已创建；独立同步服务已部署，未执行平台写入。
+- 当前公开 tag/Release：[v0.57.0](https://github.com/a2787/ub-utils/releases/tag/v0.57.0)。
 
-## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，本地候选）
+## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，已发布，设备互测进行中）
 
 - 范围/文件：`omniblock.user.js` 窄屏/触控、设备直连 API、GM Key、账户注册/登录和 PBKDF2/AES-GCM opaque-CAS；`sync/`、`sync-server/` 提供协议/本地服务回归。上一轮 `extension/` MV3 实验不属于交付路径。
 - `structure regression`：userscript product 4/4；AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
@@ -21,7 +21,7 @@
 - `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；候选实际加载并观察到 1 条帖子内容、19 条评论 AI 记录，平台评论统计为 16 条（10 根行、6 回复行），内容弹窗 2 个标签，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
 - `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务在 loopback health 返回 200，独立 HTTPS Quick Tunnel 的 `/healthz` 也返回 200，服务标识为 `omniblock-sync`；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
 - `blocked`：目标平板真实同步、电脑/平板账户注册登录和加密合并尚未取得本轮用户设备结果；当前 Quick Tunnel 没有固定域名，进程重启后可能更换地址。
-- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release；独立同步服务已部署，未执行平台写入；v0.56.0 仍是公开版本。
+- 发布状态：v0.57.0 功能提交已推送到 `origin/master`，`v0.57.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0) 已创建；独立同步服务已部署，目标平板真实 provider 与电脑/平板双设备同步仍待本轮验证，未执行平台写入。
 
 ## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，in_progress）
 
