@@ -6,7 +6,7 @@
 
 - coarse pointer/无 hover 设备上的页面级“内容屏蔽/弹幕屏蔽”入口常驻可见，齿轮继续直接打开设置；设置、内容管理器、AI 审核和确认框的主要控件补齐至少 44px 触控目标。
 - 抖音滚动弹幕、B站播放器浮动弹幕都增加点按目标后显示自有本地入口的路径；桌面鼠标悬停路径保持不变，不触发平台举报、官方拉黑、关注或发帖。
-- `structure regression`：userscript product 5/5、通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28；`real-site verified`：2026-09-11 匿名 B站只读候选加载无页面/控制台错误；`blocked`：目标平板触控实机和抖音验证码页面未完成。
+- `structure regression`：userscript product 6/6、通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28；`real-site verified`：2026-09-11 匿名 B站只读候选加载无页面/控制台错误；`blocked`：目标平板触控实机和抖音验证码页面未完成。
 
 详细变更、证据和边界：[v0.57.1 完整条目](docs/changelog/v0.57.1.md)。
 

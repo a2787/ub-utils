@@ -10,7 +10,7 @@
 - 当前公开版本/功能提交：`0.57.0` / `3c11525f3cac69f310d58294a62f6ac89afd9e5a`
 - 当前候选功能提交：`0.57.1` / `d069acf19061c9cdd135906186f2bab3a8195895`
 - 最近验证的源码快照：`d069acf19061c9cdd135906186f2bab3a8195895`
-- 当前候选源码 SHA-256：`35f72c9f11771145e4360d8de79aacc460882a3666fec69339b511afb69da8e1`
+- 当前候选源码 SHA-256：`2efe63dff35b2f6c91497558470d6afdfe1ac92804d94f95a6ef41accb0b98fb`
 - 发布状态：v0.57.0 功能提交已推送到 `origin/master`，`v0.57.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0) 已创建；v0.57.1 仅保存在本地候选提交，尚未 push、创建 tag/Release 或改变更新地址；独立同步服务已部署，未执行平台写入。
 - 当前公开 tag/Release：[v0.57.0](https://github.com/a2787/ub-utils/releases/tag/v0.57.0)。
 
@@ -18,13 +18,14 @@
 
 - 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、B站/抖音弹幕点按入口、设备直连 API、GM Key、账户注册/登录和 PBKDF2/AES-GCM opaque-CAS；`sync/`、`sync-server/` 提供协议/本地服务回归。上一轮 `extension/` MV3 实验不属于交付路径。
 - `structure regression`：userscript product 5/5；通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28、AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px/768px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.1`/`0.57.1-tampermonkey-touch-controls`（含平板触控目标修复，源码 SHA-256 `35f72c9f11771145e4360d8de79aacc460882a3666fec69339b511afb69da8e1`）实际加载，观察到 2 个评论 renderer、1 个子评论 renderer、1 条作品内容、3 条评论、97 条弹幕（AI 记录 101 条），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0。该证据覆盖真实桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、20 条评论 AI 记录，平台评论统计为 15 条（11 根行、4 回复行），评论管理器 2 个标签，本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.1`/`0.57.1-tampermonkey-touch-controls`（含平板触控目标修复，源码 SHA-256 `2efe63dff35b2f6c91497558470d6afdfe1ac92804d94f95a6ef41accb0b98fb`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0。该证据覆盖真实桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），评论管理器 2 个标签，本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
 - `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务在 loopback health 返回 200，独立 HTTPS Quick Tunnel 的 `/healthz` 也返回 200，服务标识为 `omniblock-sync`；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
 - `blocked`：目标平板 v0.57.1 真实触控、真实 provider、电脑/平板账户注册登录和加密合并尚未取得本轮用户设备结果；抖音匿名探针停在验证码中间页；当前 Quick Tunnel 没有固定域名，进程重启后可能更换地址。
 - 发布状态：v0.57.0 功能提交已推送到 `origin/master`，`v0.57.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.0) 已创建；v0.57.1 仅有本地候选提交，尚未公开发布；独立同步服务已部署，目标平板真实 provider 与电脑/平板双设备同步仍待本轮验证，未执行平台写入。
 - 触控入口手势：候选采用“入口常驻可见 + 齿轮单次点按进设置”，取代原计划的两段式齿轮手势（触控端 dock 挂载即 `expanded`，首触展开无对象）；旧验收标准已随之退休。
-- 平板 561px 以上宽度：设置面板 `.ob-ai-key-row`/`.ob-sync-actions`/规则/提示词/反馈等紧凑按钮组原被组件级 `min-height` 压回 32/34px，已在组件规则后补 coarse-pointer 覆盖恢复 44px 触控目标（2026-09-11 复跑 product 5/5）。AI 审核浮层和反馈浮层的 foot/理由按钮仍被同类组件规则压低，当前无断言覆盖，留待下轮。
+- 平板 561px 以上触控宽度：设置面板紧凑按钮组与 AI 审核/反馈浮层的确认、取消、拒绝、作用域按钮原被组件级 `min-height` 压回 26–34px（窄屏块只兜住 ≤560px），已在组件规则后补 coarse-pointer 覆盖统一恢复 44px（2026-09-11 product 6/6）。
+- 计划收尾：2026-09-11 关闭 11 个积压计划项（1 verified、5 deferred、4 blocked、1 superseded），终态与恢复动作见 [收尾归档](plans/2026-09-11-plan-closure.md)；活动计划只剩等待用户动作的 OB-TM-001 与 OB-SYNC-001。
 
 ## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，in_progress）
 
@@ -163,4 +164,4 @@ v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史
 
 ## 下一项最有价值的验证
 
-下一项最有价值的工作是评审 OB-AI-013 的独立评测集、指标、来源 allowlist、隐私/成本门禁和分阶段回滚方案；在用户确认前不实现事实检索，不把模型内部知识或未核查状态当作虚假。
+活动计划只剩两项 `blocked`，均等用户动作：① 目标平板 Edge 的 Tampermonkey 安装 v0.57.1 候选，实测无 hover 入口、44px 触控目标与 AI provider，回填 `real-site verified` 或 `blocked`（OB-TM-001）；② 电脑/平板以同一账户与同步口令各执行一次“立即同步（合并）”，回填密文读回与合并证据（OB-SYNC-001）。完成后由用户决定是否授权发布 v0.57.1。
