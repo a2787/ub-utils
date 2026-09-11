@@ -20,7 +20,7 @@
 - `real-site verified`：2026-09-12，用户专用 Chrome 登录态只读探针（扩展桥接部分就绪）：脱敏页面形式 `bilibili.com/page/...` 读到 8 条作品内容；`douyin.com/jingxuan/...` 登录态读到 48 条作品内容（首次取得抖音登录态真实读取，匿名探针此前被验证码阻断）；`weibo.com/page/...` 读到 6 条内容、6 个身份。三条均为内容读取证据，不含评论/弹幕展开与 AI/存储链路。
 - `blocked`：专用 Chrome 批量补采仍被桥接故障阻断——B站/抖音/微博/知乎的 AI/存储链路报"桥接未就绪"，tieba/x 报 `Target.getTargets` 超时；换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音性能基线均未覆盖。故障定位：MV3 service worker 休眠后 attach 竞态（`Session with given id not found`），手动重载扩展可临时恢复，需要专门一轮修 `test/dedicated-browser.cjs` 的唤醒/重试。
 - `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供。
-- CI：`maintenance` 工作流已建（22 项本地回归，锁定依赖，明确排除真实站点探针）；首跑在文档门禁失败（v0.57.2 changelog 尚未入库），随本提交自动重跑，结果待回填。
+- `structure regression`：CI `maintenance` 工作流转绿（run 34628105864，commit `dce2810`）：22 项本地回归 + 语法/文档门禁在 ubuntu-latest + 系统 Chrome 上通过，依赖 `npm ci` 锁定，真实站点探针明确排除。迭代中修了三个测试/工作流脆弱点：checkout 浅克隆使快照祖先校验失败、work-block 方向键未落定采样、adapters 弹幕按钮 3px 对中在 Linux 字体下误报；均不涉及产品行为。
 
 
 ## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）

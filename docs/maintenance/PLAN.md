@@ -48,7 +48,7 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-REL-001 — CI 与公开发布准备
 
-- status: in_progress
+- status: verified
 - priority: P3
 - scope: 本地命令、CI status、源码/构建 hash、版本/tag/Release 一致性。
 - non-goals: 真实站点探针不进 CI；未获当轮授权不改 push 策略或覆盖 tag。
@@ -57,8 +57,10 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [x] 获得 CI/CD 配置修改授权后，CI 可运行不依赖维护者机器上的隐含路径或未锁定依赖。
   - [x] 候选说明分别列出 real-site verified、structure regression 和 blocked。
   - [x] Release 门禁只接受明确授权和可追溯的构建产物。
-- evidence: `.github/workflows/maintenance.yml`（ubuntu-latest + 系统 Chrome，`npm ci` 锁定 playwright-core 1.62.1，22 项本地回归 + 语法/文档门禁；真实站点探针明确排除）；依赖经 `package-lock.json` 锁定。首跑（run 34626121913）在文档门禁失败——v0.57.2 changelog 未随代码提交入库，属时序问题；已随文档提交自动重跑，结果待回填后本项转 `verified`。
-- next: 等重跑结果；绿则转 `verified`，红则先修再重跑。push 曾被 OAuth 缺 `workflow` scope 拒绝，已切换 SSH 远端解决。
+- evidence: `.github/workflows/maintenance.yml`（ubuntu-latest + 系统 Chrome，`npm ci` 锁定 playwright-core 1.62.1，22 项本地回归 + 语法/文档门禁；真实站点探针明确排除）。CI 迭代三次转绿（run 34628105864，commit `dce2810`）：修 checkout 浅克隆导致快照祖先校验失败、work-block 微博方向键未落定采样、adapters 弹幕按钮 3px 对中在 Linux 字体度量下误报；三项都属测试/工作流脆弱性，不涉及产品行为。push 走 SSH（OAuth token 缺 workflow scope）。
+- next: 已完成。CI 随每次 push/PR 自动运行；公开发布仍按当轮授权执行。
+- updated: 2026-09-12
+- supersedes: none
 - updated: 2026-09-12
 - supersedes: none
 
