@@ -17,6 +17,9 @@ jobs:
       OMNIBLOCK_PYTHON: python3
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs-check 校验“最近验证的源码快照是 HEAD 祖先”，需要完整历史。
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
