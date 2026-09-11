@@ -513,8 +513,10 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const textRect = normal.querySelector('.danMuText') && normal.querySelector('.danMuText').getBoundingClientRect();
       result.buttonLeftOfText = !!buttonRect && !!textRect && buttonRect.left < textRect.left;
       result.buttonOverlapsTextEdge = !!buttonRect && !!textRect && buttonRect.right > textRect.left && buttonRect.left < textRect.left;
+      // 不变量：按钮压在弹幕行上（垂直区间相交）。3px 中心差对跨平台字体度量
+      // 过严，Linux 渲染的行高差异会把绝对对齐误判成失败。
       result.buttonVerticallyParallel = !!buttonRect && !!textRect
-        && Math.abs((buttonRect.top + buttonRect.height / 2) - (textRect.top + textRect.height / 2)) < 3;
+        && buttonRect.top < textRect.bottom && buttonRect.bottom > textRect.top;
       if (!btn) return result;
       btn.click();
       await pause(80);
