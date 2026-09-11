@@ -1,0 +1,44 @@
+name: maintenance
+
+# 本地回归矩阵的 CI 化（OB-REL-001）：只跑不访问真实站点的检查；
+# 真实站点探针需要用户专用浏览器与登录态授权，永远不在 CI 里执行。
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  local-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # ubuntu-latest 预装 Google Chrome 稳定版；test/runtime.cjs 通过 CHROME_PATH 复用它。
+      CHROME_PATH: /usr/bin/google-chrome
+      OMNIBLOCK_PYTHON: python3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Syntax and documentation gates
+        run: |
+          node --check omniblock.user.js
+          node test/docs-check.cjs
+          git diff --check
+      - name: Local regression matrix
+        run: |
+          set -e
+          for test in run state quickblock comment-manager danmaku-auto work-block \
+            performance weibo-replay userscript-product adapters douyin sync sync-server \
+            ai-screening ai-prompt-system ai-prompt-eval ai-platforms content-ai \
+            content-coverage ai-autoload ai-watchdog probe-hygiene; do
+            echo "=== $test ==="
+            node "test/$test.cjs"
+          done
+      - name: Probe classification self-test
+        run: node test/dedicated-browser-probe.cjs --self-test

@@ -1,0 +1,8 @@
+{
+  "name": "omniblock-maintenance",
+  "private": true,
+  "description": "OmniBlock 本地回归的锁定依赖；浏览器走系统 Chrome（CHROME_PATH），不下载浏览器二进制。",
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

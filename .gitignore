@@ -1,4 +1,5 @@
 vendor/
+node_modules/
 *.user.js.bak
 test/_initscript.js
 test/_initqb.js
