@@ -75,8 +75,9 @@ provider 配置只保留三项：OpenAI-compatible API 地址、模型名和“�
 
 API Key、账户登录令牌、账户密码、同步口令、运行日志、自动快照、本地备份和浏览器登录态刻意不进入同步包。Key 需要在每台
 设备单独设置；退出账户只清除当前设备的登录令牌，不删除云端或本地名单。当前仓库的 `sync-server/` 是独立 Python 标准库
-服务，`sync/` 提供协议和 mock 回归；东京服务器尚未改动、没有生产账户或数据库，正式上线仍需单独完成 HTTPS、备份、限流、
-CORS/跨源策略、账户删除和密文读回门禁。
+服务，`sync/` 提供协议和 mock 回归；东京服务器已部署独立服务和独立 SQLite 数据库，并通过本轮交接的 HTTPS Quick Tunnel
+提供同步入口。Quick Tunnel 重启后可能更换地址，因此当前地址适合电脑/平板互测，不应当作永久域名；长期使用仍需换成用户自己的
+HTTPS 域名或已认证的 Cloudflare Named Tunnel，并补做备份、限流、账户删除和密文读回门禁。
 
 > v0.14.0 新增了 `api.bilibili.com` 连接权限，只在你主动查询弹幕 UID 候选时使用；请求
 > 设置为匿名，不携带浏览器登录 Cookie，也不会发送本地黑名单或原始浏览数据。
@@ -153,14 +154,15 @@ AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设
 
 账户同步由 userscript 显式触发：客户端用同步口令加密名单、设置、提示词配置和反馈状态后，服务端只保存不可读密文；
 API Key、密码、同步口令、访问令牌、设备标识和日志不进入同步文档。同步协议支持设备级逻辑时钟、墓碑、CAS 冲突重试和
-离线恢复。东京服务器尚未修改或部署。
+离线恢复。东京机上的独立 `omniblock-sync` 服务已经启动；当前使用的 Quick Tunnel 地址以本轮交接为准，重启后可能变化。
 
 `structure regression`：本地 userscript 产品回归覆盖 390px 触控布局、直连 Authorization、Key 不出现在请求正文/导出/同步包、
-账户注册登录、客户端密文和 CAS 同步边界；通用、AI、平台适配、提示词和同步服务回归也按维护矩阵执行。目标平板实际安装、
-真实 provider 和东京线上服务尚未验证，因此仍记为 `blocked` 或未观测，不写成已上线能力。
+账户注册登录、客户端密文和 CAS 同步边界；通用、AI、平台适配、提示词和同步服务回归也按维护矩阵执行。目标平板已安装候选并
+观察到 OmniBlock 齿轮；真实 provider 调用和电脑/平板账户同步仍待本轮完成，因此仍记为 `blocked` 或未观测，不写成已完成。
 
 迁移和同步的详细边界见 [v0.57.0 版本条目](docs/changelog/v0.57.0.md)、[当前维护状态](docs/maintenance/CURRENT.md)
-和 [架构说明](docs/architecture/ARCHITECTURE.md)。当前只是本地候选，未 commit/push/tag/Release、未部署、未修改平台数据。
+和 [架构说明](docs/architecture/ARCHITECTURE.md)。userscript 仍是本地候选，未 push/tag/Release；同步服务是独立的线上部署，
+未修改平台数据，也不会自动执行平台操作。
 
 ### v0.56.0 — 作品语境 AI 请求压缩与边界收口（已发布）
 

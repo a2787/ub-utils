@@ -47,7 +47,7 @@ proposed → approved → in_progress → verified
 - status: in_progress
 - priority: P1
 - scope: 保持 `omniblock.user.js` 为桌面与平板的共同交付物；优化窄屏/触控设置、内容入口、审核浮层和输入控件；AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 API Key；在 userscript 内提供账户注册/登录、客户端加密同步和显式“立即同步（合并）”入口，复用独立同步服务协议。
-- non-goals: 不继续建设或发布 MV3 安装路径；不保留 AI 主链路的 loopback 网关模式；不加入本地模型；不把 API Key、账户密码、访问令牌或同步口令放入普通设置、导出文件或云端文档；不自动同步、不执行平台举报/官方拉黑/关注/发帖；不修改东京服务器 schema、凭据、HTTPS 反向代理或部署；不删除上一项留下的实验文件。
+- non-goals: 不继续建设或发布 MV3 安装路径；不保留 AI 主链路的 loopback 网关模式；不加入本地模型；不把 API Key、账户密码、访问令牌或同步口令放入普通设置、导出文件或云端文档；不自动同步、不执行平台举报/官方拉黑/关注/发帖；东京服务器的独立同步部署由 `OB-SYNC-001` 管理，本项不改 Vibeme/V2/KB 既有服务；不删除上一项留下的实验文件。
 - dependencies: OB-AI-001, OB-AI-004
 - acceptance: required
   - [x] userscript 的 AI 配置只显示 API 地址、模型名和“设置/更换本机 Key”，旧 gateway 配置不会再触发网关请求；Key 只写入独立 GM 存储，并且不出现在名单导出、提示词导出、同步 state、日志或请求正文。
@@ -57,10 +57,27 @@ proposed → approved → in_progress → verified
   - [x] 本地 mock、独立 Python 服务、AI/平台/通用回归和文档/隐私门禁通过；未执行平台写入。
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
 - evidence: `structure regression`：userscript product 4/4；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；AI screening、平台/提示词/批次/自动加载/watchdog/事实核查均通过且页面/控制台错误为 0。维护总检本地项通过。
-- evidence: `real-site verified`：2026-09-11 匿名隔离只读会话中的 B站当前候选加载和微博当前候选加载已记录在 `CURRENT.md`；`blocked`：目标平板 Tampermonkey 实际安装、真实 provider、东京线上 endpoint，以及抖音验证码/微博活动 spacer 等外部条件未验证。线上服务仍保持未部署。
-- next: 用户在电脑和目标平板 Edge 的 Tampermonkey 中安装同一候选，分别配置本机 Key；随后做只读页面/触控检查，并在已准备 HTTPS 同步 endpoint 后验证同账户显式合并。未取得设备/线上条件前不把本地夹具升级为 `real-site verified`。
+- evidence: `real-site verified`：2026-09-11 匿名隔离只读会话中的 B站当前候选加载和微博当前候选加载已记录在 `CURRENT.md`；`blocked`：目标平板真实 provider 与双设备同步结果尚未完成，抖音验证码/微博活动 spacer 等外部条件仍按各自条目记录。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
+- next: 用户在电脑和目标平板 Edge 的 Tampermonkey 中使用同一候选，分别配置本机 Key；按 `OB-SYNC-001` 的 endpoint、同账户和同步口令完成两端显式合并。未取得设备结果前不把本地夹具升级为 `real-site verified`。
 - updated: 2026-09-11
 - supersedes: OB-EXT-001
+
+### OB-SYNC-001 — 东京独立同步服务上线与双设备互测
+
+- status: in_progress
+- priority: P1
+- scope: 在东京服务器建立独立 `omniblock-sync` 运行目录、独立 SQLite 数据库和独立 systemd 服务；通过独立 HTTPS 隧道提供 userscript 所需的 `/healthz`、账户认证和 opaque-CAS 同步接口；使用同一账户与同步口令完成电脑、平板两端的显式合并验证。
+- non-goals: 不修改 Vibeme/V2/KB 的数据库、代码、网关路由或现有隧道；不上传 API Key、浏览器登录态、运行日志或明文名单；不启用后台自动同步；当前服务器没有可用的固定域名时不伪称为稳定生产域名，临时隧道若发生重启需重新取得 endpoint，固定域名/命名隧道另行处理。
+- dependencies: OB-TM-001
+- acceptance: required
+  - [x] 东京服务器只新增独立服务目录、独立数据库和独立服务单元，health 可从公网 HTTPS 访问；auth/CAS 等待真实账户流程。
+  - [ ] 服务器端只看到账户认证元数据和客户端加密 envelope；远端读回不得出现人工合成明文、API Key 或同步口令。
+  - [ ] 电脑与平板使用同一账户、同一同步口令，分别点击“立即同步（合并）”后，名单/可同步设置/提示词/反馈能够确定性合并，删除墓碑不复活。
+  - [ ] 线上健康、密文读回、冲突重试和双设备结果记录为 `real-site verified`；网络/设备/登录条件阻断时如实记为 `blocked`。
+- evidence: `structure regression`：本地 sync-core 7/7、Python 服务 5/5；`real-site verified`：2026-09-11 独立服务 loopback 与 HTTPS Quick Tunnel health 返回 200，源码 SHA-256 一致；真实账户与双设备互测待本项完成。
+- next: 当前 HTTPS endpoint 已取得；先在当前设备注册账户并同步，再指导另一台设备使用同一账户完成合并。
+- updated: 2026-09-11
+- supersedes: none
 
 ### OB-AI-001 — AI 智能屏蔽第一阶段
 

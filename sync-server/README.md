@@ -27,6 +27,12 @@ loopback 监听必须显式加 `--allow-public-bind`，不建议直接把 Python
 `GM_xmlhttpRequest` 发出同步请求，通常不依赖页面 CORS；若部署同时允许普通 `fetch` 或管理页面访问，
 再为实际页面的精确 `Origin` 重复传入 `--allow-origin <exact-origin>`，不要使用 `*`。
 
+仓库附带的 `omniblock-sync.service` 和 `omniblock-sync-tunnel.service` 是东京服务器的独立部署模板。
+前者只监听 loopback 并把数据写入 `/opt/omniblock-sync/data/omniblock-sync.sqlite3`；后者在当前没有固定
+域名/命名 Cloudflare Tunnel 的情况下提供临时 HTTPS 验证入口。Quick Tunnel 进程重启后可能得到新的
+`trycloudflare.com` 地址，因此不能把它当作长期稳定域名；长期运行应改用用户自己的 HTTPS 域名或已认证的
+Cloudflare Named Tunnel，并保持后端目录、数据库和服务单元不变。
+
 ## 与扩展对应的接口
 
 | 方法 | 路径 | 作用 |
@@ -42,8 +48,7 @@ loopback 监听必须显式加 `--allow-public-bind`，不建议直接把 Python
 
 ## 上线前门禁
 
-当前仓库只提供源码、mock 和本地服务回归；没有修改东京服务器，也没有创建生产数据库、
-凭据、systemd 配置或反向代理配置。真正上线前需要单独确认：备份/恢复策略、HTTPS 证书、
-防火墙、限流、账户删除/导出政策、SQLite 备份加密、扩展正式 ID 的 CORS allowlist，以及
-服务器健康检查和客户端密文读回。完成这些动作后，仍要把线上状态写成独立的
-`real-site verified` 记录，不能用本地 mock 结果替代。
+当前东京机已按附带 systemd 模板部署独立服务和独立 SQLite 数据库，并通过 Cloudflare Quick Tunnel
+取得 HTTPS health 证据；这不是固定域名，隧道进程重启后可能更换地址。长期使用前仍需要切换到用户自己的
+HTTPS 域名或已认证的 Cloudflare Named Tunnel，并补齐备份/恢复策略、限流、账户删除/导出政策、SQLite
+备份保护和线上密文读回门禁。当前部署没有修改 Vibeme/V2/KB 的数据库或既有网关服务。

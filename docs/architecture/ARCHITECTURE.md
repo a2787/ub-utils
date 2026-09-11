@@ -39,8 +39,9 @@ AI 只有 `direct` 模式：用户在设置中填写 OpenAI-compatible API 地�
 服务器只接收 `omniblock.sync-envelope` 密文和最小 revision/账户元数据。
 
 当前实现先提供显式“立即同步（合并）”，不在页面生命周期或 Tampermonkey 被系统挂起时偷偷执行后台同步。
-服务器源码位于 `sync-server/`，独立于 Vibeme/V2/KB；东京服务器的数据库、HTTPS 反向代理、凭据和部署
-尚未改变，必须在单独动作确认后上线。
+服务器源码位于 `sync-server/`，独立于 Vibeme/V2/KB；东京机已新增独立 `/opt/omniblock-sync` 目录、独立 SQLite
+数据库和独立 systemd 服务，并由独立 HTTPS Quick Tunnel 暴露。当前隧道地址可能在进程重启后变化，长期使用应替换为
+用户自己的 HTTPS 域名或已认证的 Cloudflare Named Tunnel；不能把 Quick Tunnel 当成稳定域名。
 
 ## 核心不变量
 

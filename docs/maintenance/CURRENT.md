@@ -1,7 +1,7 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-11
-状态来源：v0.57.0 是 userscript 主线的本地候选；移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。目标平板、真实 provider 和东京线上服务仍未验证/部署。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.57.0 是 userscript 主线的本地候选；移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据，目标平板真实同步、真实 provider 和固定域名仍未完成。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
@@ -19,8 +19,18 @@
 - `structure regression`：userscript product 4/4；AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
 - `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.0`/`0.57.0-tampermonkey-mobile-direct-sync` 实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、65 条弹幕（共 68 条 AI 记录），内容弹窗 4 个标签，页面/控制台错误 0。该证据只覆盖桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
 - `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；候选实际加载并观察到 1 条帖子内容、19 条评论 AI 记录，平台评论统计为 16 条（10 根行、6 回复行），内容弹窗 2 个标签，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
-- `blocked`：目标平板 Edge + Tampermonkey 未取得实际安装会话，真实 provider/东京 endpoint 未配置；东京服务 schema/凭据/部署未改变。
-- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release/部署，未执行平台写入；v0.56.0 仍是公开版本。
+- `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务在 loopback health 返回 200，独立 HTTPS Quick Tunnel 的 `/healthz` 也返回 200，服务标识为 `omniblock-sync`；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
+- `blocked`：目标平板真实同步、电脑/平板账户注册登录和加密合并尚未取得本轮用户设备结果；当前 Quick Tunnel 没有固定域名，进程重启后可能更换地址。
+- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release；独立同步服务已部署，未执行平台写入；v0.56.0 仍是公开版本。
+
+## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，in_progress）
+
+- 范围/文件：东京机新增独立 `/opt/omniblock-sync/server.py`、`/opt/omniblock-sync/data/omniblock-sync.sqlite3`、`omniblock-sync.service` 和独立 Quick Tunnel 服务；未改 Vibeme/V2/KB 数据库、代码、网关路由或既有隧道。
+- `structure regression`：本地 sync-core 7/7、Python 服务 5/5；服务模板启用 loopback、独立数据目录、最小权限和不记录请求内容。
+- `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地源码 SHA-256 一致。
+- `blocked`：还没有用用户真实账户完成注册/登录、第一台写入、第二台解密合并和墓碑/冲突读回；稳定 HTTPS 域名/命名隧道也未配置。
+- 当前限制：Quick Tunnel 地址只作为本轮电脑/平板互测入口；隧道重启可能更换地址，若更换需在两台设备更新同步服务地址。API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
+- 下一步：先在电脑或当前平板注册一个同步账户并点击“立即同步（合并）”，再在另一台设备登录同一账户、输入同一同步口令并再次点击合并；完成后记录真实结果。
 
 ## 2026-09-11 上一轮 MV3 方案收回（OB-EXT-001，superseded）
 
@@ -46,28 +56,9 @@
 
 - v0.53.0 的事实核查门禁、v0.52.0 的提示词反馈、v0.51.x 的增量 AI/平台入口等历史证据已移入对应 changelog 和历史索引；当前只继承“未核查不等于虚假、候选必须人工确认、平台不写入”的边界。
 
-## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
+## 历史事实路由
 
-- 范围：先前曾将 Git 忽略的 `gateway/runtime/providers.local.json` 暂切到 `deepseek-v4-flash-vision-exp`；本轮按用户补充的内测调用名最终切换为 `deepseek-v4.1-flash-expires-on-0910`。`omni-default`、`http://127.0.0.1:4000` loopback、官方 base URL、thinking mode、重试/限流和 API Key 均保持不变；userscript 仍请求 `omni-default`，源码版本仍为 `0.51.1`。
-- 官方 API 实时发现：使用当前本机 provider 的凭据请求 `https://api.deepseek.com/models`，仅输出型号 ID，得到公开的 `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp`，未列出内测 ID；随后按用户提供的精确内测 ID 经网关实请求成功。凭据未进入输出、源码或文档。
-- `structure regression`：生成后的 `gateway.manifest.json` 显示 `deepseek-v4.1-flash-expires-on-0910`、单个 primary provider 和 `omni-default`；`pwsh -NoProfile -ExecutionPolicy Bypass -File .\gateway\health.ps1` 通过；经本机 loopback 发送人工合成审核请求返回 HTTP 200，响应模型别名为 `omni-default`，正文为可解析的 `block/reason` JSON；网关 smoke、userscript 语法、文档门禁和 `git diff --check` 见本轮交接结果。
-- `blocked`：公开模型目录和当前官方公开文档未覆盖该内测 ID；`expires-on-0910` 到期后的有效性及真实语义准确率尚未验证。本轮只验证文本审核请求，没有额外导出 B站/抖音页面文本或执行平台写入。
-- 发布状态（记录时）：这是本机运行时配置变更，不改变 userscript 源码哈希、版本号、commit、push、tag/Release 或部署状态；当时候选仍未公开发布。
-
-## 2026-09-08 可学习 AI 提示词系统（OB-AI-004，local candidate）
-
-- 范围：加入本地版本化 `PromptProfile`、三态 `FeedbackLedger`、理由/备注、正负例、固定 JSON 和提示词包；`blockCriteria` 为有效 AI 规则，旧 `aiRules` 仅迁移兼容；反馈达阈值生成待确认提案，接受后才入 prompt；并审计六平台作者、作品、评论、弹幕/帖子和统一右下内容入口。
-- 改动文件：`omniblock.user.js`、AI/覆盖测试及 v0.52.0 文档。
-- `structure regression`：覆盖6/6、扩展8/8、提示词12/12、评测5/5、screening19/19、内容 AI12/12、多平台7/7、适配器28/28、运行器20/20、quickblock37/37；页面/控制台错误0，语法/文档/差异门禁通过；maintenance-check 本地项通过，汇总受外部阻断。
-- `real-site verified`：2026-09-09 用户授权专用 Chrome 只读：B站作品/评论/弹幕 `1/27/66`；微博内容/评论 `6/1+6`；知乎内容/评论 `12/3` 后新增 `10`；贴吧主题/评论 `1/11`；抖音精选/主页作品 `45/1`。未点平台写入。
-- `blocked`：X 空壳无推文；抖音未展开评论/弹幕；B站分页/动态 UID、微博 spacer、抖音换片和 DeepSeek 精度仍待补验。
-- 发布状态（记录时）：当时源码 `@version` 为 `0.51.1`；既有 0.51.1 已推送到 `origin/master`，本轮提示词/多平台改动随后纳入 v0.52.0，未在该条目记录时执行公开发布、部署或平台写入。
-
-## 2026-09-09 v0.52 桥接与反馈修复（OB-AI-009/010）
-
-- 已归档：反馈样例桥接白名单、loopback 错误分层和审核「不屏蔽」可撤销均已随 v0.52.0 发布；细节见 `docs/changelog/v0.52.0.md`。
-- `structure regression`：开发扩展 8/8、AI screening 19/19、内容 AI 12/12、提示词系统 12/12；页面/控制台错误为 0。
-- `real-site verified`：2026-09-09 用户授权专用 Chrome 微博只读页 bridge ready，AI `6/6`；审核负反馈完成记录/撤销循环并跨刷新读回，最终反馈 0；未执行平台写入。
+- 2026-09-08 至 2026-09-09 的 AI 型号、提示词、桥接和反馈证据已归档在对应版本条目；当前运行边界见本页“当前边界摘要”。
 
 ## 当前边界摘要
 

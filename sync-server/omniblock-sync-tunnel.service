@@ -1,0 +1,21 @@
+[Unit]
+Description=OmniBlock independent sync HTTPS quick tunnel
+After=network-online.target omniblock-sync.service
+Wants=network-online.target
+Requires=omniblock-sync.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8787 --loglevel info
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Quick Tunnel 地址在进程重启后可能改变；本地址只用于当前验证阶段。
+
+[Install]
+WantedBy=multi-user.target
