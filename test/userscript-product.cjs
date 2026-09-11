@@ -1,7 +1,7 @@
 /* OmniBlock userscript product regression.
  * 夹具说明：页面、provider 和 sync endpoint 全部是人工合成路由；不访问真实站点、
  * 真实模型或真实账户。覆盖 userscript 直连 API、Key/同步密文边界、账户登录同步，
- * 以及 390px 窄屏触控设置面板。真实平板安装仍需单独记录 blocked 或 real-site verified。
+ * 以及 390px/768px 窄屏触控设置面板与 AI 审核浮层。真实平板安装仍需单独记录 blocked 或 real-site verified。
  * 运行：node test/userscript-product.cjs
  */
 const assert = require('assert');
@@ -90,10 +90,18 @@ function corsHeaders() {
       }
       if (url === PROVIDER_URL) {
         providerRequests++;
+        let input = {};
+        try {
+          const body = JSON.parse(request.postData() || '{}');
+          input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}');
+        } catch (error) { input = {}; }
+        const items = (Array.isArray(input.items) ? input.items : []).map((item) => ({
+          id: item.id, decision: 'block', confidence: 0.9, reason: '命中直连测试规则',
+        }));
         await route.fulfill({
           status: 200,
           headers: { ...corsHeaders(), 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [] }) } }] }),
+          body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items }) } }] }),
         });
         return;
       }
@@ -233,8 +241,22 @@ function corsHeaders() {
     });
     assert.ok(tabletLayout.panel && tabletLayout.noHorizontalOverflow && tabletLayout.touchTargets
       && tabletLayout.gearHeight >= 44 && tabletLayout.fabReachable, JSON.stringify(tabletLayout));
+    await page.waitForSelector('#ob-ai-review .ob-ai-confirm', { timeout: 5000 });
+    const reviewTouch = await page.evaluate(() => {
+      const overlay = document.querySelector('#ob-ai-review');
+      const buttons = overlay ? Array.from(overlay.querySelectorAll('button')).filter((button) => button.getClientRects().length) : [];
+      return {
+        overlay: !!overlay,
+        candidates: overlay ? overlay.querySelectorAll('.ob-ai-candidate').length : 0,
+        heights: buttons.map((button) => Math.round(button.getBoundingClientRect().height)),
+      };
+    });
+    assert.ok(reviewTouch.overlay && reviewTouch.candidates >= 1 && reviewTouch.heights.length >= 4
+      && reviewTouch.heights.every((height) => height >= 44), JSON.stringify(reviewTouch));
+    await page.evaluate(() => window.OB.ai.closeReview());
     await page.setViewportSize({ width: 390, height: 844 });
     report.pass.push('390px/768px touch fixture has the account sync form, no gateway UI, safe-area CSS, no horizontal overflow and reachable controls');
+    report.pass.push('AI review overlay renders a provider candidate and keeps all buttons at 44px touch targets at 768px');
 
     await page.evaluate(() => window.OB.openOptions());
     await page.evaluate((provider) => window.OB.openContentManager(window.OB.adapters.bilibili, 'ai'), PROVIDER_URL);
