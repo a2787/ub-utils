@@ -353,8 +353,13 @@ async function runCase(browser, item, report) {
     await pause(80);
     const afterDown = await page.evaluate(() => ({ y: window.scrollY }));
     await page.keyboard.press('ArrowUp');
-    await pause(80);
-    const afterUp = await page.evaluate(() => ({ y: window.scrollY }));
+    // 慢环境（CI）里平滑滚动未落定时立即采样会把方向键误判成失败；
+    // 等 y 真正回落到 ArrowDown 之下再采样，仍保留方向断言本身。
+    let afterUp = await page.evaluate(() => ({ y: window.scrollY }));
+    for (let settle = 0; settle < 20 && afterUp.y >= afterDown.y; settle++) {
+      await pause(100);
+      afterUp = await page.evaluate(() => ({ y: window.scrollY }));
+    }
     state.inputScroll = { before, afterWheel, afterDown, afterUp };
   }
   await page.close();
