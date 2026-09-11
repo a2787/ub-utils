@@ -32,7 +32,7 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-TM-001 — Tampermonkey 移动端适配、API 直连与账户级加密同步
 
-- status: blocked
+- status: deferred
 - priority: P1
 - scope: 保持 `omniblock.user.js` 为桌面与平板的共同交付物；优化窄屏/触控设置、内容入口、审核浮层和输入控件；补齐无 hover 设备的控制坞展开、页面内容入口和弹幕入口触控路径；AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 API Key；在 userscript 内提供账户注册/登录、客户端加密同步和显式“立即同步（合并）”入口，复用独立同步服务协议。
 - non-goals: 不继续建设或发布 MV3 安装路径；不保留 AI 主链路的 loopback 网关模式；不加入本地模型；不把 API Key、账户密码、访问令牌或同步口令放入普通设置、导出文件或云端文档；不自动同步、不执行平台举报/官方拉黑/关注/发帖；东京服务器的独立同步部署由 `OB-SYNC-001` 管理，本项不改 Vibeme/V2/KB 既有服务；不删除上一项留下的实验文件。
@@ -47,13 +47,13 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
 - evidence: `structure regression`：v0.57.1 userscript product 6/6（含 768px 审核浮层触控目标断言，旧行为 26/32px 上失败）；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；页面/控制台错误为 0。维护总检本地项通过。
 - evidence: `real-site verified`：2026-09-11 匿名隔离只读会话加载 v0.57.1 B站候选，脱敏页面形式 `bilibili.com/video/...`；控制坞、统一内容入口、评论/回复和只读 AI 内容均有现场结果，页面/控制台错误为 0，但触控操作未在真实平板执行。`blocked`：目标平板真实触控/provider 与双设备同步结果尚未完成，抖音匿名探针停在验证码中间页。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
-- next: v0.57.1 已经用户当轮授权发布（push/tag/Release 完成，raw 更新地址已服务 0.57.1）；剩余动作：用户在目标平板 Edge 的 Tampermonkey 更新到 v0.57.1 并实测无 hover 入口、44px 触控目标与 AI provider，回填 `real-site verified` 或 `blocked`。取得设备结果前不把本地夹具升级为 `real-site verified`。
-- updated: 2026-09-11
+- next: 2026-09-12 用户决定平板线封存（不是终止），维护重心回到电脑：本地开发、发布与更新地址均已完成，仅剩平板实机触控/AI provider 验证未执行。重启条件、待办清单与恢复动作见 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md)；重启前本项不再占用维护轮次。
+- updated: 2026-09-12
 - supersedes: OB-EXT-001
 
 ### OB-SYNC-001 — 东京独立同步服务上线与双设备互测
 
-- status: blocked
+- status: deferred
 - priority: P1
 - scope: 在东京服务器建立独立 `omniblock-sync` 运行目录、独立 SQLite 数据库和独立 systemd 服务；通过独立 HTTPS 隧道提供 userscript 所需的 `/healthz`、账户认证和 opaque-CAS 同步接口；使用同一账户与同步口令完成电脑、平板两端的显式合并验证。
 - non-goals: 不修改 Vibeme/V2/KB 的数据库、代码、网关路由或现有隧道；不上传 API Key、浏览器登录态、运行日志或明文名单；不启用后台自动同步；当前服务器没有可用的固定域名时不伪称为稳定生产域名，临时隧道若发生重启需重新取得 endpoint，固定域名/命名隧道另行处理。
@@ -64,8 +64,8 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [ ] 电脑与平板使用同一账户、同一同步口令，分别点击“立即同步（合并）”后，名单/可同步设置/提示词/反馈能够确定性合并，删除墓碑不复活。
   - [ ] 线上健康、密文读回、冲突重试和双设备结果记录为 `real-site verified`；网络/设备/登录条件阻断时如实记为 `blocked`。
 - evidence: `structure regression`：本地 sync-core 7/7、Python 服务 5/5；`real-site verified`：2026-09-11 独立服务 loopback 与 HTTPS Quick Tunnel health 返回 200，源码 SHA-256 一致；真实账户与双设备互测待本项完成。
-- next: 等待用户动作：先在电脑或平板注册同步账户并点击“立即同步（合并）”，再在另一台设备登录同一账户、输入同一同步口令并再次合并；完成后把健康、密文读回与合并结果记为 `real-site verified`，隧道重启更换地址时两台设备同步更新。
-- updated: 2026-09-11
+- next: 双设备互测随平板线于 2026-09-12 封存（服务器保持部署在线，不改 schema/凭据）；重启时按 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再电脑+平板互测并回填 `real-site verified`。
+- updated: 2026-09-12
 - supersedes: none
 
 ## 关闭规则

@@ -1,7 +1,7 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-11
-状态来源：v0.57.1 已发布为公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据，目标平板候选实机、真实 provider 和固定域名仍未完成。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.57.1 已发布为公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
@@ -13,27 +13,27 @@
 - 发布状态：v0.57.1 功能提交 `55127dd` 已推送到 `origin/master`，`v0.57.1` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.1`；`v0.57.0` tag/Release 保持不变；独立同步服务已部署，未执行平台写入。
 - 当前公开 tag/Release：[v0.57.1](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)。
 
-## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 候选，设备互测进行中）
+## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
 
 - 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、B站/抖音弹幕点按入口、设备直连 API、GM Key、账户注册/登录和 PBKDF2/AES-GCM opaque-CAS；`sync/`、`sync-server/` 提供协议/本地服务回归。上一轮 `extension/` MV3 实验不属于交付路径。
 - `structure regression`：userscript product 5/5；通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28、AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px/768px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
 - `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.1`/`0.57.1-tampermonkey-touch-controls`（含平板触控目标修复，源码 SHA-256 `2efe63dff35b2f6c91497558470d6afdfe1ac92804d94f95a6ef41accb0b98fb`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0。该证据覆盖真实桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
 - `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），评论管理器 2 个标签，本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
 - `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务在 loopback health 返回 200，独立 HTTPS Quick Tunnel 的 `/healthz` 也返回 200，服务标识为 `omniblock-sync`；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
-- `blocked`：目标平板 v0.57.1 真实触控、真实 provider、电脑/平板账户注册登录和加密合并尚未取得本轮用户设备结果；抖音匿名探针停在验证码中间页；当前 Quick Tunnel 没有固定域名，进程重启后可能更换地址。
+- `blocked`：平板实机触控、真实 provider 与双设备加密合并未取得设备结果，2026-09-12 起随平板线封存待重启；抖音匿名探针停在验证码中间页；Quick Tunnel 无固定域名，重启可能换址。
 - 发布状态：v0.57.1 已经用户当轮授权发布：功能提交推送到 `origin/master`，`v0.57.1` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.1`；目标平板真实触控/provider 与电脑/平板双设备同步仍待验证，未执行平台写入。
 - 触控入口手势：候选采用“入口常驻可见 + 齿轮单次点按进设置”，取代原计划的两段式齿轮手势（触控端 dock 挂载即 `expanded`，首触展开无对象）；旧验收标准已随之退休。
 - 平板 561px 以上触控宽度：设置面板紧凑按钮组与 AI 审核/反馈浮层的确认、取消、拒绝、作用域按钮原被组件级 `min-height` 压回 26–34px（窄屏块只兜住 ≤560px），已在组件规则后补 coarse-pointer 覆盖统一恢复 44px（2026-09-11 product 6/6）。
 - 计划收尾：2026-09-11 关闭 11 个积压计划项（1 verified、5 deferred、4 blocked、1 superseded），终态与恢复动作见 [收尾归档](plans/2026-09-11-plan-closure.md)；活动计划只剩等待用户动作的 OB-TM-001 与 OB-SYNC-001。
 
-## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，in_progress）
+## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，deferred，随平板线封存）
 
 - 范围/文件：东京机新增独立 `/opt/omniblock-sync/server.py`、`/opt/omniblock-sync/data/omniblock-sync.sqlite3`、`omniblock-sync.service` 和独立 Quick Tunnel 服务；未改 Vibeme/V2/KB 数据库、代码、网关路由或既有隧道。
 - `structure regression`：本地 sync-core 7/7、Python 服务 5/5；服务模板启用 loopback、独立数据目录、最小权限和不记录请求内容。
 - `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地源码 SHA-256 一致。
 - `blocked`：还没有用用户真实账户完成注册/登录、第一台写入、第二台解密合并和墓碑/冲突读回；稳定 HTTPS 域名/命名隧道也未配置。
 - 当前限制：Quick Tunnel 地址只作为本轮电脑/平板互测入口；隧道重启可能更换地址，若更换需在两台设备更新同步服务地址。API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
-- 下一步：先在电脑或当前平板注册一个同步账户并点击“立即同步（合并）”，再在另一台设备登录同一账户、输入同一同步口令并再次点击合并；完成后记录真实结果。
+- 下一步：随平板线封存；重启时按 [封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再双设备互测。
 
 ## 2026-09-11 上一轮 MV3 方案收回（OB-EXT-001，superseded）
 
@@ -163,4 +163,4 @@ v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史
 
 ## 下一项最有价值的验证
 
-活动计划只剩两项 `blocked`，均等用户动作：① 目标平板 Edge 的 Tampermonkey 安装 v0.57.1 候选，实测无 hover 入口、44px 触控目标与 AI provider，回填 `real-site verified` 或 `blocked`（OB-TM-001）；② 电脑/平板以同一账户与同步口令各执行一次“立即同步（合并）”，回填密文读回与合并证据（OB-SYNC-001）。完成后由用户决定是否授权发布 v0.57.1。
+维护重心已回到电脑（2026-09-12）：活动计划两项均随平板线封存为 `deferred`。电脑侧可立即开工的是 OB-RULE-001 自动弹幕正则安全边界（纯本地：高风险表达式保存前拒绝、编译缓存）；其余电脑侧积压分两类——等用户专用 Chrome 登录态授权即可批量补采（抖音换片隔离、B站分页/动态 UID、微博 spacer、知乎/贴吧/微博覆盖补采、抖音性能基线），或等用户决策/凭据（商汤 provider、事实检索来源 allowlist、CI/CD）。
