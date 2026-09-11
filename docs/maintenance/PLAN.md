@@ -57,8 +57,8 @@ proposed → approved → in_progress → verified
   - [x] userscript 同步客户端复用 `sync/sync-core.js` 的 envelope/CAS/逻辑时钟/墓碑协议；账户密码和同步口令只在按钮调用期间留在内存，token/device id/本地文档单独保存；409 与离线重试可恢复，远端密文可在第二设备解密并合并。
   - [x] 本地 mock、独立 Python 服务、AI/平台/通用回归和文档/隐私门禁通过；未执行平台写入。
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
-- evidence: `structure regression`：userscript product 4/4；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；AI screening、平台/提示词/批次/自动加载/watchdog/事实核查均通过且页面/控制台错误为 0。维护总检本地项通过。
-- evidence: `real-site verified`：2026-09-11 匿名隔离只读会话中的 B站当前候选加载和微博当前候选加载已记录在 `CURRENT.md`；`blocked`：目标平板真实 provider 与双设备同步结果尚未完成，抖音验证码/微博活动 spacer 等外部条件仍按各自条目记录。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
+- evidence: `structure regression`：v0.57.1 userscript product 5/5；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；本轮新增无 hover 控制坞、B站浮动弹幕点按和抖音弹幕点按回归，页面/控制台错误为 0。维护总检本地项通过。
+- evidence: `real-site verified`：2026-09-11 匿名隔离只读会话加载 v0.57.1 B站候选，脱敏页面形式 `bilibili.com/video/...`；控制坞、统一内容入口、评论/回复和只读 AI 内容均有现场结果，页面/控制台错误为 0，但触控操作未在真实平板执行。`blocked`：目标平板真实触控/provider 与双设备同步结果尚未完成，抖音匿名探针停在验证码中间页。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
 - next: 先完成 v0.57.1 触控候选的桌面/夹具回归，再由用户在目标平板 Edge 的 Tampermonkey 中安装候选并完成无 hover 入口、AI provider 和双设备同步互测；未取得设备结果前不把本地夹具升级为 `real-site verified`。
 - updated: 2026-09-11
 - supersedes: OB-EXT-001
