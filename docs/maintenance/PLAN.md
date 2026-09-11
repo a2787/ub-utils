@@ -47,7 +47,7 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
 - evidence: `structure regression`：v0.57.1 userscript product 6/6（含 768px 审核浮层触控目标断言，旧行为 26/32px 上失败）；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；页面/控制台错误为 0。维护总检本地项通过。
 - evidence: `real-site verified`：2026-09-11 匿名隔离只读会话加载 v0.57.1 B站候选，脱敏页面形式 `bilibili.com/video/...`；控制坞、统一内容入口、评论/回复和只读 AI 内容均有现场结果，页面/控制台错误为 0，但触控操作未在真实平板执行。`blocked`：目标平板真实触控/provider 与双设备同步结果尚未完成，抖音匿名探针停在验证码中间页。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
-- next: 本地开发与回归已全部完成，等待用户动作：① 在目标平板 Edge 的 Tampermonkey 安装 v0.57.1 候选并实测无 hover 入口、触控目标、AI provider；② 决定是否授权 push/tag/Release 发布 v0.57.1。取得设备结果前不把本地夹具升级为 `real-site verified`。
+- next: v0.57.1 已经用户当轮授权发布（push/tag/Release 完成，raw 更新地址已服务 0.57.1）；剩余动作：用户在目标平板 Edge 的 Tampermonkey 更新到 v0.57.1 并实测无 hover 入口、44px 触控目标与 AI provider，回填 `real-site verified` 或 `blocked`。取得设备结果前不把本地夹具升级为 `real-site verified`。
 - updated: 2026-09-11
 - supersedes: OB-EXT-001
 
