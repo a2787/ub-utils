@@ -38,7 +38,7 @@ proposed → approved → in_progress → verified
   - [ ] 桌面与目标平板实际页面分别取得 `real-site verified`；本地夹具只记 `structure regression`，安装/登录/验证码/设备 API 不可用记 `blocked`。
   - [ ] 线上 sync server 的 schema/凭据/部署/切换在独立动作确认后再执行，并完成同一密文 artifact 的只读健康和同步读回。
 - evidence: `structure regression`：product 3/3、dev 11/11、sync mock 7/7、Python 服务 5 项及既有 AI/平台回归；`blocked`：平板扩展安装、真实 provider、东京线上服务未验证/部署。
-- next: 用户已确认平板 Edge 以 Tampermonkey 为唯一安装入口；本项停止作为交付主线。现有 `extension/`、`dist/` 相关构建代码保留在未提交工作区，待后续明确确认后再决定是否清理或复用。
+- next: 用户已确认平板 Edge 以 Tampermonkey 为唯一安装入口；本项停止作为交付主线。`extension/`、`test/product-extension.cjs` 与 `--product` 构建分支已归档进仓库、保留复用可能，不再作为交付路径；如需彻底移除再单独确认。
 - updated: 2026-09-11
 - supersedes: none
 
@@ -52,12 +52,12 @@ proposed → approved → in_progress → verified
 - acceptance: required
   - [x] userscript 的 AI 配置只显示 API 地址、模型名和“设置/更换本机 Key”，旧 gateway 配置不会再触发网关请求；Key 只写入独立 GM 存储，并且不出现在名单导出、提示词导出、同步 state、日志或请求正文。
   - [x] userscript 在普通 Tampermonkey 运行时可以使用 GM 跨源请求直接调用已配置 provider；无 Key、无效 URL、网络错误和 HTTP 错误均给出可理解的失败状态，且不把 Key 写入页面对象。
-  - [x] 390px、768px 和触控夹具验证：入口不遮挡安全区，主要按钮/关闭按钮可触控，设置面板不横向溢出，AI 配置和同步表单可滚动/提交；真实平板安装未观察到前只记 `blocked`。
-  - [ ] 无 hover 的 coarse pointer 触控路径：齿轮首触可展开控制坞，页面“内容屏蔽/弹幕屏蔽”入口可继续触控打开，第二次点按齿轮可进入设置；不依赖 `pointerover`/`mouseover` 才能到达入口。
+  - [x] 390px、768px 和触控夹具验证：入口不遮挡安全区，设置面板不横向溢出，AI 配置和同步表单可滚动/提交；768px 面板按钮最小高度断言修复后 5/5 通过（紧凑按钮组在 561px 以上宽度被组件级 min-height 压回 32/34px，已补 coarse-pointer 覆盖），真实平板安装未观察到前只记 `blocked`。
+  - [x] 无 hover 的 coarse pointer 触控路径：页面入口常驻可见、齿轮单次点按直接进入设置，不依赖 `pointerover`/`mouseover`；原“齿轮首触展开控制坞、二次点按进设置”的手势在触控端 dock 挂载即 `expanded`，已不再适用。
   - [x] userscript 同步客户端复用 `sync/sync-core.js` 的 envelope/CAS/逻辑时钟/墓碑协议；账户密码和同步口令只在按钮调用期间留在内存，token/device id/本地文档单独保存；409 与离线重试可恢复，远端密文可在第二设备解密并合并。
   - [x] 本地 mock、独立 Python 服务、AI/平台/通用回归和文档/隐私门禁通过；未执行平台写入。
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
-- evidence: `structure regression`：v0.57.1 userscript product 5/5；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；本轮新增无 hover 控制坞、B站浮动弹幕点按和抖音弹幕点按回归，页面/控制台错误为 0。维护总检本地项通过。
+- evidence: `structure regression`：v0.57.1 userscript product 5/5；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；本轮新增无 hover 控制坞、B站浮动弹幕点按和抖音弹幕点按回归，页面/控制台错误为 0。维护总检本地项通过（2026-09-11 复跑零 FAIL；隔离探针 B站成功加载修复候选，抖音验证码与微博 spacer 维持 `blocked`）。
 - evidence: `real-site verified`：2026-09-11 匿名隔离只读会话加载 v0.57.1 B站候选，脱敏页面形式 `bilibili.com/video/...`；控制坞、统一内容入口、评论/回复和只读 AI 内容均有现场结果，页面/控制台错误为 0，但触控操作未在真实平板执行。`blocked`：目标平板真实触控/provider 与双设备同步结果尚未完成，抖音匿名探针停在验证码中间页。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
 - next: 先完成 v0.57.1 触控候选的桌面/夹具回归，再由用户在目标平板 Edge 的 Tampermonkey 中安装候选并完成无 hover 入口、AI provider 和双设备同步互测；未取得设备结果前不把本地夹具升级为 `real-site verified`。
 - updated: 2026-09-11
