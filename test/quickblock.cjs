@@ -867,6 +867,24 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const after = { pick: pick.getBoundingClientRect().left, dm: dm.getBoundingClientRect().left };
       return { shown: getComputedStyle(pick).display !== 'none', moved: after.dm !== before.dm, follows: Math.abs((after.pick - after.dm) - (before.pick - before.dm)) < 4 };
     });
+    const touchFloating = await page.evaluate(async () => {
+      const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const area = document.querySelector('.bpx-player-video-area');
+      const dm = document.getElementById('floating-danmaku-unique');
+      const pick = document.getElementById('ob-dm-pick');
+      if (!area || !dm || !pick) return { shown: false };
+      const rect = dm.getBoundingClientRect();
+      pick.style.setProperty('display', 'none', 'important');
+      area.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, composed: true, pointerType: 'touch', isPrimary: true,
+        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      }));
+      await pause(100);
+      return {
+        shown: getComputedStyle(pick).display !== 'none',
+        targetStillUnique: !!window.__omniblockFloatingDmProbe(rect.left + rect.width / 2, rect.top + rect.height / 2),
+      };
+    });
     // 登录用户悬停时 B站会弹出自己的弹幕操作条；这里验证同一身份也能供原生菜单复用。
     await page.evaluate(() => {
       const menu = document.createElement('ul');
@@ -914,13 +932,14 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     if (layerContract.pointerEventsNone && layerContract.elementAtPointIsNotDanmaku
       && floatingFollow.shown && floatingFollow.moved && floatingFollow.follows
+      && touchFloating.shown && touchFloating.targetStillUnique
       && floatingDanmakuPick.visible && floatingDanmakuPick.menuQuick
        && /本地拉黑/.test(floatingDanmakuPick.menuText || '') && floatingDanmakuPick.genericQuick
        && floatingDanmakuPick.confirm
        && floatingDanmakuPick.confirmLinksUid && floatingDanmakuPick.cardCalls.includes('33')
        && floatingDanmakuPick.blocked && floatingDanmakuPick.hiddenAfterBlock && floatingDanmakuPick.restored)
-       report.pass.push('QB-X pointer-events:none 浮动弹幕的本地浮层会跟随移动，原生/无语义 role 举报项均显示“本地拉黑”，并在目标动作自动关联 UID 后按 hash/UID 拉黑撤销');
-    else report.fail.push('QB-X 浮动弹幕坐标/举报入口失败：' + JSON.stringify({ ...layerContract, floatingFollow, ...floatingDanmakuPick }));
+       report.pass.push('QB-X pointer-events:none 浮动弹幕支持鼠标悬停和触控点按，本地浮层会跟随移动，原生/无语义 role 举报项均显示“本地拉黑”，并在目标动作自动关联 UID 后按 hash/UID 拉黑撤销');
+    else report.fail.push('QB-X 浮动弹幕坐标/举报入口失败：' + JSON.stringify({ ...layerContract, floatingFollow, touchFloating, ...floatingDanmakuPick }));
 
     await page.evaluate(() => {
       const menu = document.querySelector('ul[role="menu"]');

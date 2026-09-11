@@ -10,6 +10,7 @@ const path = require('path');
 const { launchChromium, ROOT } = require('./runtime.cjs');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
+const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const PROVIDER_URL = 'https://provider.test/v1/chat/completions';
 const SYNC_URL = 'https://sync.test';
 const KEY = 'synthetic-direct-key';
@@ -45,7 +46,7 @@ window.GM_deleteValue = (key) => { delete window.__gm[key]; };
 window.GM_addStyle = (css) => { const add = () => { const style = document.createElement('style'); style.textContent = css; const root = document.head || document.documentElement; if (root) root.appendChild(style); }; if (document.head || document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add); };
 window.GM_registerMenuCommand = () => {};
 window.GM_addValueChangeListener = () => {};
-window.GM_info = { script: { name: '本地内容过滤增强', version: '0.57.0', namespace: 'https://github.com/a2787/ub-utils' } };
+window.GM_info = { script: { name: '本地内容过滤增强', version: '${LOCAL_VERSION}', namespace: 'https://github.com/a2787/ub-utils' } };
 window.GM_xmlhttpRequest = (options) => {
   const item = { url: String(options && options.url || ''), method: options && options.method || 'GET', headers: options && options.headers || {}, data: options && options.data || '' };
   window.__requests.push(item);
@@ -128,6 +129,38 @@ function corsHeaders() {
     await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-userscript-product.cjs' });
     await page.goto('https://www.bilibili.com/video/userscript-product-fixture', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!(window.OB && window.OB.ai && window.OB.sync && document.querySelector('#ob-gear')), null, { timeout: 8000 });
+    await page.waitForFunction(() => !!document.querySelector('.ob-bulk[data-ob-kind="page"]'), null, { timeout: 5000 }).catch(() => {});
+
+    const touchDock = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const gear = document.getElementById('ob-gear');
+      const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
+      if (!gear || !fab) return { gear: !!gear, fab: !!fab };
+      gear.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'touch', isPrimary: true }));
+      gear.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, composed: true, pointerType: 'touch', isPrimary: true }));
+      await sleep(80);
+      const dock = {
+        touch: document.documentElement.getAttribute('data-ob-touch'),
+        state: document.documentElement.getAttribute('data-ob-dock'),
+        gearHeight: Math.round(gear.getBoundingClientRect().height),
+        fabVisibility: getComputedStyle(fab).visibility,
+        fabPointerEvents: getComputedStyle(fab).pointerEvents,
+      };
+      fab.click();
+      await sleep(160);
+      const popup = !!document.querySelector('#ob-content-manager, #ob-comment-manager, #ob-bulk-scope');
+      document.querySelector('#ob-content-manager .ob-content-close, #ob-comment-manager .ob-cm-close, #ob-dm-manager .ob-dm-close, #ob-bulk-scope .ob-bs-no')?.click();
+      await sleep(80);
+      gear.click();
+      await sleep(80);
+      const settings = !!document.getElementById('ob-panel');
+      document.getElementById('ob-panel')?.querySelector('.ob-close')?.click();
+      return { gear: true, fab: true, dock, popup, settings };
+    });
+    assert.ok(touchDock.gear && touchDock.fab && touchDock.dock.touch === '1' && touchDock.dock.state === 'expanded'
+      && touchDock.dock.gearHeight >= 44 && touchDock.dock.fabVisibility === 'visible'
+      && touchDock.dock.fabPointerEvents === 'auto' && touchDock.popup && touchDock.settings, JSON.stringify(touchDock));
+    report.pass.push('touch fixture reaches the page content popup and settings without hover');
 
     const direct = await page.evaluate(async (expectedKey) => {
       window.OB.Store.setSetting('aiEnabled', true);
@@ -187,14 +220,21 @@ function corsHeaders() {
     const tabletLayout = await page.evaluate(() => {
       const panel = document.querySelector('#ob-panel');
       const box = panel && panel.querySelector('.ob-box');
+      const buttons = panel ? Array.from(panel.querySelectorAll('button')).filter((button) => button.getClientRects().length) : [];
+      const gear = document.getElementById('ob-gear');
+      const fab = document.querySelector('.ob-bulk[data-ob-kind="page"]');
       return {
         panel: !!panel,
         noHorizontalOverflow: !!(panel && box && panel.scrollWidth <= panel.clientWidth + 1 && box.scrollWidth <= box.clientWidth + 1),
+        touchTargets: buttons.length > 0 && buttons.every((button) => button.getBoundingClientRect().height >= 44),
+        gearHeight: gear && Math.round(gear.getBoundingClientRect().height),
+        fabReachable: !!(fab && getComputedStyle(fab).visibility === 'visible' && getComputedStyle(fab).pointerEvents === 'auto'),
       };
     });
-    assert.ok(tabletLayout.panel && tabletLayout.noHorizontalOverflow, JSON.stringify(tabletLayout));
+    assert.ok(tabletLayout.panel && tabletLayout.noHorizontalOverflow && tabletLayout.touchTargets
+      && tabletLayout.gearHeight >= 44 && tabletLayout.fabReachable, JSON.stringify(tabletLayout));
     await page.setViewportSize({ width: 390, height: 844 });
-    report.pass.push('390px touch fixture has the account sync form, no gateway UI, safe-area CSS, no horizontal overflow and usable buttons');
+    report.pass.push('390px/768px touch fixture has the account sync form, no gateway UI, safe-area CSS, no horizontal overflow and reachable controls');
 
     await page.evaluate(() => window.OB.openOptions());
     await page.evaluate((provider) => window.OB.openContentManager(window.OB.adapters.bilibili, 'ai'), PROVIDER_URL);

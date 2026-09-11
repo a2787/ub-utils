@@ -509,7 +509,38 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
       gearAttribute: gear.getAttribute('aria-expanded'),
       gearExpanded: gear.getAttribute('aria-expanded') === 'false',
     };
-    return { gear:true, fab:true, collapsed, expanded, held, autoCollapsed, panelOpen, panelClosed };
+    // 触控分支不派发 hover：仅用 pointerdown(pointerType=touch) 证明设备进入
+    // 常驻入口模式，再直接点按页面级内容入口和齿轮。
+    gear.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, composed: true, pointerType: 'touch', isPrimary: true,
+    }));
+    gear.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true, composed: true, pointerType: 'touch', isPrimary: true,
+    }));
+    await sleep(120);
+    const touchDock = {
+      touch: document.documentElement.getAttribute('data-ob-touch'),
+      state: document.documentElement.getAttribute('data-ob-dock'),
+      gearHeight: Math.round(gear.getBoundingClientRect().height),
+      fabVisibility: getComputedStyle(fab).visibility,
+      fabPointerEvents: getComputedStyle(fab).pointerEvents,
+    };
+    fab.click();
+    await sleep(180);
+    const touchPopup = {
+      contentManager: !!document.getElementById('ob-content-manager'),
+      commentManager: !!document.getElementById('ob-comment-manager'),
+      bulkScope: !!document.getElementById('ob-bulk-scope'),
+    };
+    const popupClose = document.querySelector('#ob-content-manager .ob-content-close, #ob-comment-manager .ob-cm-close, #ob-dm-manager .ob-dm-close, #ob-bulk-scope .ob-bs-no');
+    popupClose?.click();
+    await sleep(120);
+    gear.click();
+    await sleep(120);
+    const touchSettings = { panel: !!document.getElementById('ob-panel'), gearExpanded: gear.getAttribute('aria-expanded') === 'true' };
+    document.getElementById('ob-panel')?.querySelector('.ob-close')?.click();
+    await sleep(120);
+    return { gear:true, fab:true, collapsed, expanded, held, autoCollapsed, panelOpen, panelClosed, touchDock, touchPopup, touchSettings };
   });
   const dockWorks = e4.gear && e4.fab
     && e4.collapsed.state === 'collapsed'
@@ -525,9 +556,14 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
     && e4.held.state === 'expanded'
     && e4.autoCollapsed.state === 'collapsed'
     && e4.panelOpen.present && e4.panelOpen.gearExpanded
-    && e4.panelClosed.state === 'collapsed' && e4.panelClosed.gearExpanded;
+    && e4.panelClosed.state === 'collapsed' && e4.panelClosed.gearExpanded
+    && e4.touchDock.touch === '1' && e4.touchDock.state === 'expanded'
+    && e4.touchDock.gearHeight >= 44
+    && e4.touchDock.fabVisibility === 'visible' && e4.touchDock.fabPointerEvents === 'auto'
+    && (e4.touchPopup.contentManager || e4.touchPopup.commentManager || e4.touchPopup.bulkScope)
+    && e4.touchSettings.panel && e4.touchSettings.gearExpanded;
   dockWorks
-    ? report.pass.push('E4 右下角控制坞：收起隐藏页面入口、悬停展开，移向入口时 action hold 保持可用')
+    ? report.pass.push('E4 控制坞：桌面悬停展开与 action hold 保持可用，触控无 hover 时入口常驻且内容/设置均可点按')
     : report.fail.push('E4 右下角控制坞状态/联动失败：' + JSON.stringify(e4));
   await page.evaluate(() => document.getElementById('ob-gear')?.click());
   await sleep(120);

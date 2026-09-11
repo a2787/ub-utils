@@ -497,6 +497,12 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       await pause(80);
       result.unknownButton = !!unknown.querySelector('.ob-dy-dm-block');
       result.unknownHidden = hidden(unknown);
+      normal.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, composed: true, pointerType: 'touch', isPrimary: true,
+        clientX: 190, clientY: 52,
+      }));
+      await pause(80);
+      result.touchButton = !!normal.querySelector('.ob-dy-dm-block');
       hover(normal);
       await pause(80);
       const btn = normal.querySelector('.ob-dy-dm-block');
@@ -529,11 +535,11 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       return result;
     });
     if (dyDm.fixtureOk && !dyDm.unknownButton && !dyDm.unknownHidden
-      && dyDm.buttonPresent && dyDm.buttonInside && dyDm.buttonLeftOfText && dyDm.buttonOverlapsTextEdge
+      && dyDm.touchButton && dyDm.buttonPresent && dyDm.buttonInside && dyDm.buttonLeftOfText && dyDm.buttonOverlapsTextEdge
       && dyDm.buttonVerticallyParallel && dyDm.genericButtonAbsent
       && dyDm.confirmShown && dyDm.confirmUid && dyDm.blocked && dyDm.hidden && dyDm.restored
       && dyDm.authorHidden && dyDm.authorRestored) {
-      report.pass.push('douyin-danmaku-ui: hover button sits left/overlapping the text, blocks uid, hides/restores; author danmaku maps to video author secuid');
+      report.pass.push('douyin-danmaku-ui: mouse hover and touch tap both expose the local button, which blocks uid, hides/restores; author danmaku maps to video author secuid');
     } else report.fail.push('douyin-danmaku-ui: ' + JSON.stringify(dyDm));
     await dyDmPage.close();
 

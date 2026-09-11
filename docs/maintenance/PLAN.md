@@ -46,19 +46,20 @@ proposed → approved → in_progress → verified
 
 - status: in_progress
 - priority: P1
-- scope: 保持 `omniblock.user.js` 为桌面与平板的共同交付物；优化窄屏/触控设置、内容入口、审核浮层和输入控件；AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 API Key；在 userscript 内提供账户注册/登录、客户端加密同步和显式“立即同步（合并）”入口，复用独立同步服务协议。
+- scope: 保持 `omniblock.user.js` 为桌面与平板的共同交付物；优化窄屏/触控设置、内容入口、审核浮层和输入控件；补齐无 hover 设备的控制坞展开、页面内容入口和弹幕入口触控路径；AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 API Key；在 userscript 内提供账户注册/登录、客户端加密同步和显式“立即同步（合并）”入口，复用独立同步服务协议。
 - non-goals: 不继续建设或发布 MV3 安装路径；不保留 AI 主链路的 loopback 网关模式；不加入本地模型；不把 API Key、账户密码、访问令牌或同步口令放入普通设置、导出文件或云端文档；不自动同步、不执行平台举报/官方拉黑/关注/发帖；东京服务器的独立同步部署由 `OB-SYNC-001` 管理，本项不改 Vibeme/V2/KB 既有服务；不删除上一项留下的实验文件。
 - dependencies: OB-AI-001, OB-AI-004
 - acceptance: required
   - [x] userscript 的 AI 配置只显示 API 地址、模型名和“设置/更换本机 Key”，旧 gateway 配置不会再触发网关请求；Key 只写入独立 GM 存储，并且不出现在名单导出、提示词导出、同步 state、日志或请求正文。
   - [x] userscript 在普通 Tampermonkey 运行时可以使用 GM 跨源请求直接调用已配置 provider；无 Key、无效 URL、网络错误和 HTTP 错误均给出可理解的失败状态，且不把 Key 写入页面对象。
   - [x] 390px、768px 和触控夹具验证：入口不遮挡安全区，主要按钮/关闭按钮可触控，设置面板不横向溢出，AI 配置和同步表单可滚动/提交；真实平板安装未观察到前只记 `blocked`。
+  - [ ] 无 hover 的 coarse pointer 触控路径：齿轮首触可展开控制坞，页面“内容屏蔽/弹幕屏蔽”入口可继续触控打开，第二次点按齿轮可进入设置；不依赖 `pointerover`/`mouseover` 才能到达入口。
   - [x] userscript 同步客户端复用 `sync/sync-core.js` 的 envelope/CAS/逻辑时钟/墓碑协议；账户密码和同步口令只在按钮调用期间留在内存，token/device id/本地文档单独保存；409 与离线重试可恢复，远端密文可在第二设备解密并合并。
   - [x] 本地 mock、独立 Python 服务、AI/平台/通用回归和文档/隐私门禁通过；未执行平台写入。
   - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
 - evidence: `structure regression`：userscript product 4/4；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；AI screening、平台/提示词/批次/自动加载/watchdog/事实核查均通过且页面/控制台错误为 0。维护总检本地项通过。
 - evidence: `real-site verified`：2026-09-11 匿名隔离只读会话中的 B站当前候选加载和微博当前候选加载已记录在 `CURRENT.md`；`blocked`：目标平板真实 provider 与双设备同步结果尚未完成，抖音验证码/微博活动 spacer 等外部条件仍按各自条目记录。独立同步服务的线上部署与互测由 `OB-SYNC-001` 追踪。
-- next: 用户在电脑和目标平板 Edge 的 Tampermonkey 中使用已发布的 v0.57.0，分别配置本机 Key；按 `OB-SYNC-001` 的 endpoint、同账户和同步口令完成两端显式合并。未取得设备结果前不把本地夹具升级为 `real-site verified`。
+- next: 先完成 v0.57.1 触控候选的桌面/夹具回归，再由用户在目标平板 Edge 的 Tampermonkey 中安装候选并完成无 hover 入口、AI provider 和双设备同步互测；未取得设备结果前不把本地夹具升级为 `real-site verified`。
 - updated: 2026-09-11
 - supersedes: OB-EXT-001
 

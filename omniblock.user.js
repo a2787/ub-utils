@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.57.0
+// @version       0.57.1
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.57.0-tampermonkey-mobile-direct-sync';
+  const RUNTIME_BUILD = '0.57.1-tampermonkey-touch-controls';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -3108,6 +3108,83 @@
       transform: translateX(0);
       transition: opacity .18s ease, transform .22s ease, visibility 0s linear 0s;
     }
+    /* 平板/触控设备没有可靠的 hover 状态。此类设备保持页面级入口可见，
+       齿轮仍然直接打开设置；桌面鼠标继续使用原来的悬停展开/自动收起。 */
+    @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
+      #ob-gear {
+        width: 48px; height: 48px; line-height: 48px; font-size: 22px;
+        touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+      }
+      html[data-ob-dock="collapsed"] #ob-gear {
+        transform: translateX(0); opacity: 1;
+      }
+      html[data-ob-dock="collapsed"] #ob-dm-tool,
+      html[data-ob-dock="collapsed"] #ob-douyin-dm-tool,
+      html[data-ob-dock="collapsed"] .ob-bulk[data-ob-kind="page"] {
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+        transform: translateX(0) !important;
+        transition: none;
+      }
+      #ob-panel button, #ob-panel select, #ob-panel textarea,
+      #ob-panel input:not([type="checkbox"]):not([type="radio"]),
+      #ob-content-manager button, #ob-content-manager select, #ob-content-manager textarea,
+      #ob-content-manager input:not([type="checkbox"]):not([type="radio"]),
+      #ob-ai-review button, #ob-ai-feedback button, #ob-confirm button,
+      #ob-work-confirm button, #ob-bulk-scope button,
+      #ob-comment-manager button, #ob-dm-manager button,
+      #ob-douyin-comment-manager button, #ob-douyin-dm-manager button {
+        min-height: 44px;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #ob-panel input[type="checkbox"], #ob-panel input[type="radio"],
+      #ob-content-manager input[type="checkbox"], #ob-content-manager input[type="radio"],
+      #ob-ai-review input[type="checkbox"], #ob-bulk-scope input[type="checkbox"],
+      #ob-comment-manager input[type="checkbox"], #ob-dm-manager input[type="checkbox"],
+      #ob-douyin-comment-manager input[type="checkbox"], #ob-douyin-dm-manager input[type="checkbox"] {
+        min-height: 20px; width: 20px; touch-action: manipulation;
+      }
+      #ob-panel .ob-box, #ob-content-manager .ob-content-box,
+      #ob-ai-review .ob-ai-review-box, #ob-comment-manager .ob-cm-box,
+      #ob-dm-manager .ob-dm-box, #ob-douyin-comment-manager .ob-dc-box,
+      #ob-douyin-dm-manager .ob-dd-box, #ob-bulk-scope {
+        max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      }
+      #ob-panel .ob-list, #ob-panel .ob-platform-group,
+      #ob-content-manager .ob-content-pane, #ob-ai-review .ob-ai-review-list,
+      #ob-comment-manager .ob-cm-list, #ob-dm-manager .ob-dm-list,
+      #ob-douyin-comment-manager .ob-dc-list, #ob-douyin-dm-manager .ob-dd-list {
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+        overscroll-behavior: contain;
+      }
+      .ob-bar, .ob-work-block, .ob-weibo-comment-block, .ob-weibo-thread-block,
+      .ob-weibo-author-block, .ob-bili-author-block, .ob-dm-block,
+      .ob-dy-dm-block, .ob-quick, #ob-dm-pick,
+      .ob-bulk[data-ob-kind="page"] {
+        min-height: 44px;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #ob-dm-pick { padding: 8px 10px !important; }
+    }
+    /* matchMedia 可能在脚本首次挂载后才报告触控能力；运行时属性作为兜底，
+       避免用户第一次触摸时入口仍处于桌面端的隐藏状态。 */
+    html[data-ob-touch="1"] #ob-gear {
+      width: 48px !important; height: 48px !important; line-height: 48px !important; font-size: 22px !important;
+      touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    }
+    html[data-ob-touch="1"][data-ob-dock="collapsed"] #ob-gear {
+      transform: translateX(0) !important; opacity: 1 !important;
+    }
+    html[data-ob-touch="1"][data-ob-dock="collapsed"] #ob-dm-tool,
+    html[data-ob-touch="1"][data-ob-dock="collapsed"] #ob-douyin-dm-tool,
+    html[data-ob-touch="1"][data-ob-dock="collapsed"] .ob-bulk[data-ob-kind="page"] {
+      opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
+      transform: translateX(0) !important; transition: none !important;
+    }
     @media (prefers-reduced-motion: reduce) {
       #ob-gear, #ob-dm-tool, #ob-douyin-dm-tool, .ob-bulk[data-ob-kind="page"] {
         transition: none !important;
@@ -3403,6 +3480,7 @@
     const ACTION_HOLD = 'pointer-action';
     let mounted = false;
     let state = '';
+    let touchMode = false;
     let collapseTimer = 0;
     let actionTimer = 0;
     const holds = new Set();
@@ -3418,6 +3496,27 @@
       return !!(element && element.closest && element.closest(CONTROL_SELECTOR));
     }
 
+    function mediaMatches(query) {
+      try { return !!(window.matchMedia && window.matchMedia(query).matches); }
+      catch (e) { return false; }
+    }
+
+    function detectTouchMode() {
+      const points = typeof navigator !== 'undefined' ? Number(navigator.maxTouchPoints) : 0;
+      return mediaMatches('(pointer: coarse)') || mediaMatches('(any-pointer: coarse)')
+        || mediaMatches('(hover: none)') || mediaMatches('(any-hover: none)') || points > 0;
+    }
+
+    function setTouchMode(reason) {
+      if (touchMode) return;
+      touchMode = true;
+      const root = document.documentElement;
+      if (root) root.setAttribute('data-ob-touch', '1');
+      clearCollapseTimer();
+      if (state === 'collapsed') setState('expanded', reason || 'touch');
+      EventLog.record('ui.floating-dock.touch-mode', { reason: reason || 'touch' });
+    }
+
     function clearCollapseTimer() {
       if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = 0; }
     }
@@ -3425,7 +3524,10 @@
     function setState(next, reason) {
       if (next !== 'collapsed' && next !== 'expanded') return;
       clearCollapseTimer();
-      if (state === next) return;
+      if (state === next) {
+        syncControls();
+        return;
+      }
       state = next;
       const root = document.documentElement;
       if (root) root.setAttribute('data-ob-dock', next);
@@ -3440,7 +3542,7 @@
     // 动态创建的页面入口可能在 dock 已经收起后才出现。除了 CSS 状态外，
     // 这里同步两项交互属性，避免平台样式或旧内联样式让透明入口仍可命中。
     function syncControls() {
-      const hidden = state === 'collapsed';
+      const hidden = !touchMode && state === 'collapsed';
       for (const node of document.querySelectorAll(CONTROL_SELECTOR)) {
         if (node.id === 'ob-gear') continue;
         node.style.setProperty('visibility', hidden ? 'hidden' : 'visible', 'important');
@@ -3454,10 +3556,10 @@
 
     function scheduleCollapse(delay = 1800, reason = 'idle') {
       clearCollapseTimer();
-      if (holds.size) return;
+      if (touchMode || holds.size) return;
       collapseTimer = setTimeout(() => {
         collapseTimer = 0;
-        if (!holds.size) setState('collapsed', reason);
+        if (!touchMode && !holds.size) setState('collapsed', reason);
       }, Math.max(120, Number(delay) || 1800));
     }
 
@@ -3479,19 +3581,23 @@
     }
 
     function onPointerOver(event) {
+      if (touchMode) return;
       if (isControlTarget(event.target)) expand('pointerover');
     }
 
     function onPointerOut(event) {
+      if (touchMode) return;
       if (!isControlTarget(event.target) || isControlTarget(event.relatedTarget)) return;
       scheduleCollapse(1800, 'pointerout');
     }
 
     function onFocusIn(event) {
+      if (touchMode) return;
       if (isControlTarget(event.target)) expand('focusin');
     }
 
     function onFocusOut(event) {
+      if (touchMode) return;
       if (!isControlTarget(event.target) || isControlTarget(event.relatedTarget)) return;
       scheduleCollapse(1800, 'focusout');
     }
@@ -3500,22 +3606,27 @@
       if (mounted) return;
       mounted = true;
       const root = document.documentElement;
-      if (root) root.setAttribute('data-ob-dock', 'collapsed');
-      state = 'collapsed';
-      const gear = document.getElementById('ob-gear');
-      if (gear) {
-        gear.setAttribute('data-ob-dock-state', 'collapsed');
+      touchMode = detectTouchMode();
+      if (root) {
+        root.setAttribute('data-ob-dock', touchMode ? 'expanded' : 'collapsed');
+        if (touchMode) root.setAttribute('data-ob-touch', '1');
+        else root.removeAttribute('data-ob-touch');
       }
+      state = touchMode ? 'expanded' : 'collapsed';
+      const gear = document.getElementById('ob-gear');
+      if (gear) gear.setAttribute('data-ob-dock-state', state);
       document.addEventListener('pointerover', onPointerOver, true);
       document.addEventListener('pointerout', onPointerOut, true);
       document.addEventListener('focusin', onFocusIn, true);
       document.addEventListener('focusout', onFocusOut, true);
       document.addEventListener('pointerdown', (event) => {
+        if (event && (event.pointerType === 'touch' || event.pointerType === 'pen')) setTouchMode('pointerdown');
         if (isControlTarget(event.target)) holdPointerAction();
       }, true);
       syncControls();
-      // 动态创建的页面入口会在任意时间出现；初始折叠状态无需等待其创建。
-      EventLog.record('ui.floating-dock.mount', { state: 'collapsed' });
+      // 动态创建的页面入口会在任意时间出现；触控设备保持入口可达，
+      // 桌面设备仍从折叠状态开始，等待鼠标悬停展开。
+      EventLog.record('ui.floating-dock.mount', { state, touch: touchMode });
     }
 
     return { mount, expand, scheduleCollapse, hold, release, isControlTarget, sync: syncControls };
@@ -8457,7 +8568,8 @@
 
     // 抖音弹幕是持续滚动的节点，通用固定悬浮按钮会停在原地。这里把按钮挂进
     // 弹幕节点内部随 transform 一起移动；弹幕层 pointer-events:none，但节点
-    // 自身是 auto，可以接收鼠标事件。
+    // 自身是 auto，可以接收鼠标事件。触控设备没有 hover，因此首次点按弹幕时
+    // 直接建立同一个本地入口，入口会保留到用户点按别处或完成操作。
     const DY_DM_BTN = 'ob-dy-dm-block';
     let dyDmHoverItem = null;
     let dyDmHoverBtn = null;
@@ -8488,18 +8600,26 @@
       item.appendChild(btn);
       dyDmHoverBtn = btn;
     }
+    function tryAttachDyDanmakuButton(target) {
+      if (!Store.getSetting('enabled') || !Store.getSetting('showHoverButton')) { clearDyDanmakuHover(); return; }
+      const item = target && target.closest ? target.closest(SEL.danmaku) : null;
+      if (!item) { clearDyDanmakuHover(); return; }
+      const info = extractDanmaku(item);
+      if (!info || !info.keys.length || Index.isBlocked(info.keys)) { clearDyDanmakuHover(); return; }
+      if (item !== dyDmHoverItem) clearDyDanmakuHover();
+      attachDyDanmakuButton(item, info);
+    }
     if (document.addEventListener) {
       document.addEventListener('mouseover', (e) => {
-        if (!Store.getSetting('enabled') || !Store.getSetting('showHoverButton')) { clearDyDanmakuHover(); return; }
-        const item = e.target && e.target.closest ? e.target.closest(SEL.danmaku) : null;
-        if (!item) { clearDyDanmakuHover(); return; }
-        const info = extractDanmaku(item);
-        if (!info || !info.keys.length || Index.isBlocked(info.keys)) { clearDyDanmakuHover(); return; }
-        if (item !== dyDmHoverItem) clearDyDanmakuHover();
-        attachDyDanmakuButton(item, info);
+        tryAttachDyDanmakuButton(e && e.target);
+      }, true);
+      document.addEventListener('pointerdown', (e) => {
+        if (!e || (e.pointerType !== 'touch' && e.pointerType !== 'pen')) return;
+        tryAttachDyDanmakuButton(e.target);
       }, true);
       // 弹幕持续移动：指针位置不再落在该节点内时立刻收掉浮层，避免按钮停在原地。
       document.addEventListener('pointermove', (e) => {
+        if (e && (e.pointerType === 'touch' || e.pointerType === 'pen')) return;
         if (!dyDmHoverItem) return;
         dyPointer = { x: e.clientX, y: e.clientY };
         const el = document.elementFromPoint(dyPointer.x, dyPointer.y);
@@ -11793,6 +11913,13 @@
     // B站评论菜单在 Shadow DOM 内，document 级样式无法穿透；内联约束保证
     // 菜单内的本地入口不会因宿主 li 的默认 white-space 而折行。
     if (listItem) btn.style.setProperty('white-space', 'nowrap', 'important');
+    try {
+      if (Number(navigator.maxTouchPoints) > 0
+        || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) {
+        btn.style.setProperty('min-height', '44px', 'important');
+        btn.style.setProperty('touch-action', 'manipulation', 'important');
+      }
+    } catch (e) {}
     btn.setAttribute('data-key', key);
     btn.textContent = '🚫 ' + label;
     const activate = (e) => {
@@ -11823,6 +11950,13 @@
     if (listItem) { btn.setAttribute('role', 'menuitem'); btn.tabIndex = 0; }
     else btn.type = 'button';
     if (listItem) btn.style.setProperty('white-space', 'nowrap', 'important');
+    try {
+      if (Number(navigator.maxTouchPoints) > 0
+        || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) {
+        btn.style.setProperty('min-height', '44px', 'important');
+        btn.style.setProperty('touch-action', 'manipulation', 'important');
+      }
+    } catch (e) {}
     btn.setAttribute('data-thread-key', key);
     btn.title = '屏蔽该楼回复';
     btn.setAttribute('aria-label', '屏蔽该楼回复');
@@ -16462,6 +16596,9 @@
       const hit = floatingDmAtPoint(event.clientX, event.clientY);
       if (!hit) {
         // 指针刚离开弹幕时留一点时间让用户移到按钮上。
+        // 触控没有“移到按钮”的连续 hover 路径；按钮由点按建立后保留，
+        // 下一次点按播放器空白处或滚动时再清理。
+        if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
         if (dmPickTarget && !dmPickHideTimer) dmPickHideTimer = setTimeout(hideDmPick, 900);
         return;
       }
@@ -16477,6 +16614,19 @@
       button.style.setProperty('display', 'inline-flex', 'important');
       positionDmPick();
       followDmPick();
+    }
+
+    function onPlayerPointerDown(event) {
+      if (!event || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return;
+      if (dmPickButton && event.target === dmPickButton) return;
+      const player = event.target && event.target.closest && event.target.closest(FLOATING_DM_PLAYER_SEL);
+      const hit = player ? floatingDmAtPoint(event.clientX, event.clientY) : null;
+      if (!hit) { hideDmPick(); return; }
+      onPlayerPointerMove(event);
+      if (dmPickTarget) {
+        if (dmPickHideTimer) { clearTimeout(dmPickHideTimer); dmPickHideTimer = 0; }
+        dmPickHideTimer = setTimeout(hideDmPick, 5000);
+      }
     }
 
     function setupFloatingDmPick() {
@@ -16495,6 +16645,7 @@
       document.addEventListener('mousemove', onMove, true);
       window.addEventListener('scroll', hideDmPick, true);
       document.addEventListener('pointerdown', (event) => {
+        onPlayerPointerDown(event);
         if (dmPickButton && event.target === dmPickButton) return;
         if (!event.target || !event.target.closest || !event.target.closest(FLOATING_DM_PLAYER_SEL)) hideDmPick();
       }, true);
