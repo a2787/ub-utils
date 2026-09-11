@@ -25,17 +25,17 @@ const VERIFY_AI_BACKGROUND = process.argv.includes('--verify-ai-background');
 const VERIFY_CONTEXT_SOURCES = process.argv.includes('--verify-context-sources');
 const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_COMMENT;
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
-const AI_PROBE_GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const AI_PROBE_PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const AI_PROBE_SETTINGS = VERIFY_AI_BACKGROUND
-  ? ", aiEnabled: true, aiGatewayUrl: '" + AI_PROBE_GATEWAY_URL
-    + "', aiGatewayModel: 'omni-default', aiRules: [{ id: 'real-ai-probe', text: '探针选定的弹幕内容', enabled: true }]"
+  ? ", aiEnabled: true, aiProviderUrl: '" + AI_PROBE_PROVIDER_URL
+    + "', aiProviderModel: 'omni-default', aiRules: [{ id: 'real-ai-probe', text: '探针选定的弹幕内容', enabled: true }]"
   : '';
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const sourceHash = crypto.createHash('sha256').update(userscript).digest('hex');
 const build = (userscript.match(/const RUNTIME_BUILD\s*=\s*'([^']+)'/) || [, ''])[1];
 const shim = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true${AI_PROBE_SETTINGS} } }) };
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true${AI_PROBE_SETTINGS} } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; if (k === 'omniblock:data:v1') window.__obProbeWrites = (window.__obProbeWrites || 0) + 1; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };
@@ -301,7 +301,7 @@ async function pickLocalCommentTarget(candidates) {
       }
     });
     if (VERIFY_AI_BACKGROUND) {
-      await page.route(AI_PROBE_GATEWAY_URL, async (route) => {
+      await page.route(AI_PROBE_PROVIDER_URL, async (route) => {
         let input = {};
         try {
           const body = JSON.parse(route.request().postData() || '{}');
@@ -531,7 +531,7 @@ async function pickLocalCommentTarget(candidates) {
     }
 
     if (VERIFY_AI_BACKGROUND) {
-      // 这里仍使用真实 B 站 DOM、真实脚本和真实事件路径，但网关与 GM 存储均为
+      // 这里仍使用真实 B 站 DOM、真实脚本和真实事件路径，但 provider 与 GM 存储均为
       // 本探针隔离的人工合成实现；它验证用户可见生命周期，不把 mock 判断精度
       // 误写成线上模型效果，也不触发 B 站官方写操作。
       result.aiBackground = await page.evaluate(async () => {

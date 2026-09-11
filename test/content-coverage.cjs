@@ -2,7 +2,7 @@
  *
  * 夹具说明：以下 DOM 全部是人工合成，选择器只复用本轮真实站点捕获的
  * 语义结构；因此本文件的证据标签是 structure regression，不代表线上站点
- * 当前仍提供相同结构。测试不访问真实平台，不触发平台写操作，网关由
+ * 当前仍提供相同结构。测试不访问真实平台，不触发平台写操作，provider 由
  * Playwright route 模拟。
  *
  * 覆盖：B站视频/推荐作品卡/动态卡、抖音播放器/精选/搜索/主页作品、微博帖子、
@@ -16,14 +16,14 @@ const path = require('node:path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'coverage-rule', text: '覆盖测试规则', enabled: true }]
   }
 }) };
@@ -204,7 +204,7 @@ const CASES = [
 async function installPage(browser, testCase) {
   const page = await browser.newPage();
   await page.route('**/*', async (route) => {
-    if (route.request().url() === GATEWAY_URL) {
+    if (route.request().url() === PROVIDER_URL) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json; charset=utf-8',

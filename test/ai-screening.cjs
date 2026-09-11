@@ -1,7 +1,7 @@
 /* OmniBlock AI 智能屏蔽第一阶段回归测试。
  * 夹具说明：评论 Shadow DOM 结构是人工合成，但节点形态沿用已有 B站评论适配器契约；
- * 本测试不连接真实模型，使用 Playwright route 模拟本地 OpenAI Chat Completions 网关。
- * 覆盖：默认配置入口、loopback 网关请求、请求不含身份键、AI 建议多选确认、
+ * 本测试不连接真实模型，使用 Playwright route 模拟用户配置的 OpenAI-compatible API。
+ * 覆盖：默认配置入口、userscript API 直连、请求不含身份键、AI 建议多选确认、
  * 无可靠身份候选不可执行、页面附加规则、名单持久化、评论晚到后的增量分析，
  * 以及后续弹幕数据段触发的增量分析、累计计数和 B站嵌套评论滚动/点击后的增量分析，
  * 以及 AI 弹幕确认的即时关闭、基础 hash 先落盘、后台 UID 补充和分段耗时日志。
@@ -14,14 +14,14 @@ const path = require('path');
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const DEV_EXTENSION_BUILDER = fs.readFileSync(path.join(ROOT, 'test', 'build-dev-extension.cjs'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: true,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-rule-repro', text: '不许引战', enabled: true }]
   }
 }) };
@@ -122,7 +122,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
   const watchdogReady = USERSCRIPT.includes("const AI_REQUEST_TIMEOUT_MS = 60000;")
     && USERSCRIPT.includes("const AI_REQUEST_WATCHDOG_SLACK_MS = 250;")
-    && USERSCRIPT.includes("timer = setTimeout(() => cancel('AI 网关请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);")
+    && USERSCRIPT.includes("timer = setTimeout(() => cancel(label + '请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);")
     && DEV_EXTENSION_BUILDER.includes('const MAX_AI_REQUEST_TIMEOUT_MS = 60000;')
     && /const serviceWorker = String\.raw`[\s\S]*?const MAX_AI_REQUEST_TIMEOUT_MS = 60000;/.test(DEV_EXTENSION_BUILDER)
     && DEV_EXTENSION_BUILDER.includes('Math.min(Number(message.timeout) || request.timeout, request.timeout)');
@@ -134,14 +134,12 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && !USERSCRIPT.includes('仅分析前')) {
     report.pass.push('AI-10 分析加载态显示分批进度，不再把单批上限误报为全页截断');
   } else report.fail.push('AI-10 分析加载态未切换到全量分批文案');
-  const bridgeDiagnosticsReady = USERSCRIPT.includes('function persistentBridgeError()')
-    && USERSCRIPT.includes('浏览器开发扩展桥接不可用')
-    && USERSCRIPT.includes('function aiRequestErrorMessage(error)')
-    && USERSCRIPT.includes('AI 请求被浏览器扩展拒绝（request-not-allowed）')
-    && USERSCRIPT.includes('扩展桥已就绪，但 AI 请求体未通过桥接协议校验。')
-    && USERSCRIPT.includes("if (status.state !== 'error') return '当前仅允许 loopback 网关。'");
-  if (bridgeDiagnosticsReady) report.pass.push('AI-11 开发桥降级快速诊断与 loopback 错误文案已接入');
-  else report.fail.push('AI-11 缺少开发桥降级快速诊断或有效 loopback 错误文案');
+  const directMainlineReady = USERSCRIPT.includes('function readAIDirectKey()')
+    && USERSCRIPT.includes("headers.Authorization = 'Bearer ' + apiKey")
+    && USERSCRIPT.includes('providerConfigured: !!transport.url')
+    && USERSCRIPT.includes('API Key 只保存在当前设备的 Tampermonkey GM 存储');
+  if (directMainlineReady) report.pass.push('AI-11 userscript 直连 API、独立本机 Key 与状态诊断已接入');
+  else report.fail.push('AI-11 userscript 直连 API 或本机 Key 边界缺失');
   const browser = await launchChromium({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
   const page = await browser.newPage();
   page.on('console', (message) => { if (message.type() === 'error' || message.type() === 'warning') report.console.push('[' + message.type() + '] ' + message.text()); });
@@ -157,7 +155,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: segment });
       return;
     }
-    if (request.url() === GATEWAY_URL) {
+    if (request.url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(request.postData() || '{}'); } catch (error) {}
       let input = {};
@@ -201,10 +199,17 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   });
   if (initial.hasAI) report.pass.push('AI-1 window.OB.ai 已初始化');
   else report.fail.push('AI-1 window.OB.ai 未初始化');
+  if (initial.status && initial.status.mode === 'direct'
+    && initial.status.directSupported === true
+    && initial.status.providerConfigured === true
+    && initial.status.keyConfigured === true
+    && initial.status.gatewayConfigured === false) {
+    report.pass.push('AI-1A userscript 默认使用 API 直连且已读取本机 Key，不再依赖历史网关');
+  } else report.fail.push('AI-1A 非正式扩展错误开放设备直连 API：' + JSON.stringify(initial.status));
   if (initial.review && initial.candidates === 3 && initial.disabledCandidates === 1) report.pass.push('AI-2 自动分析弹出候选审核，可靠身份可选、无身份候选禁用');
   else report.fail.push('AI-2 自动候选审核形态不符合预期：' + JSON.stringify({ review: initial.review, candidates: initial.candidates, disabled: initial.disabledCandidates, status: initial.status }));
   const serializedBodies = JSON.stringify(initial.bodies);
-  if (initial.bodies.length >= 1 && !/(bili:uid|bili:dmhash|space\.bilibili|"keys"|"uid"|"mid"|"hash")/i.test(serializedBodies)) report.pass.push('AI-3 发往网关的请求只包含规则/临时项目/文本，不含身份键');
+  if (initial.bodies.length >= 1 && !/(bili:uid|bili:dmhash|space\.bilibili|"keys"|"uid"|"mid"|"hash")/i.test(serializedBodies)) report.pass.push('AI-3 发往 API 的请求只包含规则/临时项目/文本，不含身份键');
   else report.fail.push('AI-3 AI 请求疑似携带身份字段：' + serializedBodies.slice(0, 1000));
 
   // 人工合成：审核弹窗中的负向反馈必须是可撤销切换。测试四次点击的
@@ -454,16 +459,18 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   await page.evaluate(() => { window.OB.openOptions(); window.OB.openContentManager(window.OB.adapters.bilibili, 'ai'); });
   await page.waitForSelector('#ob-content-manager #ob-ai-status');
   const launcherHint = await page.locator('.ob-ai-intro').textContent();
-  if (/启动网关\.cmd/.test(launcherHint || '') && /loopback 网关/.test(launcherHint || '')) report.pass.push('AI-8 AI 标签页说明根目录双击启动网关并保持 loopback 边界');
-  else report.fail.push('AI-8 AI 标签页缺少一键启动说明：' + String(launcherHint || '').slice(0, 300));
-  await page.locator('#ob-ai-url').fill('https://example.invalid/v1/chat/completions');
+  if (/填写.*API|OpenAI-compatible API/.test(launcherHint || '')
+    && /Tampermonkey/.test(launcherHint || '') && /API Key/.test(launcherHint || '') && !/本地模型/.test(launcherHint || '')) {
+    report.pass.push('AI-8 AI 标签页说明 userscript API 直连、本机 Key 和无本地模型边界');
+  } else report.fail.push('AI-8 AI 标签页缺少 userscript 直连和本机 Key 说明：' + String(launcherHint || '').slice(0, 360));
+  await page.locator('#ob-ai-provider-url').fill('http://example.invalid/v1/chat/completions');
   await page.locator('#ob-ai-save').click();
   const rejectedGateway = await page.evaluate(() => ({
     text: document.querySelector('#ob-ai-status') && document.querySelector('#ob-ai-status').textContent,
     saved: String(window.__gm && window.__gm['omniblock:data:v1'] || '').includes('example.invalid'),
   }));
-  if (/只允许.*loopback/.test(rejectedGateway.text || '') && !rejectedGateway.saved) report.pass.push('AI-7 远程网关地址被拒绝，设置不会保存非 loopback URL');
-  else report.fail.push('AI-7 loopback 地址边界未生效：' + JSON.stringify(rejectedGateway));
+  if (/只允许 HTTPS.*loopback HTTP/.test(rejectedGateway.text || '') && !rejectedGateway.saved) report.pass.push('AI-7 非 HTTPS/loopback API 地址被拒绝，设置不会保存');
+  else report.fail.push('AI-7 API 地址边界未生效：' + JSON.stringify(rejectedGateway));
   await page.locator('#ob-ai-page-rule').fill('不许拉踩');
   await page.locator('#ob-ai-analyze').click();
   await page.waitForSelector('#ob-ai-review', { timeout: 5000 }).catch(() => {});
@@ -619,8 +626,8 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   });
   if (timing && Number.isFinite(Number(timing.durationMs)) && Number(timing.durationMs) >= 0
     && Number.isFinite(Number(timing.collectMs)) && Number(timing.collectMs) >= 0
-    && Number.isFinite(Number(timing.gatewayMs)) && Number(timing.gatewayMs) >= 0) {
-    report.pass.push('AI-21 AI 分析日志拆分记录采集、网关和总耗时，不含正文或身份键');
+    && Number.isFinite(Number(timing.providerMs)) && Number(timing.providerMs) >= 0) {
+    report.pass.push('AI-21 AI 分析日志拆分记录采集、API 和总耗时，不含正文或身份键');
   } else report.fail.push('AI-21 AI 分析耗时日志缺少分段字段：' + JSON.stringify(timing));
 
   }

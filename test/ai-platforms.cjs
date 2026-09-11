@@ -11,14 +11,14 @@ const path = require('node:path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-douyin-repro', text: '不许引战', enabled: true }]
   }
 }) };
@@ -64,7 +64,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   page.on('pageerror', (error) => report.pageErrors.push(String(error)));
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (request.url() === GATEWAY_URL) {
+    if (request.url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(request.postData() || '{}'); } catch (error) {}
       let input = {};
@@ -134,7 +134,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const serializedFirst = JSON.stringify(first.bodies);
   if (first.bodies.length >= 1 && firstItems.length === 4
     && !/(douyin:(uid|secuid)|MS4wLjABAA|"keys"|"uid"|"secuid"|data-danm)/i.test(serializedFirst)) {
-    report.pass.push('DY-AI-3 发往网关的抖音 AI 请求包含评论/弹幕正文但不含身份字段');
+    report.pass.push('DY-AI-3 发往 provider 的抖音 AI 请求包含评论/弹幕正文但不含身份字段');
   } else report.fail.push('DY-AI-3 抖音 AI 请求边界异常：' + serializedFirst.slice(0, 1600));
 
   await page.evaluate(() => window.OB.ai.closeReview());
@@ -174,7 +174,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   else report.fail.push('DY-AI-5 普通弹幕变化触发了额外请求：' + JSON.stringify(afterOrdinaryMutation));
 
   // 人工合成：首轮分析完成后才插入一条新评论；第二次请求只能携带这条
-  // 尚未分析的稳定记录，不能把旧弹幕/评论整批再次发送到网关。
+  // 尚未分析的稳定记录，不能把旧弹幕/评论整批再次发送到 provider。
   await page.evaluate(() => {
     window.OB.ai.closeReview();
     const late = document.createElement('div');

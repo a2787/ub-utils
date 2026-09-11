@@ -1,13 +1,13 @@
-# OmniBlock 拉黑不上限（6 平台统一本地黑名单）
+# OmniBlock 拉黑不上限（6 平台统一黑名单 / Tampermonkey 用户脚本）
 
-一个浏览器用户脚本：**一份本地黑名单，在 6 个平台已适配的内容条目中隐藏指定用户**。
-无数量上限，名单与浏览数据只保存在本机、不会上传；AI 功能关闭时脚本不会发送页面内容，
-明确启用 AI 后仅会把当前页已经观察到、截断后的作者作品内容、评论、弹幕或帖子正文发送到用户配置的本机 loopback 网关。
-脚本还会在独立的本机存储键里自动保留
-最近 5 份名单快照（可关闭、可恢复上一份）。主动点击“检查更新”时会请求
-GitHub；B站弹幕工具只有在你主动点击 `UID?` 或实际执行某条/某批弹幕屏蔽时，才会按需匿名请求
-B站用户卡片接口校验数字候选；页面初始加载不会逐一反查全部弹幕 hash。
-Tampermonkey 自身的例行更新请求取决于它的更新设置。
+这是一个浏览器用户脚本：**一份名单，在 6 个平台已适配的内容条目中隐藏指定用户**。
+电脑和支持 Tampermonkey 的平板 Edge 使用同一个 `omniblock.user.js`；名单与浏览数据默认保存在各自设备的
+Tampermonkey GM 存储中。脚本会在独立的本地存储键里自动保留最近 5 份名单快照（可关闭、可恢复上一份）。
+AI 关闭时不发送页面内容；启用后只把当前页已经观察到、截断后的作者作品内容、评论、弹幕或帖子正文发送到
+用户直接填写的 OpenAI-compatible API。API Key 只保存在当前设备，账户同步不会上传它。AI 结果仍必须经过人工审核，
+不会直接调用平台举报、官方拉黑、关注或发帖。主动点击“检查更新”时会请求 GitHub；B站弹幕工具只有在你主动点击
+`UID?` 或实际执行某条/某批弹幕屏蔽时，才会按需匿名请求 B站用户卡片接口校验数字候选；页面初始加载不会逐一反查
+全部弹幕 hash。Tampermonkey 自身的例行更新请求取决于它的更新设置。
 
 支持平台：**B站 · 微博 · 知乎 · 百度贴吧 · X(Twitter) · 抖音**（不含小红书）。
 
@@ -48,6 +48,35 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
    - 打开 Tampermonkey 管理面板 → 「实用工具」→「导入」→ 选 `omniblock.user.js`
    - 或把文件内容复制，新建脚本粘贴保存
 3. 进任意支持的平台，右上角 Tampermonkey 图标 → 「OmniBlock 设置」即可管理名单、导出备份。
+
+### 电脑与平板共用的油猴版本
+
+桌面和目标平板都使用同一份 `omniblock.user.js`，不需要安装本项目的独立浏览器扩展。电脑端继续在
+Tampermonkey 中更新脚本；平板 Edge 端只需安装 Tampermonkey，再导入同一份脚本或打开脚本的更新地址。
+当前版本已经为窄屏和触控调整设置面板、内容入口、AI 审核浮层、关闭按钮和表单布局；本仓库的 390px 触控夹具
+只证明代码路径，尚未代替目标平板的实际安装验证，因此平板实机状态仍记为 `blocked`。
+
+### AI：只使用设备直连 API
+
+provider 配置只保留三项：OpenAI-compatible API 地址、模型名和“设置/更换本机 Key”。没有 AI 网关模式，也不加入
+本地模型；事实核查是默认关闭的独立本机 broker，不是 provider 主链路。API 地址默认要求 HTTPS；本机测试可使用 `localhost`、`127.0.0.1` 或 `::1` 的 HTTP 地址，不能带账号、密码、
+查询参数或片段。请求通过 Tampermonkey 的 `GM_xmlhttpRequest` 发出，Key 只在当前设备的独立 GM 存储中读取到内存后放入
+`Authorization` 请求头，不进入请求正文、页面对象、名单导出、提示词导出、日志或同步文档。
+
+脚本头中的 `@connect *` 允许用户自行选择 provider；Tampermonkey 第一次访问新的 API 域名时可能弹出跨源权限提示，
+只应批准自己信任的地址。缺少 Key、地址无效、网络失败、超时或 HTTP/JSON 格式错误都会保留为可诊断的失败状态。
+
+### 账户级客户端加密同步
+
+设置面板提供“注册账户”“登录”和“立即同步（合并）”。每台设备登录同一账户，并在点击同步时输入同一个独立的同步口令；
+脚本不会保存账户密码或同步口令，也不会自动上传。客户端把名单/规范身份、可同步设置、AI 提示词个性化和反馈账本拆成带
+设备逻辑时钟的记录，删除使用墓碑，再用 PBKDF2-SHA-256 派生 AES-256-GCM 密钥加密；服务端只保存 opaque 密文和 revision，
+409 并发冲突由客户端读取、解密、合并后有界重试。
+
+API Key、账户登录令牌、账户密码、同步口令、运行日志、自动快照、本地备份和浏览器登录态刻意不进入同步包。Key 需要在每台
+设备单独设置；退出账户只清除当前设备的登录令牌，不删除云端或本地名单。当前仓库的 `sync-server/` 是独立 Python 标准库
+服务，`sync/` 提供协议和 mock 回归；东京服务器尚未改动、没有生产账户或数据库，正式上线仍需单独完成 HTTPS、备份、限流、
+CORS/跨源策略、账户删除和密文读回门禁。
 
 > v0.14.0 新增了 `api.bilibili.com` 连接权限，只在你主动查询弹幕 UID 候选时使用；请求
 > 设置为匿名，不携带浏览器登录 Cookie，也不会发送本地黑名单或原始浏览数据。
@@ -90,47 +119,48 @@ Tampermonkey 自身的例行更新请求取决于它的更新设置。
 需要在该页点一次「更新/安装」，然后刷新原平台页面。若页面齿轮的构建标识没有变化，先不要继续
 判断修复结果，把当前页面留在原处即可。
 
-### 专用调试浏览器的持久运行方式（维护者）
+### 维护者验证方式
 
-开发验收不再把当前页面源码临时注入当作“安装成功”。实际用户运行仍由 Tampermonkey 负责；维护者的
-专用调试浏览器则使用由当前源码生成的本地 MV3 开发扩展。扩展在每个匹配的新文档的 `document-start`
-自动加载 userscript，并通过本地 `chrome.storage` 桥接 GM 存储；loopback AI POST 与 B站用户卡片只读 GET
-均由扩展 service worker 按白名单发起，避免 HTTPS 平台页面直接跨源请求本机 HTTP 网关。因此新建页面、刷新页面和切换平台都能使用同一份本地状态。
-
-一次性准备固定专用 Chrome profile：
+实际交付物始终是 Tampermonkey userscript。人工合成页面的产品回归使用：
 
 ```powershell
-node test/dev-browser.cjs guide
-node test/dev-browser.cjs ensure
+node test/userscript-product.cjs
 ```
 
-首次在这个专用窗口打开 `chrome://extensions`，开启“开发者模式”，选择“加载已解压的扩展程序”，
-载入命令输出中的 `test/_dev-extension` 目录。Chrome 会把这次加载保存到该专用 profile；以后新开支持
-平台页面就会自动运行本地开发源码，不需要再对单页调用注入。源码修改后运行 `node test/dev-browser.cjs sync`；
-它会重新生成当前开发扩展，核对专用 Chrome 中新页面的版本和桥接状态，并自动点击该扩展自己的“重新加载”按钮。
+它覆盖 390px 触控布局、AI API 直连、Key 边界和账户同步密文边界；这类结果只记为 `structure regression`。
+真实网站验证仍须使用本轮指定的浏览器会话和只读探针，登录、验证码、网络或设备不可用时记为 `blocked`，不能由夹具
+代替。仓库中遗留的 `extension/`、`test/dev-extension.cjs` 等文件只是上一轮方向的维护/实验产物，不是用户安装路径；
+本轮不依赖它们，也不把它们的结果计入 userscript 平板验收。
 
-当前 Google Chrome 版本会忽略自动化命令行的 `--disable-extensions-except`/`--load-extension` 组合，
-所以启动器不再把这两个参数当成成功条件，也不会伪造“已加载”。首次仍需手动加载一次解压扩展；之后由 `sync`
-负责版本核对和刷新。若要确认六个平台实际页面都能读取，在取得本轮登录态只读验证授权后运行：
+目标平板需要用户在 Edge 中实际安装 Tampermonkey 并导入候选脚本；维护者不能用桌面浏览器夹具代替这一步。
+用户安装后应先确认右下角齿轮显示 `0.57.0` 与 `0.57.0-tampermonkey-mobile-direct-sync`，再做只读页面和触控检查。
 
-```powershell
-node test/maintenance-check.cjs --dedicated-only
-```
+真实网站验证需要在本轮指定的浏览器会话中通过只读探针进行；登录、验证码、网络或设备不可用时记为 `blocked`。
 
-这个命令会先执行本地门禁、自动构建并同步专用扩展，再运行登录态只读探针；因此源码更新后不需要
-先手动刷新扩展。若只想采集专用页面证据，可在已经运行 `sync` 后单独执行
-`node test/dedicated-browser-probe.cjs`；若要把匿名隔离会话作为对照，再执行
-`node test/maintenance-check.cjs --dedicated`。
+本地综合回归命令为 `node test/maintenance-check.cjs`；它不等同于平板安装验证，也不会触发平台举报、官方拉黑、关注或发帖。
 
-开发桥只允许 OmniBlock 自己的名单/备份/日志键和两类只读网络目标；主世界与隔离世界消息带构建期随机签名和单调序列，
-页面拿不到 `window.GM_*` 能力。桥接不可用时会在 8 次尝试后有界降级，不会无限轮询；专用探针会把这种扩展故障
-与平台登录墙、验证码或当前没有帖子分开记录。
+它只执行本地代码、协议、文档和隐私门禁；真实页面证据仍须在本轮指定的浏览器会话中单独取得。
 
-`dedicated-browser-probe` 只读取固定 CDP 会话中专用 profile 已打开页面；必要时创建并关闭自己的临时页，读取脚本
-自己的运行版本、构建标识、桥接、适配器和语义记录计数，不注入源码、不读取 Cookie、不点击 B 站/抖音/微博的举报、
-拉黑、关注等平台写入控件。`node test/dev-extension.cjs`
-则使用隔离临时 profile 和兼容 Chromium 浏览器打开人工合成页面做 `structure regression`；它证明自动加载
-和存储桥接，不替代真实站点验收。旧的直接注入方式仅保留给隔离夹具和公开只读探针，不能作为专用浏览器安装证据。
+仓库中遗留的 `extension/`、`test/dev-extension.cjs` 和 `dedicated-browser-probe` 只是上一轮 MV3 方向的
+维护/实验产物，当前不属于用户安装路径，也不计入平板验收。它们暂不删除，避免覆盖工作区中尚未单独确认的文件；
+如果未来要保留，只能作为历史兼容夹具维护。
+
+### v0.57.0 — Tampermonkey 移动端适配、API 直连与账户级加密同步（本地候选）
+
+当前工作区候选构建为 `0.57.0-tampermonkey-mobile-direct-sync`。桌面与平板共用同一个
+`omniblock.user.js`，通过 Tampermonkey 注入页面；设置、审核浮层、内容管理器和输入控件增加窄屏/触控适配。
+AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 Key，不再把网关作为主链路，也不加入本地模型。
+
+账户同步由 userscript 显式触发：客户端用同步口令加密名单、设置、提示词配置和反馈状态后，服务端只保存不可读密文；
+API Key、密码、同步口令、访问令牌、设备标识和日志不进入同步文档。同步协议支持设备级逻辑时钟、墓碑、CAS 冲突重试和
+离线恢复。东京服务器尚未修改或部署。
+
+`structure regression`：本地 userscript 产品回归覆盖 390px 触控布局、直连 Authorization、Key 不出现在请求正文/导出/同步包、
+账户注册登录、客户端密文和 CAS 同步边界；通用、AI、平台适配、提示词和同步服务回归也按维护矩阵执行。目标平板实际安装、
+真实 provider 和东京线上服务尚未验证，因此仍记为 `blocked` 或未观测，不写成已上线能力。
+
+迁移和同步的详细边界见 [v0.57.0 版本条目](docs/changelog/v0.57.0.md)、[当前维护状态](docs/maintenance/CURRENT.md)
+和 [架构说明](docs/architecture/ARCHITECTURE.md)。当前只是本地候选，未 commit/push/tag/Release、未部署、未修改平台数据。
 
 ### v0.56.0 — 作品语境 AI 请求压缩与边界收口（已发布）
 
@@ -406,8 +436,9 @@ v0.53.0 的发布构建为 `0.53.0-ai-background-bili-commit`；[GitHub Release 
 
 ```powershell
 node test/maintenance-check.cjs    # 静态门禁、完整矩阵、作品级回归和隔离真站探针
-node test/maintenance-check.cjs --dedicated-only # 在本轮已授权时自动同步并仅运行专用 profile 六平台只读链路
-node test/maintenance-check.cjs --dedicated # 在本轮已授权时保留匿名对照并追加专用 profile 六平台只读探针
+node test/userscript-product.cjs      # userscript 390px 触控、AI 直连和账户同步产品回归
+node test/sync.cjs                    # 浏览器/Node 同步协议、合并、CAS、离线回归
+node test/sync-server.cjs             # 独立 Python 同步服务本地 health/auth/CAS 回归
 node test/weibo-replay.cjs         # 微博虚拟列表回放/压力回归；可用 --git-ref= 复核旧版失败
 node test/comment-manager.cjs      # 三平台统一评论管理器、作者去重、搜索、多选和楼操作回归
 node test/work-block.cjs           # 三平台作品作用域、作者/评论/子评论/弹幕、一次事务与撤销回归
@@ -419,32 +450,23 @@ node test/douyin.cjs              # 抖音推荐流节点复用、无限上限�
 node test/danmaku-auto.cjs       # B站/抖音关键词正则自动弹幕规则与 PAKKU 共存结构回归
 node test/content-ai.cjs         # B站/抖音关键词优先级、评论延迟 AI、微博/知乎评论 AI 入口回归
 node test/content-coverage.cjs   # 六平台作者/作品/评论/帖子语义读取与操作文案隔离回归
-node test/ai-screening.cjs       # B站 AI 规则、loopback、脱敏请求和人工审核回归
+node test/ai-screening.cjs       # B站 AI 规则、直连、脱敏请求和人工审核回归
 node test/ai-platforms.cjs       # 抖音评论/弹幕 AI 采集、会话隔离和请求去重回归
 node test/ai-watchdog.cjs        # GM/XHR 无回调时有限超时回归
-node test/ai-bridge.cjs          # 持久化开发扩展桥接降级快速失败回归
-node test/dev-extension.cjs      # 持久化开发扩展自动加载、存储和窄网络桥结构回归
+node test/ai-bridge.cjs          # 历史扩展桥接兼容性降级快速失败回归
 node test/probe-hygiene.cjs      # 真实探针 document-start 注入清理回归
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
-node test/real-bilibili-probe.cjs --verify-ai-background # 真实 B站 DOM + 隔离 loopback mock，验证确认后立即关闭与后台完成提示
+node test/real-bilibili-probe.cjs --verify-ai-background # 真实 B站 DOM + 隔离 provider mock，验证确认后立即关闭与后台完成提示
 node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=90 # 专用 Chrome 登录态只读探针
 node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked
 node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
 node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
-node test/dev-browser.cjs guide                         # 输出一次性加载本地开发扩展的步骤
-node test/dev-browser.cjs build                         # 只重新生成当前源码的本地开发扩展
-node test/dev-browser.cjs sync                          # 构建、核对并自动刷新专用 Chrome 中已加载的扩展
-node test/dev-browser.cjs ensure                        # 启动/复用专用持久 Chrome 并自动执行 sync
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/... # 新页面无注入核对
-node test/real-login-probe.cjs weibo --url=https://weibo.com/... --duration=90 --scenario=all
-node test/real-login-probe.cjs weibo --current --duration=90 --scenario=all
-                                                          # 兼容历史直接注入探针；不作为持久安装证据
 ```
 
 登录态验证前由用户本人在专用 profile 完成登录；探针只控制自己创建的临时标签页，名单写入使用内存 stub，
-不会读取 Cookie 或点击微博举报、官方拉黑、关注、发帖等平台写入控件。公开隔离探针仍可直接注入工作区源码，
-但专用浏览器的开发迭代应使用一次性安装的本地开发扩展，并在源码变更后运行 sync；不需要每次试验提高版本号或先安装
-Tampermonkey 候选。同一文档内若因调试重放再次执行源码，当前运行锁会忽略
+不会读取 Cookie 或点击微博举报、官方拉黑、关注、发帖等平台写入控件。公开隔离探针可直接注入工作区 userscript，
+目标设备的安装与触控仍须由用户在 Edge + Tampermonkey 中单独验证。同一文档内若因调试重放再次执行源码，当前运行锁会忽略
 重复实例，避免扫描器、观察器、定时器和设置入口叠加；源码发生变化仍需刷新或打开新文档后再验证。
 
 真实探针默认从平台公开入口页自动发现只读目标（`test/discover.cjs`），所以仓库里

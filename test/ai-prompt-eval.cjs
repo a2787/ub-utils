@@ -1,6 +1,6 @@
 /* OmniBlock AI 提示词离线评测。
  * 夹具说明：全部评论正文、作者和身份均为人工合成数据；DOM 形态沿用当前
- * B站评论适配器契约。网关返回的是人工合成 gold oracle，不连接 DeepSeek，
+ * B站评论适配器契约。provider 返回的是人工合成 gold oracle，不连接 DeepSeek，
  * 因此本文件评估的是提示词系统的请求边界和结果解析链路，不是模型语义准确率。
  * 覆盖：block/allow/uncertain gold 集、事实性“未核查”误判隔离、TP/FP/FN、
  * 提示词预算、示例去重和身份脱敏。
@@ -12,7 +12,7 @@ const path = require('path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const SYNTHETIC_ITEMS = [
   ['人工合成攻击样本甲', 'block'],
   ['人工合成广告样本乙', 'block'],
@@ -31,11 +31,11 @@ const SYNTHETIC_ITEMS = [
 const GOLD = new Map(SYNTHETIC_ITEMS);
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-eval-rule', text: '按人工合成评测标准识别需要审核的内容', enabled: true }]
   }
 }) };
@@ -85,7 +85,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   page.on('pageerror', (error) => report.pageErrors.push(String(error && error.stack || error)));
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (request.url() === GATEWAY_URL) {
+    if (request.url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(request.postData() || '{}'); } catch (error) {}
       let input = {};
@@ -169,7 +169,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   if (observed.systemLength <= 7200 && observed.input.examples.length <= 8 && observed.duplicateExamples === 0) {
     report.pass.push('EVAL-3 system/examples 遵守长度和数量预算，示例没有重复');
   } else report.fail.push('EVAL-3 提示词预算或示例去重异常：' + JSON.stringify({ systemLength: observed.systemLength, examples: observed.input.examples.length, duplicateExamples: observed.duplicateExamples }));
-  if (!leakage) report.pass.push('EVAL-4 发往网关的人工合成请求未携带身份键、个人主页、Cookie 或原始作者字段');
+  if (!leakage) report.pass.push('EVAL-4 发往 provider 的人工合成请求未携带身份键、个人主页、Cookie 或原始作者字段');
   else report.fail.push('EVAL-4 请求出现身份字段泄漏：' + serialized.slice(0, 1800));
   if (observed.feedbackLimit === 500) report.pass.push('EVAL-5 评测运行仍受反馈账本上限约束');
   else report.fail.push('EVAL-5 反馈上限异常：' + observed.feedbackLimit);

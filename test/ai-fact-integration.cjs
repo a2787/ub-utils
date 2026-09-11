@@ -7,13 +7,13 @@ const fs = require('fs');
 const path = require('path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const FACT_URL = 'http://127.0.0.1:4001/v1/fact-check';
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {
   enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
   showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-  aiEnabled: false, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default', aiRules: [{ id: 'synthetic-rule', text: '明确事实性错误需要核查', enabled: true }],
+  aiEnabled: false, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default', aiRules: [{ id: 'synthetic-rule', text: '明确事实性错误需要核查', enabled: true }],
   aiFactRetrievalMode: 'off', aiFactRetrievalUrl: '${FACT_URL}'
 }}) };
 window.__aiBodies = []; window.__factBodies = [];
@@ -64,7 +64,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       }) });
       return;
     }
-    if (url === GATEWAY_URL) {
+    if (url === PROVIDER_URL) {
       let body = {}; try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
       let input = {}; try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
       const hasSources = Array.isArray(input.verificationSources) && input.verificationSources.some((item) => item.sources && item.sources.length);

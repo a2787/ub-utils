@@ -1,6 +1,6 @@
 # OmniBlock 运行时架构与边界
 
-更新时间：2026-09-10
+更新时间：2026-09-11
 
 本文件记录相对稳定的运行时职责、资源所有权、安全边界和性能契约。它不是版本台账；当前版本、
 验证数字和阻断原因以 `docs/maintenance/CURRENT.md` 为准，活动工作以 `docs/maintenance/PLAN.md` 为准。
@@ -21,9 +21,26 @@
         └── Store、备份环、EventLog 和跨页面同步
 ```
 
-最终发布物仍是一个可供 Tampermonkey 安装的 userscript；开发阶段的 MV3 扩展只提供持久加载和
-本地 GM 存储桥接，不改变用户名单的本地归属，也不应被当成生产同步服务。网关宿主进程由根目录
-`启动网关.cmd` 调用 PowerShell 7 启动脚本，设置页不获得启动宿主进程的能力。
+`omniblock.user.js` 是电脑与平板共同交付物，由 Tampermonkey 在匹配页面的 document-start 阶段注入。
+页面适配器、Store、设置面板、审核浮层、AI 和同步客户端都运行在 userscript 内；名单与普通设置使用
+GM 存储，设备 API Key 使用独立的 GM 存储键。`extension/` 只保留上一轮 MV3 方案的未采用实验产物，
+不属于当前用户安装路径。
+
+### AI 直连与账户级客户端加密同步
+
+AI 只有 `direct` 模式：用户在设置中填写 OpenAI-compatible API 地址和模型名，再通过“设置/更换本机 Key”
+写入设备本地 GM 存储。请求由 Tampermonkey 的 `GM_xmlhttpRequest` 发出，Key 只放在请求的
+`Authorization` 头，不进入页面对象、请求正文、导出文件或同步文档。地址必须是 HTTPS；仅 loopback
+地址允许 HTTP。没有有效配置、Key、网络或 HTTP 错误时，AI 给出失败状态，不偷偷改走其他传输方式。
+
+同步范围是名单/规范身份、可同步设置、AI 提示词个性化和反馈账本。userscript 使用
+`sync/sync-core.js` 的按记录拆分文档；每个记录带设备 ID + Lamport counter，删除以墓碑保留，合并按时钟、
+墓碑优先和稳定 JSON 规则确定性收敛。同步口令在客户端通过 PBKDF2-SHA-256 派生 AES-256-GCM 密钥，
+服务器只接收 `omniblock.sync-envelope` 密文和最小 revision/账户元数据。
+
+当前实现先提供显式“立即同步（合并）”，不在页面生命周期或 Tampermonkey 被系统挂起时偷偷执行后台同步。
+服务器源码位于 `sync-server/`，独立于 Vibeme/V2/KB；东京服务器的数据库、HTTPS 反向代理、凭据和部署
+尚未改变，必须在单独动作确认后上线。
 
 ## 核心不变量
 
@@ -33,7 +50,7 @@
 - 屏蔽始终走同一条运行路径；详细诊断记录由设置页已有开关控制，不定义第二套“第一资源/低资源/诊断模式”。
 - 同一文档只允许一个活动 runtime；重复执行必须在创建扫描器、观察器、定时器和 UI 前退出。
 - 观察器、定时器、rAF、缓存、日志队列和 DOM 引用都必须有边界，并在页面不可见时暂停非必要工作。
-- 用户名单、备份和日志默认只保存在本机；日志不能含 Cookie、凭证、身份键、正文、完整 URL 或原始 HTML。
+- 用户名单、备份和日志默认只保存在本机；userscript 只有在用户主动配置账户并点击同步后，才上传名单/规则/提示词/反馈的客户端密文。日志不能含 Cookie、凭证、身份键、正文、完整 URL 或原始 HTML。
 - AI 默认关闭；只有启用后才分析当前页已经观察到的文本，候选必须人工确认；身份关联可靠性与
   “内容是否应屏蔽”是两个独立判断，不能因 hash 唯一就绕过 AI 审核。
 - AI 审核确认是本地用户操作；B站弹幕确认后先释放审核浮层并立即写入基础 hash/已有 UID，再由最多 2 个并发任务后台完成 hash→UID 关联、反馈和完成提示；
@@ -50,10 +67,10 @@
 - timeout、rAF 和异步刷新队列；
 - `Store`、`PageLifecycle`、`PageMutationSignals`、`PageContentSignals` 的订阅；
 - 播放器、评论、虚拟列表和弹幕缓存；
-- B站 XHR/fetch 过滤包装和扩展桥接请求。
+- B站 XHR/fetch 过滤包装、AI `GM_xmlhttpRequest` 请求和同步请求。
 
 路由、作品、活动播放器或页面生命周期变化时，旧会话不能继续处理新会话的 DOM。`hidden`/`frozen`
-状态暂停非必要工作，恢复时重新发现必要根节点并合并一次同步；不能用更高频轮询代替生命周期管理。
+状态暂停非必要工作，恢复时重新发现必要根节点；同步仍须由用户显式点击，不能用更高频轮询代替生命周期管理。
 
 当前实现由 `RuntimeResources` 登记清理函数；`PageLifecycle` 统一处理 visibility、freeze、resume 和 pageshow。
 BFCache 的 persisted pagehide 只暂停，普通 pagehide 调用一次幂等 dispose。`Store`、页面 mutation 和 SPA route
@@ -114,18 +131,25 @@ BFCache 的 persisted pagehide 只暂停，普通 pagehide 调用一次幂等 di
 
 `Store` 管理规范化名单、设置和本地备份；内部用惰性 key→人物索引服务批量身份查找，不改变 v1 导入导出格式。
 主名单写入失败会保留待确认状态；此期间收到外部标签页变化只报告冲突，不静默覆盖当前内存，直到写入成功或用户刷新。
-`EventLog` 只保存脱敏的 OmniBlock 事件元数据。开发扩展桥接
+`EventLog` 只保存脱敏的 OmniBlock 事件元数据。上一轮开发扩展桥接
 通过显式版本化消息协议连接隔离世界与主世界，能力最小化：存储键、网络目标、请求体和返回值都必须
 经过边界校验。页面主世界不应被视为可信的特权调用者；若无法维持安全隔离，桥接默认降级为不可用。
 
-开发桥的当前协议使用构建期随机 HMAC-SHA256 密钥、固定来源和单调序列；GM 能力是包住 userscript 的词法变量，
+当前 userscript 的跨源边界由 Tampermonkey 的 `GM_xmlhttpRequest` 和独立 GM 存储承担：provider/sync 地址先做
+协议、凭据字段、大小和响应格式校验；页面对象、普通导出、日志和同步文档都不能读取 API Key。同步请求只携带
+服务端访问令牌，AI 请求只携带当前设备 Key 的 `Authorization` 头。
+
+### 上一轮 MV3/开发桥实验（历史兼容）
+
+以下开发桥协议只服务于上一轮隔离夹具和历史回归，不是当前用户安装路径。开发桥的历史协议使用构建期随机 HMAC-SHA256 密钥、固定来源和单调序列；GM 能力是包住 userscript 的词法变量，
 不挂到 `window`。存储只接受主名单、备份、日志索引、日期分片和版本化 AI 提示词/反馈 key；网络只接受脚本更新 GET、B站用户卡片 GET、
-用户明确配置的 loopback AI 网关 POST，以及默认关闭的受限事实 broker POST；AI/事实请求体不含身份键，也不由开发桥保存 provider 凭据。持久 MV3 开发扩展
-把窄 AI POST 转交给扩展 service worker 发起，避免内容脚本继承平台页面的跨源/混合内容限制；service worker
-再次校验 loopback、AI JSON 结构、可选 `verificationSources` 的来源元数据、事实请求的 `schemaVersion/policyVersion/claims` 和 ordinal claim id，
-以及反馈样例的 `role/label/kind/contentType/text/reasonCode/note` 字段、`kind/contentType/title/text` 内容字段、单请求样本上限和响应大小；三层桥接校验必须保持同一字段契约，桥接仍拒绝 UID、mid、hash
-等身份字段。多 provider、API Key、重试、配额、cooldown 和事实来源 allowlist 属于外部本地
-网关，不是 userscript 的职责。
+用户明确配置的 loopback AI 网关 POST，以及默认关闭的受限事实 broker POST；AI/事实请求体不含身份键，也不由开发桥保存 provider 凭据。持久 MV3
+开发扩展把窄 AI POST 转交给扩展 service worker 发起，避免内容脚本继承平台页面的跨源/混合内容限制；service worker 再次校验 loopback、AI JSON
+结构、可选 `verificationSources` 的来源元数据、事实请求的 `schemaVersion/policyVersion/claims` 和 ordinal claim id，以及反馈样例的
+`role/label/kind/contentType/text/reasonCode/note` 字段、`kind/contentType/title/text` 内容字段、单请求样本上限和响应大小。正式构建追加的
+direct handler 还会再次校验 HTTPS provider、设备配置的精确 URL、host permission 和 response 大小；三层桥接校验必须保持同一字段契约，桥接仍拒绝
+UID、mid、hash 等身份字段。多 provider、Key、重试、配额、cooldown 和事实来源 allowlist 属于 loopback 网关；正式 direct 模式只保留一个由
+service worker 管理的设备 provider，不把 Key 下放到页面。
 ready 最多尝试 8 次，失败后释放 userscript 启动栅栏并标记 degraded。请求被白名单拒绝时保留受控错误码，页面只在桥状态 degraded 时提示刷新扩展；网关 HTTP/格式/超时错误不伪装成桥未就绪。
 
 ### AI 提示词与反馈边界
@@ -140,7 +164,7 @@ ready 最多尝试 8 次，失败后释放 userscript 启动栅栏并标记 degr
 
 每次 AI 请求只注入当前有效 profile 和按平台/内容类型/正文词项确定性选出的有界正负例；
 例子被标记为只读数据，不能覆盖系统指令。正文、理由和导入导出包按本地用户数据处理，
-发送到 loopback 网关的请求不含 UID、`mid_hash`、昵称、URL、Cookie 或原始平台对象。
+发送到已配置 provider 的请求不含 UID、`mid_hash`、昵称、URL、Cookie 或原始平台对象。
 带受控理由的同类正/负反馈达到本地支持阈值后，只生成 `personalization.pending` 提案，
 并保留支持/冲突反馈 ID；接受、停用、拒绝、暂停、删除和恢复都由用户显式操作，只有
 `accepted` 且启用的偏好进入有效 prompt。反馈删除会重新计算提案并移除失去证据的有效偏好，

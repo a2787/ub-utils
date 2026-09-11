@@ -1,17 +1,30 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-09-10
-状态来源：v0.56.0 已完成 commit/push/tag/Release；本轮源码、桥接、回归、匿名真实站点只读验证和发布读回均完成。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+更新时间：2026-09-11
+状态来源：v0.57.0 是 userscript 主线的本地候选；移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。目标平板、真实 provider 和东京线上服务仍未验证/部署。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.56.0`（已发布）
-- 构建：`0.56.0-context-aware-ai-compact`
+- 当前 userscript：`0.57.0`（本地候选，未公开发布）
+- 构建：`0.57.0-tampermonkey-mobile-direct-sync`
 - 当前公开版本/功能提交：`0.56.0` / `3f94c1bb7cfa75f2a5f223387492ee90b18b1de3`
 - 最近验证的源码快照：`3f94c1bb7cfa75f2a5f223387492ee90b18b1de3`
-- 当前候选源码 SHA-256：`0094f6e800fcdaf0f12257dc9e424db1b2ad11bee5619976125413375858945a`
-- 发布状态：v0.56.0 已 commit/push/tag/Release；无登记部署链，未执行平台写入。
+- 当前候选源码 SHA-256：`40c8ffe0de745036cbc5e198e7fde6f372e4de602287c0b68d6bd0a18ded72b4`
+- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release/部署；v0.56.0 仍是公开版本，未执行平台写入。
 - 当前公开 tag/Release：[v0.56.0](https://github.com/a2787/ub-utils/releases/tag/v0.56.0)。
+
+## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，本地候选）
+
+- 范围/文件：`omniblock.user.js` 窄屏/触控、设备直连 API、GM Key、账户注册/登录和 PBKDF2/AES-GCM opaque-CAS；`sync/`、`sync-server/` 提供协议/本地服务回归。上一轮 `extension/` MV3 实验不属于交付路径。
+- `structure regression`：userscript product 4/4；AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.0`/`0.57.0-tampermonkey-mobile-direct-sync` 实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、65 条弹幕（共 68 条 AI 记录），内容弹窗 4 个标签，页面/控制台错误 0。该证据只覆盖桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；候选实际加载并观察到 1 条帖子内容、19 条评论 AI 记录，平台评论统计为 16 条（10 根行、6 回复行），内容弹窗 2 个标签，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
+- `blocked`：目标平板 Edge + Tampermonkey 未取得实际安装会话，真实 provider/东京 endpoint 未配置；东京服务 schema/凭据/部署未改变。
+- 发布状态：v0.57.0 已形成选择性本地 commit，但仍未 push/tag/Release/部署，未执行平台写入；v0.56.0 仍是公开版本。
+
+## 2026-09-11 上一轮 MV3 方案收回（OB-EXT-001，superseded）
+
+- 平板 Edge 的实际安装路径确认以 Tampermonkey userscript 为准，因此不再把 `extension/`、正式 MV3、service worker 或扩展 options 作为本版本交付物；遗留文件未删除，等待单独清理或复用决策。
 
 ## 2026-09-10 作品语境感知的 AI 屏蔽与紧凑协议收口（OB-AI-014，v0.56.0，已发布）
 
@@ -29,15 +42,9 @@
 - v0.54.0 独立 AI 评测与受控事实核查：细节、数据集哈希和真实站点证据见 [v0.54.0 changelog](../changelog/v0.54.0.md)。
 - v0.53.1 B 站 AI 后台屏蔽生命周期与 UID 缓存：细节和回滚见 [v0.53.1 changelog](../changelog/v0.53.1.md)。
 
-## 2026-09-09 事实核查状态与屏蔽决策分离（OB-AI-011，已发布）
+## 已发布历史路由（详情见版本条目）
 
-- 范围：修复 AI 把“未提供来源/尚未核查”直接写成“未经证实”并生成屏蔽候选的问题；提示词新增 `claimType`、`verificationStatus`、`verificationMethod`、`ruleMatched`，客户端对事实性候选做保守二次门禁；未核查数量只进入状态/审核说明，不写入名单。
-- 改动文件：`omniblock.user.js`、`test/ai-prompt-system.cjs`、`test/ai-prompt-eval.cjs`、v0.53.0 changelog、架构/计划文档。
-- `structure regression`：userscript 语法、AI prompt/eval、AI screening、内容 AI、多平台适配器、通用运行器、B站 quickblock、持久化扩展和完整维护自检中的本地项均通过；候选源码 SHA-256 已与本文件同步。
-- `real-site verified`：2026-09-09 用户授权的专用 Chrome 只读页面，B站页面形式 `bilibili.com/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `8/8` 条、屏蔽候选 `0`、延后 `1` 条；AI 面板显示“尚未核查，已保留未屏蔽”。贴吧页面形式 `tieba.baidu.com/p/...` 刷新到 0.53.0 后 bridge 为 ready，手动分析 `17/17` 条、候选 `2` 条，候选理由中“未经证实/无来源/无法核实”计数为 `0`。未点击平台举报、官方拉黑、关注或发帖控件。
-- `real-site verified`：同日专用 Chrome 维护探针确认 B站入口 `content=15`、抖音入口 `content=12`、微博 `content=6/users=6`、知乎 `content=5/users=5`、贴吧 `content=6/users=5` 均运行 0.53.0 且 bridge ready；X 入口无可读取内容，B站/抖音详情目标未响应，按 `blocked` 记录。
-- `blocked`：当前 loopback 网关没有检索证据通道；本版本不声称已对任意事实完成独立联网核查，也不把模型内部知识当来源。X 空壳、B站/抖音详情导航与评论分页等外部页面限制不变。
-- 发布状态：该能力已随 v0.53.0 commit/push/tag/Release；无登记部署链，未执行平台写入。
+- v0.53.0 的事实核查门禁、v0.52.0 的提示词反馈、v0.51.x 的增量 AI/平台入口等历史证据已移入对应 changelog 和历史索引；当前只继承“未核查不等于虚假、候选必须人工确认、平台不写入”的边界。
 
 ## 2026-09-08 DeepSeek Flash 网关型号刷新（OB-AI-005，local runtime）
 
@@ -66,7 +73,8 @@
 
 - 运行时、桥接、存储、Shadow DOM、generation、AbortController、只读平台写入边界和页面隐藏暂停规则以架构正文为准；当前版本仍只把用户确认后的本地动作写入 GM 存储。
 - B站/抖音弹幕会话按视频隔离；统一内容弹窗按平台提供评论、弹幕、AI、关键词标签，正文采集排除操作文字，身份缺失不生成可执行入口。
-- AI 入口维持 loopback、脱敏、最多 80 条分批、人工确认和事实核查保守门禁；B站新增后台 UID 增强遵守 OB-AI-012 的暂停/取消/hash-only 约束。
+- AI 入口只保留用户配置的 provider 直连、脱敏、最多 80 条分批、人工确认和事实核查保守门禁；本机 loopback 网关仅属于历史兼容/评测路径，不能作为当前 userscript 默认方式。B站新增后台 UID 增强遵守 OB-AI-012 的暂停/取消/hash-only 约束。
+- 账户同步必须由用户点击“立即同步（合并）”触发；名单、可同步设置、提示词和反馈在客户端加密，API Key、密码、同步口令、令牌和日志不进入同步文档。东京服务器尚未部署或改 schema。
 - `real-site verified` 的当前只读入口与阻断以本文件顶部和版本条目为准；未判定登录、验证码、根评论 partial、模型精度和平台写入不能从夹具推导。
 
 ## 2026-09-08 B站新增内容累计增量 AI 分析（OB-AI-003）
@@ -122,13 +130,13 @@
 ## 历史事实路由
 
 - 2026-08-29 至 2026-09-05 的治理、B站入口/身份、微博虚拟列表与作品级读取等已关闭或阶段性条目，保留在 [HISTORY_INDEX.md](HISTORY_INDEX.md) 指向的计划和 `LEGACY-HISTORY.md`；本页只保留当前发布构建、最近证据和仍影响当前决策的限制。
-- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前 0.53.1 事实。
+- 需要追溯旧版本的具体数字、根因或当时发布状态时，按历史索引读取对应归档，不用旧条目覆盖当前候选事实。
 
 ## 汇总证据
 
 ### `structure regression`
 
-- 当前 v0.53.1 发布构建回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 23 项、AI 多平台 7/7、自动弹幕 7/7、quickblock 38/38、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
+- 已发布 v0.56.0 基线回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 23 项、AI 多平台 7/7、自动弹幕 7/7、quickblock 38/38、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
 - `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
 
 ### `real-site verified`
@@ -144,23 +152,20 @@
 ```powershell
 node test/docs-check.cjs
 node test/maintenance-check.cjs
+node test/userscript-product.cjs
 node test/ai-screening.cjs
 node test/ai-platforms.cjs
 node test/content-ai.cjs
 node test/ai-autoload.cjs
-node test/gateway-smoke.cjs
-node test/dev-browser.cjs build
-node test/dev-browser.cjs sync
-node test/dev-extension.cjs
-node test/dedicated-browser-probe.cjs --self-test
-node test/maintenance-check.cjs --dedicated
+node test/sync.cjs
+node test/sync-server.cjs
 node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
-node test/real-platform-probe.cjs --verify-local
+node test/real-platform-probe.cjs <platform> --verify-local
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-10 v0.53.1 B站只读探针结果见顶部 OB-AI-012 条目，未执行平台写入。
-v0.53.1 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-10 v0.56.0 B站只读探针结果见顶部 OB-AI-014 条目，未执行平台写入。
+v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 

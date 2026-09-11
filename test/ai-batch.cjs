@@ -1,6 +1,6 @@
 /* OmniBlock AI 全量分批回归测试。
  * 夹具说明：85 条抖音评论为人工合成节点，只用于验证“每批最多 80 条但不丢弃后续记录”；
- * 测试不访问真实站点或真实模型，使用 Playwright route 模拟 loopback Chat Completions 网关。
+ * 测试不访问真实站点或真实模型，使用 Playwright route 模拟人工合成 Chat Completions provider。
  * 运行：node test/ai-batch.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -9,7 +9,7 @@ const path = require('node:path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const COMMENTS = Array.from({ length: 85 }, (_, index) => (
   '<div data-e2e="comment-item" id="ai-batch-comment-' + index + '">' +
     '<a data-e2e="comment-username" href="/user/artificial-secuid-' + index + '">人工合成作者' + index + '</a>' +
@@ -21,11 +21,11 @@ const FIXTURE = '<!doctype html><html><head><meta charset="utf-8"><title>抖音 
   '</body></html>';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default', aiRules: []
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default', aiRules: []
   }
 }) };
 window.GM_getValue = (k, d) => (k in window.__gm ? window.__gm[k] : d);
@@ -57,7 +57,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   page.on('pageerror', (error) => report.pageErrors.push(String(error)));
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (request.url() === GATEWAY_URL) {
+    if (request.url() === PROVIDER_URL) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json; charset=utf-8',
@@ -97,7 +97,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && JSON.stringify(result.itemCounts) === JSON.stringify([80, 5])
     && ids.length === 85
     && uniqueIds.size === 85) {
-    report.pass.push('AI-BATCH-1 85 条已观察内容按 80+5 分批且全部送入网关');
+    report.pass.push('AI-BATCH-1 85 条已观察内容按 80+5 分批且全部送入 provider');
   } else {
     report.fail.push('AI-BATCH-1 分批总量异常：' + JSON.stringify({
       status: result.status, requests: result.bodies.length, itemCounts: result.itemCounts,

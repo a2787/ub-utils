@@ -1,6 +1,6 @@
 /* OmniBlock 内容弹窗、关键词优先级和五平台 AI 提醒回归。
  * 夹具说明：B站/抖音/微博/知乎/贴吧 DOM 均为人工合成，选择器只复用仓库已有的
- * 当前捕获契约；不访问真实平台或真实模型，网关由 Playwright 模拟。
+ * 当前捕获契约；不访问真实平台或真实模型，provider 由 Playwright 模拟。
  * 覆盖：B站/抖音评论关键词即时屏蔽且不请求 AI、关键词标签迁移、微博/知乎/贴吧
  * 评论 AI 采集与统一提醒弹窗、详情路由空评论入口，以及知乎没有未经验证的全量加载入口。
  * 运行：node test/content-ai.cjs
@@ -11,14 +11,14 @@ const path = require('node:path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-content-fixture', text: '命中目标', enabled: true }],
     biliDanmakuRules: [{ id: 'bili-keyword-fixture', kind: 'keyword', pattern: '目标', enabled: true }],
     douyinDanmakuRules: [{ id: 'douyin-keyword-fixture', kind: 'keyword', pattern: '目标', enabled: true }]
@@ -86,7 +86,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 async function installPage(browser, url, fixture) {
   const page = await browser.newPage();
   await page.route('**/*', async (route) => {
-    if (route.request().url() === GATEWAY_URL) {
+    if (route.request().url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
       let input = {};
@@ -232,7 +232,7 @@ async function openContent(page, adapterId, tab) {
       && weiboError.lastError === 'AI 请求被浏览器扩展拒绝（request-not-allowed）'
       && /扩展桥已就绪，但 AI 请求体未通过桥接协议校验/.test(weiboError.statusText)
       && !/请检查本地网关和浏览器扩展桥接/.test(weiboError.statusText))
-      report.pass.push('CR-6A 桥接拒绝错误保留可诊断原因，不再显示泛化网关/桥接提示');
+      report.pass.push('CR-6A 桥接拒绝错误保留可诊断原因，不再显示泛化传输/桥接提示');
     else report.fail.push('CR-6A 桥接拒绝错误提示异常：' + JSON.stringify(weiboError));
     await weibo.close();
 

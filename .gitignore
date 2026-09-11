@@ -17,8 +17,15 @@ test/_probe_dm_rows.cjs
 test/_probe_wb_modal.cjs
 test/_wbmodal*.json
 
-# 专用调试 Chrome 的临时 MV3 扩展构建目录；由 build-dev-extension.cjs 生成。
+# 上一轮 MV3 实验的专用调试构建目录；由 build-dev-extension.cjs 生成，不是当前 userscript 安装产物。
 test/_dev-extension/
+
+# 上一轮 MV3 实验的可安装构建目录；由 extension/build.cjs 生成。
+dist/
+
+# 独立同步服务的本地 SQLite/解释器缓存；只运行回归时生成，不进入仓库。
+sync-server/*.sqlite3
+sync-server/__pycache__/
 
 # 2026-08-23 B站登录态/评论 API 诊断产物；仅供当轮排查，不属于可交付测试。
 test/_cdp.cjs

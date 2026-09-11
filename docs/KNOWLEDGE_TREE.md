@@ -25,15 +25,22 @@ AGENTS.md
 ├── docs/architecture/ARCHITECTURE.md      ← 运行时架构与资源边界
 ├── docs/decisions/                         ← 不可频繁变化的单项架构决策
 │   ├── 0001-maintenance-control-plane.md
-│   └── 0002-ai-screening-gateway-boundary.md
-├── gateway/                                ← 本地 LiteLLM 网关与可选事实 broker
+│   ├── 0002-ai-screening-gateway-boundary.md
+│   └── 0003-mv3-extension-account-sync.md  ← superseded：上一轮 MV3 方案
+├── sync/                                   ← userscript 账户同步协议与 mock
+│   └── sync-core.js                        ← envelope/CAS/逻辑时钟/墓碑核心
+├── sync-server/                             ← 独立账户同步服务（只存客户端密文）
+│   ├── server.py                            ← Python 标准库 HTTP + 独立 SQLite
+│   └── README.md                            ← 本地运行、反向代理和上线门禁
+├── extension/                               ← superseded：上一轮 MV3 实验产物，不是安装路径
+├── gateway/                                 ← legacy 本地 LiteLLM 网关与可选事实 broker
 │   ├── README.md
 │   ├── config.example.json
 │   ├── fact-sources.example.json            ← 无真实来源的 allowlist 配置示例
 │   ├── scripts/fact-retrieval.cjs           ← loopback-only 事实核查 sidecar
 │   ├── docker-compose.yml
 │   └── runtime/                             ← 本机生成物，含凭据，始终被 Git 忽略
-├── 启动网关.cmd                             ← 双击调用 PowerShell 7 启动本地网关
+├── 启动网关.cmd                             ← legacy：双击调用 PowerShell 7 启动本地网关
 ├── docs/maintenance/HISTORY_INDEX.md      ← 历史事实按需索引
 │   ├── docs/maintenance/plans/             ← 已关闭计划的短归档
 │   └── docs/maintenance/LEGACY-HISTORY.md ← 重组前只读完整历史
@@ -41,10 +48,12 @@ AGENTS.md
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口
 └── docs/changelog/
     ├── INDEX.md                           ← 版本条目路由
-    ├── v0.54.0.md                         ← 当前公开版本：独立 AI 评测与受控事实核查
-    ├── v0.53.1.md                         ← 上一公开版本：B站 AI 后台屏蔽生命周期与 UID 缓存
+    ├── v0.56.0.md                         ← 当前公开版本：作品语境 AI 请求压缩与边界收口
+    ├── v0.55.0.md                         ← 已发布历史：作品语境感知的 AI 屏蔽
+    ├── v0.54.0.md                         ← 已发布历史：独立 AI 评测与受控事实核查
+    ├── v0.53.1.md                         ← 历史版本：B站 AI 后台屏蔽生命周期与 UID 缓存
     ├── v0.53.0.md                         ← 已发布：事实核查与屏蔽决策分离
-    ├── v0.52.0.md                         ← 当前公开版本：多平台内容入口与提示词反馈
+    ├── v0.52.0.md                         ← 已发布历史：多平台内容入口与提示词反馈
     ├── v0.48.0.md                         ← 历史候选：AI 多平台采集与网关启动
     └── LEGACY-HISTORY.md                  ← 重组前只读完整变更日志
 
@@ -61,7 +70,8 @@ AGENTS.md
 | 平台适配或真实站点验证 | 上述活动节点 | 对应 `test/real-*.cjs`、`test/dedicated-browser-probe.cjs`、平台回放、相关历史条目 |
 | 性能、日志、生命周期 | 上述活动节点 | `test/performance.cjs`、运行时相关测试、性能历史 |
 | 用户可见功能 | 上述活动节点、`README.md` | 当前版本 changelog 条目、受影响测试 |
-| AI 网关配置或路由 | 上述活动节点、`docs/decisions/0002-ai-screening-gateway-boundary.md` | `gateway/README.md`、`gateway/scripts/`、`test/gateway-smoke.cjs`、`启动网关.cmd` |
+| AI 直连与账户同步 | 上述活动节点、`docs/architecture/ARCHITECTURE.md` | `sync/`、`sync-server/`、`test/userscript-product.cjs`、`test/sync*.cjs` |
+| 上一轮 MV3/网关实验追溯 | 上述活动节点 | `extension/`、`docs/decisions/0003-mv3-extension-account-sync.md`、`gateway/`、`test/product-extension.cjs`、`test/gateway-smoke.cjs` |
 | 发布或回滚 | 上述活动节点、`CHANGELOG.md`、`docs/changelog/INDEX.md` | 对应版本条目和发布历史 |
 | 仅文档治理 | `AGENTS.md`、本文件、`MAINTENANCE_WORKFLOW.md` | 受影响索引，不读取平台历史 |
 

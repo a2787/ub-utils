@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.56.0
-// @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过本地网关进行 AI 建议筛选和受控事实核查。
+// @version       0.57.0
+// @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
 // @match         *://m.weibo.cn/*
@@ -25,6 +25,7 @@
 // @connect       localhost
 // @connect       127.0.0.1
 // @connect       [::1]
+// @connect       *
 // @run-at        document-start
 // @sandbox       raw
 // @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
@@ -44,7 +45,7 @@
  *  - 抖音推荐流：绝不写 media.muted（抖音把静音当全局偏好），改用视觉遮罩 + 自动切下一条，带四道安全阀。
  *  - 所有拉黑入口均为自建 UI，绝不触发平台原生"不感兴趣"/官方拉黑，避免污染推荐模型或被风控。
  *  - B站弹幕：拦截并主动读取 seg.so，兼容 PAKKU 的伪造 XHR 回调；按 mid_hash 过滤；只有目标屏蔽或 AI 确认目标时才按需尝试唯一 UID 关联。
- *  - 名单与浏览数据只在本机保存；本地快照也只写入本机 GM 存储。AI 关闭时不发起 AI 请求；启用后仅把当前页截短文本发给用户配置的 loopback 网关，不发送身份键或凭据。事实核查默认关闭，只接受本机 broker 的脱敏 allowlist 结果。
+ *  - 名单与浏览数据默认保存在本机；用户可主动启用账户级客户端加密同步（API Key、登录令牌、日志和快照永不进入同步包）。AI 关闭时不发起 AI 请求；启用后仅把当前页截短文本发给用户配置的 OpenAI-compatible provider，不发送身份键或凭据。事实核查默认关闭，只接受本机 broker 的脱敏 allowlist 结果。
  */
 (async function () {
   'use strict';
@@ -54,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.56.0-context-aware-ai-compact';
+  const RUNTIME_BUILD = '0.57.0-tampermonkey-mobile-direct-sync';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -493,10 +494,14 @@
   // 明确告诉用户结果可能不完整，而不是静默丢失评论。
   const COMMENT_MANAGER_RECORD_LIMIT = 20000;
 
-  // AI 屏蔽只接 loopback 网关。provider 的 API Key、配额、重试和 fallback 由
-  // LiteLLM/OpenClaw 等本地网关管理；userscript 不保存也不转发 provider 凭据。
-  const AI_GATEWAY_DEFAULT_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+  // AI 主链路只保留用户脚本直接调用 OpenAI-compatible provider 的方式。
+  // API Key 单独放在 GM 存储中，不进入 Store、导出、同步文档、页面对象或日志。
+  // `@connect *` 是为了允许用户在平板上填写任意兼容 provider；Tampermonkey
+  // 仍会在首次访问新域名时显示权限提示，用户可拒绝该域名。
+  const AI_DIRECT_CONFIG_KEY = 'omniblock:ai-direct-config:v1';
+  const AI_DIRECT_KEY_MAX_LENGTH = 512;
   const AI_FACT_RETRIEVAL_DEFAULT_URL = 'http://127.0.0.1:4001/v1/fact-check';
+  const AI_TRANSPORT_MODES = new Set(['direct']);
   const AI_FACT_RETRIEVAL_MODES = new Set(['off', 'shadow', 'canary']);
   const AI_FACT_RETRIEVAL_POLICY_VERSION = 'fact-local-allowlist-v1';
   const AI_FACT_QUERY_MAX_LENGTH = 320;
@@ -533,7 +538,7 @@
   const AI_PENDING_VERIFICATION_STATUSES = new Set(['not_checked', 'insufficient_context', 'unknown']);
   const AI_UNVERIFIED_RULE_PATTERN = /(?:未经证实|未证实|未核查|无来源|没有来源|未提供(?:任何)?(?:可核实)?依据|缺乏(?:可核实)?依据|无法核实|不可核实|unverified|not\s+verified)/i;
   const AI_UNVERIFIED_REASON_PATTERN = /(?:未经证实|未证实|未核查|无来源|没有来源|未提供(?:任何)?(?:可核实)?依据|缺乏(?:可核实)?依据|无法核实|不可核实|传播谣言|假消息|虚假(?:信息|内容)?|言论非事实|misinformation|false\s+(?:claim|information))/i;
-  // 单次网关请求的安全上限。当前页已观察内容会按此大小分批，而不是被截断。
+  // 单次 AI API 请求的安全上限。当前页已观察内容会按此大小分批，而不是被截断。
   const AI_BATCH_SIZE = 80;
   const AI_TEXT_BUDGET = 48000;
   // 提示词系统是本地、有限、可导入导出的结构化状态；反馈不会进入主名单，
@@ -550,8 +555,8 @@
   const AI_PROMPT_EXAMPLE_MAX_CHARS = 5200;
   const AI_PROMPT_PROPOSAL_MIN_SUPPORT = 2;
   const AI_PROMPT_PROPOSAL_EVIDENCE_LIMIT = 24;
-  // LiteLLM 当前默认每次请求 18 秒并允许 1 次重试；客户端预算必须覆盖
-  // 两次 provider 尝试，否则网关还在重试时浏览器会先误报超时。
+  // provider 可能在服务端进行有限重试；客户端预算需要覆盖一次完整响应窗口，
+  // 让超时、取消和页面生命周期都能有界收尾。
   const AI_REQUEST_TIMEOUT_MS = 60000;
   const AI_REQUEST_WATCHDOG_SLACK_MS = 250;
 
@@ -577,11 +582,11 @@
     return AI_CONTENT_TYPE_LABELS[kind] || '内容';
   }
 
-  // 作品语境只在浏览器内保留平台关联键；发往 loopback 网关时由
+  // 作品语境只在浏览器内保留平台关联键；发往 AI 服务时由
   // AIContext.toOutbound() 改成一次请求内的 ordinal ID。这样模型可以把标题、
   // 父评论和时间位置关联起来，但不会收到 URL、UID、hash 或平台原始对象。
   // 线协议 v2 支持 contextCatalog.defaults 和紧凑 time tuple；内部完整
-  // WorkContext 仍保留同样的语义，只有发往 loopback 网关的 prompt 做压缩。
+  // WorkContext 仍保留同样的语义，只有发往 AI 服务的 prompt 做压缩。
   const AI_CONTEXT_SCHEMA_VERSION = 2;
   const AI_CONTEXT_SUFFICIENCY = new Set(['sufficient', 'partial', 'insufficient', 'not_applicable']);
   const AI_CONTEXT_CONFIDENCE = new Set(['reliable', 'partial', 'missing']);
@@ -723,7 +728,7 @@
       return out;
     }
 
-    // 网关请求按批次共享作品元数据。标题/简介只进入一次 contextCatalog，
+    // AI API 请求按批次共享作品元数据。标题/简介只进入一次 contextCatalog，
     // 每条 item 只保留 ordinal work/item 引用以及该条独有的 parent/time，避免
     // 一页几十条弹幕重复携带同一份作品简介，超过输入预算。
     function toPromptContext(raw, registry, catalog) {
@@ -812,7 +817,7 @@
     return out;
   }
 
-  function normalizeAIGatewayModel(value) {
+  function normalizeAIModel(value) {
     return String(value == null ? '' : value)
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .replace(/\s+/g, ' ')
@@ -820,18 +825,77 @@
       .slice(0, AI_MODEL_MAX_LENGTH);
   }
 
-  function normalizeAIGatewayUrl(value) {
+  function normalizeAITransportMode(value) {
+    // 旧版本的 mode 只作为导入兼容字段读取；当前 userscript 永远使用
+    // 用户直接配置的 provider，不再根据旧值访问本机旧传输服务。
+    return 'direct';
+  }
+
+  function normalizeAIProviderUrl(value) {
     const raw = String(value == null ? '' : value).trim();
-    if (!raw) return AI_GATEWAY_DEFAULT_URL;
+    if (!raw) return '';
     try {
       const url = new URL(raw);
       const host = String(url.hostname || '').toLowerCase();
-      if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(host)) return '';
-      if (url.username || url.password) return '';
-      url.search = '';
-      url.hash = '';
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(host);
+      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+        || url.username || url.password || url.search || url.hash) return '';
       return url.href;
     } catch (e) { return ''; }
+  }
+
+  function isExtensionRuntime() {
+    if (typeof window !== 'object' || !window || !window.__OB_EXTENSION_RUNTIME__) return false;
+    return String(window.__OB_EXTENSION_RUNTIME__.mode || '').indexOf('persistent-') === 0;
+  }
+
+  function isFormalExtensionRuntime() {
+    if (typeof window !== 'object' || !window || !window.__OB_EXTENSION_RUNTIME__) return false;
+    return String(window.__OB_EXTENSION_RUNTIME__.mode || '') === 'persistent-extension';
+  }
+
+  function normalizeAIDirectKey(value) {
+    return String(value == null ? '' : value)
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim()
+      .slice(0, AI_DIRECT_KEY_MAX_LENGTH);
+  }
+
+  function readAIDirectKey() {
+    try {
+      let raw = GM_getValue(AI_DIRECT_CONFIG_KEY, '');
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') raw = parsed;
+        } catch (e) {}
+      }
+      if (raw && typeof raw === 'object') return normalizeAIDirectKey(raw.apiKey);
+      return normalizeAIDirectKey(raw);
+    } catch (e) { return ''; }
+  }
+
+  function writeAIDirectKey(value) {
+    const key = normalizeAIDirectKey(value);
+    try {
+      if (!key) {
+        if (typeof GM_deleteValue === 'function') GM_deleteValue(AI_DIRECT_CONFIG_KEY);
+        else GM_setValue(AI_DIRECT_CONFIG_KEY, '');
+      } else {
+        // 用对象包住密钥，和普通 Store JSON 保持不同键；任何导出/同步
+        // 只读取 Store/PromptSystem 的公开状态，不会碰到这里。
+        GM_setValue(AI_DIRECT_CONFIG_KEY, JSON.stringify({ version: 1, apiKey: key }));
+      }
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function aiTransportConfig() {
+    return {
+      mode: 'direct',
+      url: normalizeAIProviderUrl(Store.getSetting('aiProviderUrl')),
+      model: normalizeAIModel(Store.getSetting('aiProviderModel')),
+    };
   }
 
   function normalizeAIFactRetrievalMode(value) {
@@ -1028,8 +1092,8 @@
   // 1. 共享名单存储（一份名单，6 平台通用）
   // ====================================================================
   const STORAGE_KEY = 'omniblock:data:v1';
-  // 备份使用独立键和稳定 envelope。未来同步 provider 只需消费同一快照对象，
-  // 当前版本不注册任何网络 provider，也不改变主名单键的兼容格式。
+  // 备份使用独立键和稳定 envelope。账户同步客户端只消费同一份规范化快照，
+  // 不改变主名单键的兼容格式，也不把 provider 凭据带入备份或同步边界。
   const BACKUP_STORAGE_KEY = 'omniblock:backup:v1';
   const BACKUP_FORMAT = 'omniblock.snapshot';
   const BACKUP_SCHEMA = 1;
@@ -1054,9 +1118,10 @@
     douyinDanmakuRules: [],      // 抖音自动弹幕关键词/正则
     biliDanmakuExemptions: [],   // B站自动规则例外；只跳过规则，不是新的屏蔽身份
     douyinDanmakuExemptions: [], // 抖音自动规则例外；只跳过规则，不是新的屏蔽身份
-    aiEnabled: false,            // AI 建议默认关闭；不因设置存在而请求本地网关
-    aiGatewayUrl: AI_GATEWAY_DEFAULT_URL,
-    aiGatewayModel: '',          // 本地网关的模型别名；空值时使用 omni-default
+    aiEnabled: false,            // AI 建议默认关闭；不因设置存在而请求 AI 服务
+    aiMode: 'direct',            // 保留为协议迁移字段；当前唯一运行方式是 direct
+    aiProviderUrl: '',            // 用户配置的 OpenAI-compatible endpoint；不含 API Key
+    aiProviderModel: '',          // provider 的模型名
     aiFactRetrievalMode: 'off',  // 事实核查默认关闭；shadow/canary 都只连本机 broker
     aiFactRetrievalUrl: AI_FACT_RETRIEVAL_DEFAULT_URL,
     aiRules: [],                 // AI 预设自然语言规则；不直接执行屏蔽
@@ -1112,9 +1177,9 @@
         out[key] = sanitizeDanmakuExemptions(source[key], platform);
       }
       if (typeof source.aiEnabled === 'boolean') out.aiEnabled = source.aiEnabled;
-      const gatewayUrl = normalizeAIGatewayUrl(source.aiGatewayUrl);
-      out.aiGatewayUrl = gatewayUrl || AI_GATEWAY_DEFAULT_URL;
-      out.aiGatewayModel = normalizeAIGatewayModel(source.aiGatewayModel);
+      out.aiMode = 'direct';
+      out.aiProviderUrl = normalizeAIProviderUrl(source.aiProviderUrl);
+      out.aiProviderModel = normalizeAIModel(source.aiProviderModel);
       out.aiFactRetrievalMode = normalizeAIFactRetrievalMode(source.aiFactRetrievalMode);
       const factUrl = normalizeAIFactRetrievalUrl(source.aiFactRetrievalUrl);
       out.aiFactRetrievalUrl = factUrl || AI_FACT_RETRIEVAL_DEFAULT_URL;
@@ -1284,8 +1349,8 @@
     }
 
     function notifyBackupSinks(snapshot) {
-      // provider 是故意窄化的未来扩展点：同步实现自行处理认证、加密、冲突和网络，
-      // Store 只提供规范化快照，不替任何 provider 上传名单。
+      // 同步实现自行处理认证、加密、冲突和网络；Store 只提供规范化快照，
+      // 不替任何 AI provider 上传名单。
       for (const registration of backupSinks.values()) {
         try { registration.sink.onSnapshot(JSON.parse(JSON.stringify(snapshot))); } catch (e) {}
       }
@@ -1349,6 +1414,31 @@
 
     function persons() { return load().persons; }
     function settings() { return load().settings; }
+    function syncState() {
+      const state = load();
+      return {
+        version: 1,
+        persons: sanitizePersons(state.persons),
+        settings: sanitizeSettings(state.settings),
+      };
+    }
+    function applySyncState(input) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      data = {
+        version: 1,
+        persons: sanitizePersons(source.persons),
+        settings: sanitizeSettings(source.settings),
+      };
+      invalidateIdentityOwners();
+      const persisted = persist('sync-merge');
+      return {
+        ok: true,
+        persisted: persisted.ok,
+        persistError: persisted.error || '',
+        persons: Object.keys(data.persons).length,
+        identities: Object.values(data.persons).reduce((total, person) => total + person.identities.length, 0),
+      };
+    }
     function storageStatus() {
       const state = load();
       const personList = Object.values(state.persons || {});
@@ -1706,7 +1796,7 @@
     }
 
     return {
-      persons, settings, storageStatus, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
+      persons, settings, syncState, applySyncState, storageStatus, setSetting, getSetting, addIdentities, addIdentityGroups, removePerson,
       confirmIdentityLink, removeIdentity, removeIdentities, allIdentities, exportJSON, importJSON, onChange,
       onPersist, registerBackupSink, listBackups, backupStatus, ensureLocalBackup, restoreBackup, restorePreviousBackup,
       backupFormat: BACKUP_FORMAT, backupSchema: BACKUP_SCHEMA,
@@ -3150,9 +3240,24 @@
     #ob-panel .ob-auto-empty, #ob-content-manager .ob-auto-empty { padding: 4px 0; }
     #ob-panel .ob-ai-intro, #ob-content-manager .ob-ai-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
     #ob-panel .ob-ai-fact-note, #ob-content-manager .ob-ai-fact-note { color: #777; font-size: 11px; line-height: 1.5; margin: 6px 0 8px; }
-    #ob-panel .ob-ai-gateway, #ob-content-manager .ob-ai-gateway { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr) auto; gap: 6px; align-items: end; }
-    #ob-panel .ob-ai-gateway label, #ob-content-manager .ob-ai-gateway label { min-width: 0; color: #555; font-size: 11px; }
-    #ob-panel .ob-ai-gateway input, #ob-content-manager .ob-ai-gateway input { margin-top: 3px; }
+    #ob-panel .ob-ai-provider, #ob-content-manager .ob-ai-provider { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr) auto; gap: 6px; align-items: end; }
+    #ob-panel .ob-ai-provider label, #ob-content-manager .ob-ai-provider label { min-width: 0; color: #555; font-size: 11px; }
+    #ob-panel .ob-ai-provider input, #ob-content-manager .ob-ai-provider input { margin-top: 3px; }
+    #ob-panel .ob-ai-key-row, #ob-content-manager .ob-ai-key-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+    #ob-panel .ob-ai-key-status, #ob-content-manager .ob-ai-key-status { flex: 1 1 auto; min-width: 160px; color: #777; font-size: 11px; line-height: 1.4; }
+    #ob-panel .ob-ai-key-row button, #ob-content-manager .ob-ai-key-row button { min-height: 32px; border: 1px solid #c8c8c8; border-radius: 6px; padding: 6px 10px; background: #fff; color: #333; cursor: pointer; white-space: nowrap; }
+    #ob-panel .ob-ai-key-row button:hover, #ob-content-manager .ob-ai-key-row button:hover { background: #f5f5f5; }
+    #ob-panel .ob-ai-key-row .ob-ai-key-clear, #ob-content-manager .ob-ai-key-row .ob-ai-key-clear { color: #a33; border-color: #e0b0aa; }
+    #ob-panel .ob-sync-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
+    #ob-panel .ob-sync-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    #ob-panel .ob-sync-form label { min-width: 0; color: #555; font-size: 11px; }
+    #ob-panel .ob-sync-form input { box-sizing: border-box; width: 100%; margin-top: 3px; }
+    #ob-panel .ob-sync-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    #ob-panel .ob-sync-actions button { min-height: 34px; border: 1px solid #c8c8c8; border-radius: 6px; padding: 6px 10px; background: #fff; color: #333; cursor: pointer; white-space: nowrap; }
+    #ob-panel .ob-sync-actions button:hover { background: #f5f5f5; }
+    #ob-panel .ob-sync-actions .ob-sync-primary { border-color: #5b6db1; background: #5b6db1; color: #fff; }
+    #ob-panel .ob-sync-actions .ob-sync-primary:hover { background: #4c5d9b; }
+    #ob-panel .ob-sync-status { grid-column: 1 / -1; min-height: 18px; color: #777; font-size: 11px; line-height: 1.5; word-break: break-word; }
     #ob-panel .ob-ai-fact, #ob-content-manager .ob-ai-fact { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(0, 1fr) auto; gap: 6px; align-items: end; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
     #ob-panel .ob-ai-fact label, #ob-content-manager .ob-ai-fact label { min-width: 0; color: #555; font-size: 11px; }
     #ob-panel .ob-ai-fact input, #ob-panel .ob-ai-fact select, #ob-content-manager .ob-ai-fact input, #ob-content-manager .ob-ai-fact select { margin-top: 3px; }
@@ -3255,15 +3360,34 @@
     #ob-ai-feedback .ob-ai-feedback-foot button { min-height: 28px; border: 1px solid #ccc; border-radius: 5px; padding: 4px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; }
     #ob-ai-feedback .ob-ai-feedback-foot .ob-ai-feedback-save { border-color: #5b6db1; background: #5b6db1; color: #fff; }
     @media (max-width: 560px) {
+      #ob-panel { box-sizing: border-box; align-items: flex-start; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+      #ob-panel .ob-box { width: 100%; max-width: 100%; max-height: 100dvh; max-height: 100vh; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+      #ob-panel button, #ob-panel select, #ob-panel input:not([type="checkbox"]):not([type="radio"]) { min-height: 44px; }
+      #ob-panel input[type="checkbox"], #ob-panel input[type="radio"] { min-height: 0; }
+      #ob-panel .ob-close { width: 44px; height: 44px; min-height: 44px; }
+      #ob-content-manager { box-sizing: border-box; align-items: flex-start; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+      #ob-content-manager .ob-content-box { width: 100%; max-width: 100%; max-height: 100dvh; max-height: 100vh; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+      #ob-content-manager button, #ob-content-manager select, #ob-content-manager input:not([type="checkbox"]):not([type="radio"]) { min-height: 44px; }
+      #ob-content-manager input[type="checkbox"], #ob-content-manager input[type="radio"] { min-height: 0; }
+      #ob-content-manager .ob-content-close { width: 44px; height: 44px; min-height: 44px; }
+      #ob-content-manager .ob-content-tabs { overflow-x: auto; overscroll-behavior-x: contain; }
+      #ob-content-manager .ob-content-tab { flex: 0 0 auto; min-height: 44px; }
+      #ob-content-manager .ob-content-box button { min-height: 44px; }
+      #ob-content-manager .ob-ai-profile-import { min-height: 44px; }
       #ob-panel .ob-ai-profile-grid, #ob-content-manager .ob-ai-profile-grid { grid-template-columns: 1fr; }
-      #ob-panel .ob-ai-gateway, #ob-content-manager .ob-ai-gateway { grid-template-columns: 1fr; }
+      #ob-panel .ob-ai-provider, #ob-content-manager .ob-ai-provider { grid-template-columns: 1fr; }
+      #ob-panel .ob-sync-form { grid-template-columns: 1fr; }
+      #ob-panel .ob-ai-key-row, #ob-content-manager .ob-ai-key-row, #ob-panel .ob-sync-actions { align-items: stretch; flex-direction: column; }
+      #ob-panel .ob-ai-key-row button, #ob-content-manager .ob-ai-key-row button, #ob-panel .ob-sync-actions button { width: 100%; min-height: 44px; }
       #ob-panel .ob-ai-page, #ob-content-manager .ob-ai-page { flex-wrap: wrap; }
       #ob-panel .ob-ai-page button, #ob-content-manager .ob-ai-page button { width: 100%; }
       #ob-ai-review { align-items: flex-end; padding: 0; }
-      #ob-ai-review .ob-ai-review-box { width: 100%; max-width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; }
+      #ob-ai-review .ob-ai-review-box { width: 100%; max-width: 100%; max-height: 88vh; max-height: calc(100dvh - env(safe-area-inset-top)); border-radius: 8px 8px 0 0; padding: 14px max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+      #ob-ai-review .ob-ai-review-foot button, #ob-ai-review .ob-ai-reject, #ob-ai-review .ob-ai-candidate-scope { min-height: 44px; }
+      #ob-ai-feedback { right: max(12px, env(safe-area-inset-right)); bottom: max(60px, calc(60px + env(safe-area-inset-bottom))); width: calc(100vw - max(24px, calc(env(safe-area-inset-left) + env(safe-area-inset-right)))); }
     }
     #ob-gear {
-      position: fixed; right: 14px; bottom: 14px; z-index: 2147483643;
+      position: fixed; right: max(14px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom)); z-index: 2147483643;
       width: 40px; height: 40px; border: 0; border-radius: 50%; padding: 0;
       background: #2b2b32; color: #fff; font-size: 20px; line-height: 40px;
       text-align: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); user-select: none;
@@ -4259,6 +4383,42 @@
       return JSON.stringify(packageObject(), null, 2);
     }
 
+    function syncState() {
+      ensurePersonalization();
+      return {
+        promptProfile: clone(loadProfileState()),
+        feedbackState: clone(loadFeedbackState()),
+      };
+    }
+
+    function applySyncState(input) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      const oldProfile = clone(loadProfileState());
+      const oldFeedback = clone(loadFeedbackState());
+      // 同步应用的是已经合并好的记录状态。这里不能调用
+      // derivePersonalization，否则会把另一台设备明确接受/拒绝/暂停的状态
+      // 当成普通反馈重新推导，导致用户意图在同步后丢失。
+      const nextProfile = normalizeProfileState(source.promptProfile || source.profile || {});
+      const nextFeedback = normalizeFeedbackState(source.feedbackState || source.feedback || {});
+      if (!writeValue(AI_PROMPT_PROFILE_STORAGE_KEY, nextProfile)) {
+        return { ok: false, persisted: false, error: storageError || 'AI 提示词配置写入失败' };
+      }
+      if (!writeValue(AI_PROMPT_FEEDBACK_STORAGE_KEY, nextFeedback)) {
+        if (oldProfile) writeValue(AI_PROMPT_PROFILE_STORAGE_KEY, oldProfile);
+        return { ok: false, persisted: false, error: storageError || '反馈账本写入失败' };
+      }
+      profileState = nextProfile;
+      feedbackState = nextFeedback;
+      notify('profile'); notify('feedback');
+      return {
+        ok: true,
+        persisted: true,
+        feedbackCount: nextFeedback.events.length,
+        pendingCount: nextProfile.personalization.pending.length,
+        acceptedCount: nextProfile.personalization.accepted.length,
+      };
+    }
+
     function importJSON(input) {
       let source = input;
       if (typeof source === 'string') {
@@ -4339,6 +4499,20 @@
       return () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); };
     }
 
+    // 正式扩展的同步客户端可能在设置页写入提示词状态。让已经打开的
+    // 内容页丢弃缓存并重新计算，而不是等用户手动刷新；Tampermonkey
+    // 不支持该监听时保持原有行为。
+    try {
+      for (const key of [AI_PROMPT_PROFILE_STORAGE_KEY, AI_PROMPT_FEEDBACK_STORAGE_KEY]) {
+        GM_addValueChangeListener(key, () => {
+          profileState = null;
+          feedbackState = null;
+          storageError = '';
+          notify('external-change', { key });
+        });
+      }
+    } catch (e) { /* 可选能力 */ }
+
     return {
       getProfile: () => clone(loadProfileState().profile),
       getPersonalization: () => { ensurePersonalization(); return clone(loadProfileState().personalization); },
@@ -4348,6 +4522,8 @@
       updateReason,
       deleteFeedback,
       getFeedback,
+      syncState,
+      applySyncState,
       recomputePersonalization,
       acceptPreference,
       rejectPreference: (id) => dismissPreference(id, 'rejected'),
@@ -4366,6 +4542,691 @@
       onChange,
       packageFormat: AI_PROMPT_PACKAGE_FORMAT,
       schemaVersion: AI_PROMPT_SCHEMA_VERSION,
+    };
+  })();
+
+  // ====================================================================
+  // 1.8 账户级客户端加密同步（userscript 内联适配器）
+  // --------------------------------------------------------------------
+  // 同步协议与 sync/sync-core.js 保持同一 envelope、记录逻辑时钟、墓碑和
+  // CAS 语义，但浏览器端不依赖远程脚本或 MV3 service worker。服务器只看
+  // 加密后的 blob；账户密码、同步口令、访问令牌和 AI API Key 永远不进入
+  // Store、导出文件、同步文档或事件日志。
+  // ====================================================================
+  const AccountSync = (() => {
+    const FORMAT = 'omniblock.sync-document';
+    const ENVELOPE_FORMAT = 'omniblock.sync-envelope';
+    const SCHEMA = 1;
+    const DATA_KEY = 'omniblock:data:v1';
+    const PROFILE_KEY = 'omniblock:ai-prompt-profile:v1';
+    const FEEDBACK_KEY = 'omniblock:ai-feedback:v1';
+    const DEVICE_ID_KEY = 'omniblock:sync-device-id:v1';
+    const AUTH_KEY = 'omniblock:sync-auth:v1';
+    const LOCAL_STATE_KEY = 'omniblock:sync-local:v1';
+    const ENDPOINT_KEY = 'omniblock:sync-endpoint:v1';
+    const KDF_ITERATIONS = 310000;
+    const MIN_PASSPHRASE_LENGTH = 8;
+    const MAX_ENVELOPE_CHARS = 12 * 1024 * 1024;
+    const REQUEST_TIMEOUT_MS = 20000;
+    const NAMESPACES = ['persons', 'settings', 'prompt', 'feedback'];
+    const listeners = [];
+    let syncing = false;
+    let lastError = '';
+
+    function clone(value) {
+      if (value == null) return value;
+      try { return JSON.parse(JSON.stringify(value)); } catch (e) { return null; }
+    }
+
+    function plainObject(value) {
+      return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function stable(value) {
+      if (value === null || typeof value !== 'object') return JSON.stringify(value);
+      if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
+      return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}';
+    }
+
+    function parseStored(value) {
+      if (typeof value !== 'string') return clone(value);
+      try { return JSON.parse(value); } catch (e) { return null; }
+    }
+
+    function cleanString(value, maxLength) {
+      return String(value == null ? '' : value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, maxLength);
+    }
+
+    function readValue(key, fallback) {
+      try {
+        if (typeof GM_getValue !== 'function') return fallback;
+        const raw = parseStored(GM_getValue(key, null));
+        return raw == null ? fallback : raw;
+      } catch (e) { return fallback; }
+    }
+
+    function writeValue(key, value) {
+      try {
+        if (typeof GM_setValue !== 'function') return false;
+        GM_setValue(key, JSON.stringify(value));
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function deleteValue(key) {
+      try {
+        if (typeof GM_deleteValue === 'function') GM_deleteValue(key);
+        else if (typeof GM_setValue === 'function') GM_setValue(key, '');
+      } catch (e) {}
+    }
+
+    function notify(details) {
+      const event = { ...(details || {}) };
+      for (const listener of Array.from(listeners)) {
+        try { listener(event); } catch (e) {}
+      }
+    }
+
+    function normalizeClock(value) {
+      const clock = value && typeof value === 'object' ? value : {};
+      const counter = Number(clock.counter);
+      const deviceId = cleanString(clock.deviceId, 80);
+      if (!Number.isSafeInteger(counter) || counter < 0 || !deviceId) return null;
+      return { counter, deviceId };
+    }
+
+    function compareClock(left, right) {
+      const a = normalizeClock(left) || { counter: 0, deviceId: '' };
+      const b = normalizeClock(right) || { counter: 0, deviceId: '' };
+      if (a.counter !== b.counter) return a.counter > b.counter ? 1 : -1;
+      if (a.deviceId === b.deviceId) return 0;
+      return a.deviceId > b.deviceId ? 1 : -1;
+    }
+
+    function normalizeRecord(value) {
+      if (!plainObject(value)) return null;
+      const clock = normalizeClock(value.clock);
+      if (!clock || typeof value.tombstone !== 'boolean') return null;
+      if (!value.tombstone && value.value === undefined) return null;
+      return {
+        clock,
+        tombstone: value.tombstone,
+        ...(value.tombstone ? {} : { value: clone(value.value) }),
+      };
+    }
+
+    function emptyDocument(deviceId) {
+      return {
+        format: FORMAT,
+        schema: SCHEMA,
+        deviceId: cleanString(deviceId, 80) || 'device-unknown',
+        logicalClock: 0,
+        records: {},
+      };
+    }
+
+    function normalizeDocument(value) {
+      if (!plainObject(value) || value.format !== FORMAT || Number(value.schema) !== SCHEMA || !plainObject(value.records)) return null;
+      const deviceId = cleanString(value.deviceId, 80);
+      if (!deviceId) return null;
+      const out = emptyDocument(deviceId);
+      const logicalClock = Number(value.logicalClock);
+      out.logicalClock = Number.isSafeInteger(logicalClock) && logicalClock >= 0 ? logicalClock : 0;
+      for (const namespace of NAMESPACES) {
+        const source = plainObject(value.records[namespace]) ? value.records[namespace] : {};
+        const target = {};
+        for (const key of Object.keys(source).sort()) {
+          const record = normalizeRecord(source[key]);
+          if (record) target[cleanString(key, 160)] = record;
+        }
+        if (Object.keys(target).length) out.records[namespace] = target;
+      }
+      return out;
+    }
+
+    function maxDocumentClock(document) {
+      const normalized = normalizeDocument(document);
+      if (!normalized) return 0;
+      let max = normalized.logicalClock;
+      for (const namespace of NAMESPACES) {
+        for (const record of Object.values(normalized.records[namespace] || {})) {
+          max = Math.max(max, Number(record.clock && record.clock.counter) || 0);
+        }
+      }
+      return max;
+    }
+
+    function stateCollections(state) {
+      const source = plainObject(state) ? state : {};
+      const data = plainObject(source.data) ? source.data : {};
+      const prompt = plainObject(source.promptProfile) ? source.promptProfile : {};
+      const feedback = plainObject(source.feedbackState) ? source.feedbackState : {};
+      const events = {};
+      for (const event of Array.isArray(feedback.events) ? feedback.events : []) {
+        if (!plainObject(event)) continue;
+        const id = cleanString(event.id, 160);
+        if (id) events[id] = clone(event);
+      }
+      return {
+        persons: plainObject(data.persons) ? clone(data.persons) : {},
+        settings: plainObject(data.settings) ? clone(data.settings) : {},
+        prompt: {
+          profile: plainObject(prompt.profile) ? clone(prompt.profile) : {},
+          personalization: plainObject(prompt.personalization) ? clone(prompt.personalization) : {},
+          meta: plainObject(prompt.meta) ? clone(prompt.meta) : {},
+        },
+        feedback: {
+          ...events,
+          meta: plainObject(feedback.meta) ? clone(feedback.meta) : {},
+        },
+      };
+    }
+
+    function documentFromState(state, previous, deviceId) {
+      const current = stateCollections(state);
+      const base = normalizeDocument(previous) || emptyDocument(deviceId);
+      const id = cleanString(deviceId, 80) || base.deviceId || 'device-unknown';
+      let counter = Math.max(maxDocumentClock(base), Number(base.logicalClock) || 0);
+      const out = emptyDocument(id);
+      for (const namespace of NAMESPACES) {
+        const target = {};
+        const before = base.records[namespace] || {};
+        const now = current[namespace] || {};
+        const keys = new Set([...Object.keys(before), ...Object.keys(now)]);
+        for (const key of Array.from(keys).sort()) {
+          const cleanKey = cleanString(key, 160);
+          const oldRecord = before[key];
+          if (Object.prototype.hasOwnProperty.call(now, key)) {
+            const value = clone(now[key]);
+            if (oldRecord && !oldRecord.tombstone && stable(oldRecord.value) === stable(value)) {
+              target[cleanKey] = oldRecord;
+            } else {
+              counter++;
+              target[cleanKey] = { clock: { counter, deviceId: id }, tombstone: false, value };
+            }
+          } else if (oldRecord && !oldRecord.tombstone) {
+            counter++;
+            target[cleanKey] = { clock: { counter, deviceId: id }, tombstone: true };
+          } else if (oldRecord) {
+            target[cleanKey] = oldRecord;
+          }
+        }
+        if (Object.keys(target).length) out.records[namespace] = target;
+      }
+      out.logicalClock = counter;
+      return out;
+    }
+
+    function chooseRecord(left, right) {
+      if (!left) return right;
+      if (!right) return left;
+      const comparison = compareClock(left.clock, right.clock);
+      if (comparison > 0) return left;
+      if (comparison < 0) return right;
+      if (left.tombstone !== right.tombstone) return left.tombstone ? left : right;
+      return stable(left) >= stable(right) ? left : right;
+    }
+
+    function mergeDocuments(left, right, deviceId) {
+      const a = normalizeDocument(left) || emptyDocument(deviceId || 'device-left');
+      const b = normalizeDocument(right) || emptyDocument(deviceId || 'device-right');
+      const out = emptyDocument(cleanString(deviceId, 80) || a.deviceId || b.deviceId);
+      out.logicalClock = Math.max(maxDocumentClock(a), maxDocumentClock(b));
+      for (const namespace of NAMESPACES) {
+        const target = {};
+        const keys = new Set([...Object.keys(a.records[namespace] || {}), ...Object.keys(b.records[namespace] || {})]);
+        for (const key of Array.from(keys).sort()) {
+          const chosen = chooseRecord(a.records[namespace] && a.records[namespace][key], b.records[namespace] && b.records[namespace][key]);
+          if (chosen) target[cleanString(key, 160)] = clone(chosen);
+        }
+        if (Object.keys(target).length) out.records[namespace] = target;
+      }
+      return out;
+    }
+
+    function materializeDocument(document) {
+      const normalized = normalizeDocument(document);
+      if (!normalized) throw new SyncError('protocol', 'sync-document-invalid');
+      const collections = {};
+      for (const namespace of NAMESPACES) {
+        const target = {};
+        for (const [key, record] of Object.entries(normalized.records[namespace] || {})) {
+          if (!record.tombstone) target[key] = clone(record.value);
+        }
+        collections[namespace] = target;
+      }
+      const prompt = collections.prompt || {};
+      const feedbackRecords = collections.feedback || {};
+      const events = Object.keys(feedbackRecords)
+        .filter((key) => key !== 'meta')
+        .map((key) => feedbackRecords[key])
+        .filter((event) => plainObject(event))
+        .sort((a, b) => Number(a.createdAt) - Number(b.createdAt) || String(a.id || '').localeCompare(String(b.id || '')));
+      return {
+        data: { version: 1, persons: collections.persons || {}, settings: collections.settings || {} },
+        promptProfile: {
+          schemaVersion: 1,
+          profile: prompt.profile || {},
+          personalization: prompt.personalization || {},
+          meta: prompt.meta || {},
+        },
+        feedbackState: { schemaVersion: 1, events, meta: feedbackRecords.meta || {} },
+      };
+    }
+
+    function runtimeCrypto() {
+      const value = typeof globalThis !== 'undefined' ? globalThis.crypto : null;
+      if (!value || !value.subtle) throw new SyncError('crypto', 'webcrypto-unavailable');
+      return value;
+    }
+
+    function utf8(value) {
+      if (typeof TextEncoder !== 'function') throw new SyncError('crypto', 'text-encoder-unavailable');
+      return new TextEncoder().encode(String(value));
+    }
+
+    function bytesToBase64(value) {
+      let binary = '';
+      for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    }
+
+    function base64ToBytes(value) {
+      const binary = atob(String(value || ''));
+      return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    }
+
+    function randomBytes(length) {
+      const output = new Uint8Array(length);
+      runtimeCrypto().getRandomValues(output);
+      return output;
+    }
+
+    async function deriveKey(passphrase, salt, iterations) {
+      if (String(passphrase || '').length < MIN_PASSPHRASE_LENGTH) throw new SyncError('auth', 'sync-passphrase-too-short');
+      const subtle = runtimeCrypto().subtle;
+      const material = await subtle.importKey('raw', utf8(passphrase), 'PBKDF2', false, ['deriveKey']);
+      return subtle.deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, material,
+        { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    }
+
+    async function encryptDocument(document, passphrase, accountId) {
+      const normalized = normalizeDocument(document);
+      if (!normalized) throw new SyncError('protocol', 'sync-document-invalid');
+      const salt = randomBytes(16);
+      const iv = randomBytes(12);
+      const key = await deriveKey(passphrase, salt, KDF_ITERATIONS);
+      const aad = utf8('omniblock.sync.v1|' + cleanString(accountId, 160));
+      const plaintext = utf8(stable(normalized));
+      const ciphertext = await runtimeCrypto().subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, plaintext);
+      return {
+        format: ENVELOPE_FORMAT,
+        schema: SCHEMA,
+        kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: KDF_ITERATIONS, salt: bytesToBase64(salt) },
+        cipher: { name: 'AES-GCM', bits: 256, iv: bytesToBase64(iv), data: bytesToBase64(ciphertext) },
+      };
+    }
+
+    async function decryptEnvelope(envelope, passphrase, accountId) {
+      if (!plainObject(envelope) || envelope.format !== ENVELOPE_FORMAT || Number(envelope.schema) !== SCHEMA
+        || !plainObject(envelope.kdf) || !plainObject(envelope.cipher)) throw new SyncError('protocol', 'sync-envelope-invalid');
+      const iterations = Number(envelope.kdf.iterations);
+      let salt;
+      let iv;
+      let encrypted;
+      try {
+        salt = base64ToBytes(envelope.kdf.salt);
+        iv = base64ToBytes(envelope.cipher.iv);
+        encrypted = base64ToBytes(envelope.cipher.data);
+      } catch (e) { throw new SyncError('protocol', 'sync-envelope-invalid'); }
+      if (envelope.kdf.name !== 'PBKDF2' || envelope.kdf.hash !== 'SHA-256'
+        || !Number.isSafeInteger(iterations) || iterations < 100000 || iterations > 1000000
+        || salt.length < 16 || iv.length !== 12 || !encrypted.length
+        || JSON.stringify(envelope).length > MAX_ENVELOPE_CHARS) throw new SyncError('protocol', 'sync-envelope-invalid');
+      try {
+        const key = await deriveKey(passphrase, salt, iterations);
+        const plaintext = await runtimeCrypto().subtle.decrypt({ name: 'AES-GCM', iv, additionalData: utf8('omniblock.sync.v1|' + cleanString(accountId, 160)) }, key, encrypted);
+        const value = JSON.parse(new TextDecoder().decode(plaintext));
+        const document = normalizeDocument(value);
+        if (!document) throw new SyncError('protocol', 'sync-document-invalid');
+        return document;
+      } catch (error) {
+        if (error instanceof SyncError && error.code === 'protocol') throw error;
+        throw new SyncError('crypto', 'sync-decrypt-failed');
+      }
+    }
+
+    function normalizeEndpoint(value) {
+      try {
+        const url = new URL(String(value || ''));
+        const host = String(url.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+        const loopback = ['localhost', '127.0.0.1', '::1'].includes(host);
+        if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+          || url.username || url.password || url.search || url.hash) return '';
+        url.pathname = url.pathname.replace(/\/+$/, '');
+        return url.href;
+      } catch (e) { return ''; }
+    }
+
+    function endpointPath(endpoint, path) {
+      const base = normalizeEndpoint(endpoint);
+      if (!base) throw new SyncError('config', 'sync-endpoint-invalid');
+      return base.replace(/\/+$/, '') + (String(path).startsWith('/') ? String(path) : '/' + String(path));
+    }
+
+    function normalizeUsername(value) {
+      const username = String(value == null ? '' : value).trim().toLowerCase();
+      return /^[a-z0-9_.-]{3,64}$/.test(username) ? username : '';
+    }
+
+    function normalizeAuth(value) {
+      const source = plainObject(value) ? value : {};
+      const accessToken = cleanString(source.accessToken, 256);
+      const accountId = cleanString(source.accountId, 160);
+      const username = normalizeUsername(source.username);
+      const endpoint = normalizeEndpoint(source.endpoint);
+      const expiresAt = cleanString(source.expiresAt, 64);
+      return accessToken && accountId && username ? { accessToken, accountId, username, endpoint, expiresAt } : null;
+    }
+
+    function getAuth() { return normalizeAuth(readValue(AUTH_KEY, null)); }
+    function getEndpoint() {
+      const configured = normalizeEndpoint(readValue(ENDPOINT_KEY, ''));
+      if (configured) return configured;
+      const auth = getAuth();
+      return normalizeEndpoint(auth && auth.endpoint);
+    }
+
+    function deviceId() {
+      const current = cleanString(readValue(DEVICE_ID_KEY, ''), 80);
+      if (/^device-[a-z0-9_-]{8,80}$/i.test(current)) return current;
+      let suffix = '';
+      try {
+        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') suffix = globalThis.crypto.randomUUID();
+      } catch (e) {}
+      if (!suffix) suffix = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+      const created = 'device-' + suffix.replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+      writeValue(DEVICE_ID_KEY, created);
+      return created;
+    }
+
+    function localState() {
+      const source = readValue(LOCAL_STATE_KEY, {});
+      const document = normalizeDocument(source && source.document);
+      return {
+        document,
+        revision: document ? maxDocumentClock(document) : 0,
+        lastSyncAt: Number.isFinite(Number(source && source.lastSyncAt)) ? Number(source.lastSyncAt) : 0,
+      };
+    }
+
+    class SyncError extends Error {
+      constructor(code, message, details) {
+        super(message || code);
+        this.name = 'SyncError';
+        this.code = code;
+        this.details = details || null;
+      }
+    }
+
+    function request(method, url, body, headers) {
+      return new Promise((resolve, reject) => {
+        if (typeof GM_xmlhttpRequest !== 'function') {
+          reject(new SyncError('offline', 'gm-xmlhttp-request-unavailable'));
+          return;
+        }
+        let settled = false;
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error instanceof SyncError ? error : new SyncError('offline', 'sync-network-unavailable'));
+        };
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        try {
+          GM_xmlhttpRequest({
+            method,
+            url,
+            data: body == null ? undefined : JSON.stringify(body),
+            headers: { Accept: 'application/json', ...(body == null ? {} : { 'Content-Type': 'application/json' }), ...(headers || {}) },
+            timeout: REQUEST_TIMEOUT_MS,
+            anonymous: true,
+            onload: (response) => {
+              let parsed = null;
+              try {
+                const raw = response && response.responseText != null ? response.responseText : response && response.response;
+                parsed = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw;
+              } catch (e) { parsed = null; }
+              finish({ status: Number(response && response.status) || 0, body: parsed });
+            },
+            onerror: () => fail(new SyncError('offline', 'sync-network-unavailable')),
+            ontimeout: () => fail(new SyncError('offline', 'sync-request-timeout')),
+            onabort: () => fail(new SyncError('offline', 'sync-request-aborted')),
+          });
+        } catch (error) { fail(new SyncError('offline', 'sync-network-unavailable')); }
+      });
+    }
+
+    async function accountRequest(endpoint, path, payload) {
+      const response = await request('POST', endpointPath(endpoint, path), payload, {});
+      if (response.status === 401) throw new SyncError('auth', 'sync-auth-failed', response.body);
+      if (response.status < 200 || response.status >= 300) {
+        throw new SyncError('server', response.body && response.body.code || 'sync-server-error', { status: response.status, body: response.body });
+      }
+      return response.body || {};
+    }
+
+    async function register(options) {
+      const input = plainObject(options) ? options : {};
+      const endpoint = normalizeEndpoint(input.endpoint);
+      const username = normalizeUsername(input.username);
+      const password = String(input.password == null ? '' : input.password);
+      if (!endpoint) throw new SyncError('config', 'sync-endpoint-invalid');
+      if (!username || password.length < 8 || password.length > 256) throw new SyncError('auth', 'sync-registration-invalid');
+      const result = await accountRequest(endpoint, '/v1/auth/register', { username, password });
+      const accountId = cleanString(result.accountId, 160);
+      if (!accountId) throw new SyncError('auth', 'sync-registration-response-invalid');
+      writeValue(ENDPOINT_KEY, endpoint);
+      try { EventLog.record('sync.account.register', { ok: true }, { immediate: true }); } catch (e) {}
+      return { accountId, username: normalizeUsername(result.username) || username };
+    }
+
+    async function login(options) {
+      const input = plainObject(options) ? options : {};
+      const endpoint = normalizeEndpoint(input.endpoint);
+      const username = normalizeUsername(input.username);
+      const password = String(input.password == null ? '' : input.password);
+      if (!endpoint) throw new SyncError('config', 'sync-endpoint-invalid');
+      if (!username || !password) throw new SyncError('auth', 'sync-login-invalid');
+      const result = await accountRequest(endpoint, '/v1/auth/login', { username, password });
+      const auth = normalizeAuth({ ...result, endpoint, username });
+      if (!auth) throw new SyncError('auth', 'sync-login-response-invalid');
+      if (!writeValue(AUTH_KEY, auth)) throw new SyncError('storage', 'sync-auth-storage-failed');
+      writeValue(ENDPOINT_KEY, endpoint);
+      lastError = '';
+      notify({ type: 'login' });
+      try { EventLog.record('sync.account.login', { ok: true }, { immediate: true }); } catch (e) {}
+      return { username: auth.username, accountId: auth.accountId, expiresAt: auth.expiresAt };
+    }
+
+    function logout() {
+      deleteValue(AUTH_KEY);
+      lastError = '';
+      notify({ type: 'logout' });
+      try { EventLog.record('sync.account.logout', { ok: true }, { immediate: true }); } catch (e) {}
+      return true;
+    }
+
+    async function readRemote(endpoint, token) {
+      const response = await request('GET', endpointPath(endpoint, '/v1/sync/state'), null, { Authorization: 'Bearer ' + token });
+      if (response.status === 401) throw new SyncError('auth', 'sync-auth-failed', response.body);
+      if (response.status === 404) return { revision: 0, blob: null };
+      if (response.status < 200 || response.status >= 300) throw new SyncError('server', 'sync-server-error', { status: response.status, body: response.body });
+      if (!plainObject(response.body) || !Number.isSafeInteger(Number(response.body.revision))
+        || (response.body.blob != null && !plainObject(response.body.blob))) throw new SyncError('server', 'sync-remote-state-invalid');
+      return { revision: Number(response.body.revision), blob: response.body.blob || null, updatedAt: response.body.updatedAt || '' };
+    }
+
+    async function putRemote(endpoint, token, revision, blob) {
+      const response = await request('PUT', endpointPath(endpoint, '/v1/sync/state'), { baseRevision: revision, blob }, { Authorization: 'Bearer ' + token });
+      if (response.status === 401) throw new SyncError('auth', 'sync-auth-failed', response.body);
+      if (response.status === 409) throw new SyncError('conflict', 'sync-revision-conflict', response.body);
+      if (response.status < 200 || response.status >= 300) throw new SyncError('server', 'sync-server-error', { status: response.status, body: response.body });
+      if (!plainObject(response.body) || !Number.isSafeInteger(Number(response.body.revision))) throw new SyncError('server', 'sync-write-response-invalid');
+      return { revision: Number(response.body.revision), updatedAt: response.body.updatedAt || '' };
+    }
+
+    function currentState() {
+      const data = Store.syncState();
+      const prompt = PromptSystem.syncState();
+      return { data, promptProfile: prompt.promptProfile, feedbackState: prompt.feedbackState };
+    }
+
+    function syncStatus() {
+      const auth = getAuth();
+      const local = localState();
+      return {
+        loggedIn: !!auth,
+        endpoint: getEndpoint(),
+        username: auth ? auth.username : '',
+        accountIdPresent: !!(auth && auth.accountId),
+        deviceId: deviceId(),
+        localRevision: local.revision,
+        lastSyncAt: local.lastSyncAt,
+        lastError,
+        syncing,
+      };
+    }
+
+    async function synchronize(passphrase) {
+      if (syncing) throw new SyncError('busy', 'sync-already-running');
+      const auth = getAuth();
+      const endpoint = getEndpoint();
+      const secret = String(passphrase == null ? '' : passphrase);
+      if (!auth || !auth.accessToken || !auth.accountId) throw new SyncError('auth', 'sync-credentials-missing');
+      if (!endpoint) throw new SyncError('config', 'sync-endpoint-invalid');
+      if (secret.length < MIN_PASSPHRASE_LENGTH) throw new SyncError('auth', 'sync-passphrase-too-short');
+      syncing = true;
+      lastError = '';
+      notify({ type: 'sync-start' });
+      try {
+        const id = deviceId();
+        const previous = localState().document;
+        const local = documentFromState(currentState(), previous, id);
+        let candidate = local;
+        let conflicts = 0;
+        let written = null;
+        for (let attempt = 0; attempt <= 3; attempt++) {
+          const remote = await readRemote(endpoint, auth.accessToken);
+          if (remote.blob) {
+            const remoteDocument = await decryptEnvelope(remote.blob, secret, auth.accountId);
+            candidate = mergeDocuments(candidate, remoteDocument, id);
+          }
+          const blob = await encryptDocument(candidate, secret, auth.accountId);
+          try {
+            written = await putRemote(endpoint, auth.accessToken, remote.revision, blob);
+            break;
+          } catch (error) {
+            if (!(error instanceof SyncError) || error.code !== 'conflict' || attempt >= 3) throw error;
+            conflicts++;
+            const conflictBody = error.details || {};
+            if (conflictBody.blob) {
+              const conflictDocument = await decryptEnvelope(conflictBody.blob, secret, auth.accountId);
+              candidate = mergeDocuments(candidate, conflictDocument, id);
+            }
+          }
+        }
+        if (!written) throw new SyncError('conflict', 'sync-conflict-retry-exhausted', { conflicts });
+        const materialized = materializeDocument(candidate);
+        const oldState = currentState();
+        const appliedData = Store.applySyncState(materialized.data);
+        if (!appliedData.ok || appliedData.persisted === false) {
+          throw new SyncError('storage', 'sync-local-data-storage-failed');
+        }
+        const appliedPrompt = PromptSystem.applySyncState(materialized);
+        if (!appliedPrompt.ok || appliedPrompt.persisted === false) {
+          Store.applySyncState(oldState.data);
+          throw new SyncError('storage', 'sync-local-prompt-storage-failed');
+        }
+        const now = Date.now();
+        if (!writeValue(LOCAL_STATE_KEY, { version: 1, deviceId: id, revision: written.revision, document: candidate, lastSyncAt: now })) {
+          throw new SyncError('storage', 'sync-local-state-storage-failed');
+        }
+        lastError = '';
+        try { EventLog.record('sync.merge.complete', { ok: true, conflicts, revision: written.revision }, { immediate: true }); } catch (e) {}
+        return {
+          ok: true,
+          revision: written.revision,
+          conflicts,
+          persons: appliedData.persons,
+          identities: appliedData.identities,
+          feedback: materialized.feedbackState.events.length,
+          updatedAt: written.updatedAt || '',
+        };
+      } catch (error) {
+        lastError = error instanceof SyncError
+          ? String(error.code || 'sync-failed') + ':' + String(error.message || error.code || 'sync-failed')
+          : 'server:sync-failed';
+        try { EventLog.record('sync.merge.error', { ok: false, code: lastError }, { immediate: true }); } catch (e) {}
+        throw error instanceof SyncError ? error : new SyncError('server', 'sync-failed');
+      } finally {
+        syncing = false;
+        notify({ type: 'sync-finish' });
+      }
+    }
+
+    async function synchronizeWithRetry(passphrase) {
+      let last;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { return await synchronize(passphrase); }
+        catch (error) {
+          last = error;
+          if (!(error instanceof SyncError) || error.code !== 'offline' || attempt >= 1) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+      throw last || new SyncError('offline', 'sync-network-unavailable');
+    }
+
+    function setEndpoint(value) {
+      const endpoint = normalizeEndpoint(value);
+      if (!endpoint) return false;
+      const saved = writeValue(ENDPOINT_KEY, endpoint);
+      if (saved) notify({ type: 'endpoint' });
+      return saved;
+    }
+
+    function onChange(listener) {
+      if (typeof listener !== 'function') return () => {};
+      listeners.push(listener);
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      };
+    }
+
+    function localDocument() { return clone(localState().document); }
+
+    return {
+      status: syncStatus,
+      onChange,
+      normalizeEndpoint,
+      setEndpoint,
+      deviceId,
+      register,
+      login,
+      logout,
+      synchronize,
+      synchronizeWithRetry,
+      collectState: currentState,
+      buildDocument: (state, previous) => documentFromState(state || currentState(), previous || localState().document, deviceId()),
+      localDocument,
+      minPassphraseLength: MIN_PASSPHRASE_LENGTH,
+      format: FORMAT,
+      schema: SCHEMA,
     };
   })();
 
@@ -16065,11 +16926,12 @@
   }
 
   // ====================================================================
-  // 6.4 AI 智能屏蔽（本地 OpenAI 兼容网关 + 人工审核）
+  // 6.4 AI 智能屏蔽（provider 直连 + 人工审核）
   // --------------------------------------------------------------------
-  // 这一层只负责当前页文本采集、窄 JSON 请求和候选审核，不实现 provider
-  // router。多 provider、Key、重试、配额和 cooldown 由用户在本地网关中配置；
-  // 发送到网关的 payload 刻意不带身份键，模型结果也不能绕过现有确认框直接
+  // 这一层只负责当前页文本采集、窄 JSON 请求和候选审核；provider 地址、模型
+  // 和当前设备 Key 由用户在 userscript 设置中直接配置。正式扩展实验产物仍可
+  // 通过 service worker 接管同一个 direct 请求，但不改变 userscript 的交付边界。
+  // 发送到 AI 服务的 payload 刻意不带身份键，模型结果也不能绕过现有确认框直接
   // 写入名单。没有可靠身份的内容只显示为不可执行候选，不能伪造新身份前缀。
   // ====================================================================
   const AI = (() => {
@@ -16144,10 +17006,15 @@
 
     function status() {
       const rules = activeRules('');
+      const transport = aiTransportConfig();
       return {
         ...last,
         enabled: Store.getSetting('enabled') !== false && Store.getSetting('aiEnabled') === true,
-        gatewayConfigured: !!normalizeAIGatewayUrl(Store.getSetting('aiGatewayUrl')),
+        mode: transport.mode,
+        gatewayConfigured: false,
+        providerConfigured: !!transport.url,
+        directSupported: true,
+        keyConfigured: isFormalExtensionRuntime() ? false : !!readAIDirectKey(),
         ruleCount: rules.filter((rule) => rule.enabled).length,
         supported: !!(currentAdapter && typeof currentAdapter.collectAIRecords === 'function'),
         platform: currentAdapter && currentAdapter.id || '',
@@ -16167,11 +17034,13 @@
     }
 
     function configSignature() {
+      const transport = aiTransportConfig();
       return JSON.stringify({
         enabled: Store.getSetting('enabled') !== false,
         aiEnabled: Store.getSetting('aiEnabled') === true,
-        gatewayUrl: normalizeAIGatewayUrl(Store.getSetting('aiGatewayUrl')),
-        model: normalizeAIGatewayModel(Store.getSetting('aiGatewayModel')),
+        aiMode: transport.mode,
+        providerUrl: normalizeAIProviderUrl(Store.getSetting('aiProviderUrl')),
+        providerModel: normalizeAIModel(Store.getSetting('aiProviderModel')),
         factRetrievalMode: normalizeAIFactRetrievalMode(Store.getSetting('aiFactRetrievalMode')),
         factRetrievalUrl: normalizeAIFactRetrievalUrl(Store.getSetting('aiFactRetrievalUrl')),
         rules: sanitizeAIRules(Store.getSetting('aiRules')),
@@ -16483,13 +17352,12 @@
     }
 
     function persistentBridgeError() {
-      if (typeof window !== 'object' || !window || !window.__OB_EXTENSION_RUNTIME__
-        || window.__OB_EXTENSION_RUNTIME__.mode !== 'persistent-dev-extension') return '';
+      if (!isExtensionRuntime()) return '';
       const bridge = window.__OB_EXTENSION_RUNTIME__.bridge;
       if (!bridge || bridge.state === 'ready') return '';
       const reason = String(bridge.reason || bridge.state || 'unknown')
         .replace(/\s+/g, ' ').trim().slice(0, 48);
-      return '浏览器开发扩展桥接不可用（' + (reason || 'unknown') + '）。请在 chrome://extensions 刷新 OmniBlock development runtime 后刷新当前页面';
+      return '浏览器扩展桥接不可用（' + (reason || 'unknown') + '）。请在浏览器扩展管理页刷新 OmniBlock 后刷新当前页面';
     }
 
     function aiRequestErrorMessage(error) {
@@ -16502,11 +17370,11 @@
       if (reason === 'extension-request-failed') return '浏览器扩展请求失败（extension-request-failed）';
       if (reason === 'extension-empty-response') return '浏览器扩展未返回结果（extension-empty-response）';
       if (reason === 'response-too-large') return prefix + '响应过大，浏览器扩展已拒绝接收';
-      if (reason === 'Failed to fetch') return prefix + '服务连接失败（扩展请求已发出）';
+      if (reason === 'Failed to fetch') return prefix + '服务连接失败（跨源请求已发出）';
       return prefix + '服务请求失败';
     }
 
-    function requestJSON(url, body, timeout, label = 'AI 网关') {
+    function requestJSON(url, body, timeout, label = 'AI API', transport = 'direct') {
       let request = null;
       let settled = false;
       let timer = 0;
@@ -16536,20 +17404,26 @@
           finish(reject, new Error('GM_xmlhttpRequest unavailable'));
           return;
         }
+        const apiKey = transport === 'direct' && !isFormalExtensionRuntime() ? readAIDirectKey() : '';
+        if (transport === 'direct' && !isFormalExtensionRuntime() && apiKey.length < 8) {
+          finish(reject, new Error('direct-ai-key-missing'));
+          return;
+        }
         // GM_xmlhttpRequest normally invokes ontimeout, but an unavailable or
         // stale bridge can return without ever invoking any callback. Keep a
         // second timer in the userscript so that failure becomes observable.
-        if (label === 'AI 网关') {
-          timer = setTimeout(() => cancel('AI 网关请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);
-        } else {
-          timer = setTimeout(() => cancel(label + '请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);
-        }
+        timer = setTimeout(() => cancel(label + '请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);
         try {
+          const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+          // 正式 MV3 实验路径由 service worker 根据设备配置补 Key；普通
+          // Tampermonkey 则由 GM 存储直接读取，Key 只存在本次请求的内存变量。
+          if (transport === 'direct' && !isFormalExtensionRuntime()) headers.Authorization = 'Bearer ' + apiKey;
           request = GM_xmlhttpRequest({
             method: 'POST',
             url,
             data: JSON.stringify(body),
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            headers,
+            __obTransport: 'direct',
             timeout: timeoutMs,
             anonymous: true,
             onload(response) {
@@ -16565,7 +17439,7 @@
               }
               finish(resolve, payload);
             },
-            onerror(error) { if (!aborting) finish(reject, new Error(aiRequestErrorMessage(error, label === 'AI 网关' ? 'AI' : label))); },
+            onerror(error) { if (!aborting) finish(reject, new Error(aiRequestErrorMessage(error, label === 'AI API' ? 'AI' : label))); },
             ontimeout() { if (!aborting) finish(reject, new Error(label + '请求超时')); },
           });
         } catch (error) { finish(reject, error); }
@@ -16738,7 +17612,7 @@
     function parseJSONContent(content) {
       if (content && typeof content === 'object') return content;
       const text = String(content || '').trim();
-      if (!text) throw new Error('AI 网关没有返回分析内容');
+      if (!text) throw new Error('AI API 没有返回分析内容');
       const candidates = [text];
       const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
       if (fenced) candidates.unshift(fenced[1].trim());
@@ -16751,7 +17625,7 @@
       for (const candidate of candidates) {
         try { return JSON.parse(candidate); } catch (e) {}
       }
-      throw new Error('AI 网关返回无法解析为 JSON');
+      throw new Error('AI API 返回无法解析为 JSON');
     }
 
     function responseField(item, names) {
@@ -16844,7 +17718,7 @@
       const normalized = aliases[value] || value;
       if (AI_CONTEXT_SUFFICIENCY.has(normalized)) return normalized;
       const context = record && record.context ? AIContext.normalize(record.context, record) : null;
-      // 语境记录遇到旧网关/旧模型且没有返回扩展字段时，不能把本地已有
+      // 语境记录遇到旧 API/旧模型且没有返回扩展字段时，不能把本地已有
       // 标题误当成模型已经真正使用过的充分语境；按不足延期，避免兼容路径
       // 将“未理解新协议”升级成可执行的屏蔽候选。无语境记录仍保留旧协议。
       if (context && context.work.key && !AI_CONTEXT_SUFFICIENCY.has(normalized)) return 'insufficient';
@@ -17011,7 +17885,7 @@
         if (seen.has(signature)) continue;
         seen.add(signature);
         // ID 必须跨“评论晚到后再次分析”保持稳定；否则增量分析会把同一条
-        // 旧内容重新编号，既无法去重，也会让网关再次收到重复文本。
+        // 旧内容重新编号，既无法去重，也会让 API 再次收到重复文本。
         const id = 'ai-item-' + ruleHash('ai-record\x1f' + signature);
         const keyword = applyContentKeywordRule(adapter, { ...item, kind, text, keys });
         if (keyword.blocked) continue;
@@ -17434,7 +18308,7 @@
     async function runInternal(pageRule, source, options, runMeta) {
       const runId = Number(runMeta && runMeta.id) || 0;
       const runStartedAt = Number(runMeta && runMeta.startedAt) || monotonicNow();
-      const timing = { collectMs: 0, gatewayMs: 0 };
+      const timing = { collectMs: 0, providerMs: 0 };
       if (stopped) return { ok: false, error: 'AI 会话已结束' };
       if (Store.getSetting('enabled') === false || Store.getSetting('aiEnabled') !== true) {
         setLast({ state: 'disabled', source, deferred: 0, lastError: '请先启用 AI 智能屏蔽' });
@@ -17449,10 +18323,13 @@
         setLast({ state: 'idle', source, records: 0, candidates: 0, deferred: 0, lastError: '尚未设置 AI 规则' });
         return { ok: false, error: '尚未设置 AI 规则' };
       }
-      const gatewayUrl = normalizeAIGatewayUrl(Store.getSetting('aiGatewayUrl'));
-      if (!gatewayUrl) {
-        setLast({ state: 'error', source, deferred: 0, lastError: '只允许使用 loopback AI 网关地址' });
-        return { ok: false, error: '只允许使用 loopback AI 网关地址' };
+      const transport = aiTransportConfig();
+      if (!transport.url || (!isFormalExtensionRuntime() && readAIDirectKey().length < 8)) {
+        const error = !transport.url
+          ? '请先配置有效的 HTTPS AI API 地址'
+          : '请先设置当前设备的 AI API Key';
+        setLast({ state: 'error', source, deferred: 0, lastError: error });
+        return { ok: false, error };
       }
       const runGeneration = generation;
       if (options && options.loadDouyin && currentAdapter.id === 'douyin') {
@@ -17506,7 +18383,7 @@
       }
       const batches = splitAIBatches(pendingRecords);
       const batchCount = batches.length;
-      const model = normalizeAIGatewayModel(Store.getSetting('aiGatewayModel')) || 'omni-default';
+      const model = transport.model || 'omni-default';
       let analyzed = 0;
       let currentBatch = 0;
       let deferred = 0;
@@ -17579,14 +18456,14 @@
             records: batch,
           });
           const payload = makePayload(batch, prompt);
-          const request = requestJSON(gatewayUrl, payload, AI_REQUEST_TIMEOUT_MS);
+          const request = requestJSON(transport.url, payload, AI_REQUEST_TIMEOUT_MS, 'AI API', 'direct');
           activeRequest = request;
           let response;
-          const gatewayStartedAt = monotonicNow();
+          const providerStartedAt = monotonicNow();
           try {
             response = await request.promise;
           } finally {
-            timing.gatewayMs += elapsedMs(gatewayStartedAt);
+            timing.providerMs += elapsedMs(providerStartedAt);
             if (activeRequest === request) activeRequest = null;
           }
           if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
@@ -17610,14 +18487,14 @@
                 records: factRecords,
                 factEvidence,
               });
-              const verificationRequest = requestJSON(gatewayUrl, makePayload(factRecords, verificationPrompt), AI_REQUEST_TIMEOUT_MS);
+              const verificationRequest = requestJSON(transport.url, makePayload(factRecords, verificationPrompt), AI_REQUEST_TIMEOUT_MS, 'AI API', 'direct');
               activeRequest = verificationRequest;
               const verificationStartedAt = monotonicNow();
               let verificationResponse;
               try {
                 verificationResponse = await verificationRequest.promise;
               } finally {
-                timing.gatewayMs += elapsedMs(verificationStartedAt);
+                timing.providerMs += elapsedMs(verificationStartedAt);
                 if (activeRequest === verificationRequest) activeRequest = null;
               }
               if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
@@ -17650,7 +18527,7 @@
           newRecords: pendingRecords.length, analyzed: allRecords.length, batchIndex: batchCount, batchCount, batched: batchCount > 1,
           sampled: false, candidates: candidates.length, deferred, lastError: '' });
         EventLog.record('ai.analysis.finish', {
-          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, gatewayMs: timing.gatewayMs,
+          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, providerMs: timing.providerMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
           analyzedCount: allRecords.length, newAnalyzedCount: analyzed,
           batchCount, candidateCount: candidates.length, deferred, sampled: false,
@@ -17672,7 +18549,7 @@
           batchIndex: currentBatch, batchCount, batched: batchCount > 1, sampled: false,
           candidates: 0, deferred, lastError: message });
         EventLog.record('ai.analysis.error', {
-          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, gatewayMs: timing.gatewayMs,
+          runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, providerMs: timing.providerMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
           analyzedCount: analyzedBefore + analyzed, newAnalyzedCount: analyzed,
           batchIndex: currentBatch, batchCount, deferred,
@@ -17895,8 +18772,13 @@
       closeReview: () => closeReview('api'),
       context: AIContext,
       scopedBlocks: ScopedBlocks,
-      validateGatewayUrl: (value) => !!normalizeAIGatewayUrl(value),
-      gatewayDefaultUrl: AI_GATEWAY_DEFAULT_URL,
+      normalizeTransportMode: normalizeAITransportMode,
+      validateProviderUrl: (value) => !!normalizeAIProviderUrl(value),
+      providerSupported: () => true,
+      providerDefaultUrl: '',
+      apiKeyConfigured: () => isFormalExtensionRuntime() ? false : readAIDirectKey().length >= 8,
+      setApiKey: (value) => writeAIDirectKey(value),
+      clearApiKey: () => writeAIDirectKey(''),
       validateFactRetrievalUrl: (value) => !!normalizeAIFactRetrievalUrl(value),
       factRetrievalDefaultUrl: AI_FACT_RETRIEVAL_DEFAULT_URL,
       prompt: PromptSystem,
@@ -18090,12 +18972,13 @@
     root.innerHTML = `
       <div data-ob-ai-surface="1">
         <h3 style="margin:0 0 8px;font-size:15px">AI 智能屏蔽</h3>
-        <p class="ob-ai-intro">AI 默认关闭。启用后，当前支持页面会按预设规则分析已观察到的评论/弹幕，并弹出多选审核；抖音点击“分析本页”会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。事实核查与屏蔽决策分开：缺少引用不等于虚假，当前没有外部检索结果时，未核查或语境不足的事实不会单独进入屏蔽候选。AI 只把截短后的正文发送到你配置的 loopback 网关；API Key、多个 provider、自动切换、限流和记忆由本地网关管理，本插件不保存 API Key。网关仍需先运行仓库根目录的 <code>启动网关.cmd</code>。</p>
+        <p class="ob-ai-intro">AI 默认关闭。启用后，当前支持页面会按预设规则分析已观察到的评论/弹幕，并弹出多选审核；抖音点击“分析本页”会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。事实核查与屏蔽决策分开：缺少引用不等于虚假，当前没有外部检索结果时，未核查或语境不足的事实不会单独进入屏蔽候选。AI 只通过你填写的 OpenAI-compatible API 直接请求；API Key 只保存在当前设备的 Tampermonkey GM 存储，不进入页面对象、名单导出、提示词导出或账户同步。首次访问新的 API 域名时，Tampermonkey 可能显示跨源权限提示。</p>
         <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（按预设规则自动分析当前页）</label>
-        <div class="ob-ai-gateway">
-          <label>本地网关地址<input id="ob-ai-url" type="url" placeholder="http://127.0.0.1:4000/v1/chat/completions"></label>
-          <label>路由/模型名<input id="ob-ai-model" type="text" placeholder="omni-default"></label>
-          <button id="ob-ai-save" class="ob-ai-save" type="button">保存连接设置</button>
+        <div class="ob-ai-provider">
+          <label>AI API 地址<input id="ob-ai-provider-url" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1/chat/completions"></label>
+          <label>模型名<input id="ob-ai-provider-model" type="text" autocomplete="off" placeholder="填写 provider 的模型名"></label>
+          <div class="ob-ai-key-row"><span id="ob-ai-key-status" class="ob-ai-key-status" aria-live="polite"></span><button id="ob-ai-set-key" class="ob-ai-save" type="button">设置/更换本机 Key</button><button id="ob-ai-clear-key" class="ob-ai-key-clear" type="button">清除 Key</button></div>
+          <button id="ob-ai-save" class="ob-ai-save" type="button">保存 API 设置</button>
         </div>
         <div class="ob-ai-fact">
           <label>事实核查模式<select id="ob-ai-fact-mode"><option value="off">关闭（默认）</option><option value="shadow">Shadow（只记录，不影响候选）</option><option value="canary">Canary（证据可进入人工审核候选）</option></select></label>
@@ -18108,7 +18991,7 @@
         <div id="ob-ai-rule-list" class="ob-ai-rule-list"></div>
         <div class="ob-ai-prompt-system">
           <h4>提示词系统（仅本地保存）</h4>
-          <p class="ob-ai-prompt-intro">这里保存作者的筛选目标和边界；明确确认/拒绝的反馈会进入本地账本，关闭审核只记为未决，不会自动生成永久屏蔽规则。缺少来源、模型未查证或单句断言不等于虚假；要屏蔽事实性错误，需要明确矛盾依据。导出/导入使用结构化 JSON，正文示例只按需取少量相关项发送给 loopback 网关。</p>
+          <p class="ob-ai-prompt-intro">这里保存作者的筛选目标和边界；明确确认/拒绝的反馈会进入本地账本，关闭审核只记为未决，不会自动生成永久屏蔽规则。缺少来源、模型未查证或单句断言不等于虚假；要屏蔽事实性错误，需要明确矛盾依据。导出/导入使用结构化 JSON，正文示例只按需取少量相关项发送到当前 AI 服务。</p>
           <label>判断目标<textarea id="ob-ai-profile-objective" maxlength="500" placeholder="例如：识别需要用户确认屏蔽的评论和弹幕"></textarea></label>
           <div class="ob-ai-profile-grid">
             <label>需要屏蔽的边界<textarea id="ob-ai-profile-block" maxlength="2400" placeholder="每行一条，例如：持续人身攻击"></textarea></label>
@@ -18131,7 +19014,7 @@
 
     const query = (selector) => root.querySelector(selector);
     const statusText = (status) => {
-      if (!status || !status.enabled) return 'AI 当前关闭；不会自动请求本地网关。';
+      if (!status || !status.enabled) return 'AI 当前关闭；不会自动请求 AI 服务。';
       const batchCount = Number(status.batchCount) || 0;
       const newRecordsHint = status.source === 'auto' && status.newRecords != null
         ? '（本轮新增 ' + (Number(status.newRecords) || 0) + ' 条）' : '';
@@ -18156,29 +19039,31 @@
         + (Number(status.deferred) > 0 ? ' 其中 ' + Number(status.deferred) + ' 条事实/语境内容尚未核查，已保留未屏蔽。' : '')
         + newRecordsHint + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '');
       if (status.state === 'empty') return status.lastError || '当前页没有可分析的已观察内容。';
-      if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || '本地网关不可用');
-      if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求本地网关。';
+      if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || 'AI API 不可用');
+      if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求 AI 服务。';
       if (status.lastError) return status.lastError;
       return '启用后会按预设规则分析当前页，结果必须人工确认。';
     };
-    const gatewayNote = (status) => {
-      if (!status || !status.gatewayConfigured) return '尚未配置有效的 loopback 网关。';
-      if (status.state !== 'error') return '当前仅允许 loopback 网关。';
+    const providerNote = (status) => {
+      if (!status || !status.providerConfigured) return '尚未配置有效的 AI API 地址。';
+      if (!status.keyConfigured && !isFormalExtensionRuntime()) return 'API 地址已保存，但当前设备还没有 Key。';
+      if (status.state !== 'error') return '当前直接使用已配置的 AI API；Key 不会进入页面数据、导出或同步包。';
       const error = String(status.lastError || '');
       if (error.includes('浏览器开发扩展桥接不可用')) {
-        return 'loopback 地址校验已通过；扩展桥未就绪，请在 chrome://extensions 刷新 OmniBlock development runtime 后刷新当前页面。';
+        return 'AI API 地址已校验；扩展实验桥未就绪，请刷新扩展后再刷新当前页面。';
       }
       if (error.includes('AI 请求被浏览器扩展拒绝')) {
-        return 'loopback 地址校验已通过；扩展桥已就绪，但 AI 请求体未通过桥接协议校验。';
+        return '扩展桥已就绪，但 AI 请求体未通过桥接协议校验。';
       }
       if (error.includes('浏览器扩展请求失败') || error.includes('浏览器扩展未返回')) {
-        return 'loopback 地址校验已通过；扩展桥未完成请求回调，请查看 chrome://extensions 的扩展错误。';
+        return '扩展桥已就绪，但 AI 请求未完成回调，请查看扩展管理页的错误信息。';
       }
-      if (error.includes('AI 网关 HTTP')) return '网关已收到请求；请检查网关和上游响应。';
-      if (error.includes('AI 网关返回')) return '网关已返回内容，但格式不符合 OmniBlock AI 协议。';
-      if (error.includes('AI 网关请求超时')) return '请求未在客户端预算内完成；请查看网关运行日志。';
-      if (error.includes('AI 网关连接失败')) return '扩展桥已发出请求，但本地网关连接失败。';
-      return 'loopback 地址已校验；请检查本地网关运行状态。';
+      if (error.includes('AI API HTTP')) return 'AI API 已收到请求；请检查 provider 返回的状态。';
+      if (error.includes('AI API 返回')) return 'AI API 已返回内容，但格式不符合 OmniBlock 协议。';
+      if (error.includes('AI API 请求超时')) return '请求未在客户端预算内完成；请检查 AI API 是否可访问。';
+      if (error.includes('AI API 连接失败')) return 'AI API 连接失败，请检查网络、域名权限和 provider 地址。';
+      if (error.includes('direct-ai-key')) return '当前设备缺少 AI API Key，请使用上面的按钮设置。';
+      return '请检查 AI API 地址、模型名、域名权限和当前设备 Key。';
     };
     const refreshStatus = () => {
       const statusEl = query('#ob-ai-status');
@@ -18189,7 +19074,7 @@
       const backgroundText = (Number(background.total) || 0) > 0
         ? ' 后台 UID：' + (Number(background.completed) || 0) + '/' + (Number(background.total) || 0)
           + ((Number(background.paused) || 0) > 0 ? '（页面不可见，已暂停）' : '（进行中）') : '';
-      statusEl.textContent = statusText(status) + backgroundText + ' ' + gatewayNote(status);
+      statusEl.textContent = statusText(status) + backgroundText + ' ' + providerNote(status);
       const factStatus = query('#ob-ai-fact-status');
       if (factStatus) {
         const fact = status.factRetrieval || {};
@@ -18377,8 +19262,9 @@
     };
 
     const enabled = query('#ob-ai-enabled');
-    const urlInput = query('#ob-ai-url');
-    const modelInput = query('#ob-ai-model');
+    const providerUrlInput = query('#ob-ai-provider-url');
+    const providerModelInput = query('#ob-ai-provider-model');
+    const keyStatus = query('#ob-ai-key-status');
     const factModeInput = query('#ob-ai-fact-mode');
     const factUrlInput = query('#ob-ai-fact-url');
     const ruleInput = query('#ob-ai-rule');
@@ -18389,8 +19275,14 @@
     const profileAllow = query('#ob-ai-profile-allow');
     const settings = Store.settings();
     enabled.checked = settings.aiEnabled === true;
-    urlInput.value = settings.aiGatewayUrl || AI.gatewayDefaultUrl;
-    modelInput.value = settings.aiGatewayModel || '';
+    if (providerUrlInput) providerUrlInput.value = settings.aiProviderUrl || '';
+    if (providerModelInput) providerModelInput.value = settings.aiProviderModel || '';
+    const refreshKeyStatus = () => {
+      if (!keyStatus) return;
+      keyStatus.textContent = AI.apiKeyConfigured() ? '本机 Key 已设置（不会同步）' : '尚未设置本机 Key';
+      keyStatus.dataset.configured = AI.apiKeyConfigured() ? '1' : '0';
+    };
+    refreshKeyStatus();
     if (factModeInput) factModeInput.value = normalizeAIFactRetrievalMode(settings.aiFactRetrievalMode);
     if (factUrlInput) factUrlInput.value = settings.aiFactRetrievalUrl || AI.factRetrievalDefaultUrl;
     const douyinAutoload = !!(aiAdapter && aiAdapter.id === 'douyin');
@@ -18407,16 +19299,32 @@
       refreshStatus();
     };
     query('#ob-ai-save').onclick = () => {
-      const url = String(urlInput.value || '').trim();
-      if (!AI.validateGatewayUrl(url)) {
+      const providerUrl = String(providerUrlInput && providerUrlInput.value || '').trim();
+      if (!AI.validateProviderUrl(providerUrl)) {
         const statusEl = query('#ob-ai-status');
-        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = '网关地址只允许使用 loopback（http://localhost、127.0.0.1 或 ::1）。'; }
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = 'AI API 地址只允许 HTTPS（本机测试可使用 loopback HTTP），且不能包含账号、密码、查询参数或片段。'; }
         return;
       }
-      Store.setSetting('aiGatewayUrl', url || AI.gatewayDefaultUrl);
-      Store.setSetting('aiGatewayModel', normalizeAIGatewayModel(modelInput.value));
-      EventLog.record('settings.ai-gateway.save', { modelPresent: !!normalizeAIGatewayModel(modelInput.value) }, { immediate: true });
-      refreshStatus(); showToast('AI 本地网关设置已保存');
+      Store.setSetting('aiMode', 'direct');
+      Store.setSetting('aiProviderUrl', providerUrl);
+      Store.setSetting('aiProviderModel', normalizeAIModel(providerModelInput && providerModelInput.value));
+      EventLog.record('settings.ai-provider.save', { modelPresent: !!normalizeAIModel(providerModelInput && providerModelInput.value), keyConfigured: AI.apiKeyConfigured() }, { immediate: true });
+      refreshStatus(); showToast('AI API 设置已保存');
+    };
+    query('#ob-ai-set-key').onclick = () => {
+      if (typeof window.prompt !== 'function') { showToast('当前浏览器不支持安全输入 API Key'); return; }
+      const value = window.prompt('请输入当前设备的 AI API Key。它只写入本机 Tampermonkey 存储，不会进入页面数据或同步包：', '');
+      if (value === null) return;
+      const key = normalizeAIDirectKey(value);
+      if (key.length < 8) { showToast('API Key 至少需要 8 个字符；未保存'); return; }
+      if (!AI.setApiKey(key)) { showToast('API Key 保存失败'); return; }
+      refreshKeyStatus(); refreshStatus(); showToast('本机 API Key 已保存');
+    };
+    query('#ob-ai-clear-key').onclick = () => {
+      if (!AI.apiKeyConfigured()) { showToast('当前没有已保存的本机 Key'); return; }
+      if (typeof window.confirm === 'function' && !window.confirm('清除当前设备的 AI API Key？之后需要重新输入才能分析。')) return;
+      if (!AI.clearApiKey()) { showToast('本机 API Key 清除失败'); return; }
+      refreshKeyStatus(); refreshStatus(); showToast('本机 API Key 已清除');
     };
     const saveFactRetrieval = () => {
       const url = String(factUrlInput && factUrlInput.value || '').trim();
@@ -18583,6 +19491,22 @@
         <div id="ob-backup-status" style="color:#999;font-size:12px;margin-top:5px"></div>
         <div id="ob-storage-status" style="color:#999;font-size:12px;margin-top:5px"></div>
 
+        <h3>账户同步（客户端加密）</h3>
+        <p class="ob-sync-intro">同步名单、设置、AI 提示词和反馈。只有你点击“立即同步（合并）”时才访问同步服务；服务器只保存客户端加密文档，不能读取正文。账户密码和同步口令只在本次操作的内存中使用，API Key、登录令牌、运行日志、本地快照和浏览器登录态不会上传。首次填写新的服务域名时，Tampermonkey 可能显示跨源权限提示；不要把密码或同步口令写进导出文件。</p>
+        <div class="ob-sync-form">
+          <label>同步服务地址<input id="ob-sync-endpoint" type="url" inputmode="url" autocomplete="url" placeholder="https://sync.example.invalid"></label>
+          <label>账户名<input id="ob-sync-username" type="text" inputmode="email" autocomplete="username" placeholder="例如 omniblock-user"></label>
+          <label>账户密码<input id="ob-sync-password" type="password" autocomplete="current-password"></label>
+          <label>同步口令<input id="ob-sync-passphrase" type="password" autocomplete="new-password" placeholder="至少 8 个字符；每台设备输入同一口令"></label>
+          <div class="ob-sync-actions">
+            <button id="ob-sync-register" type="button">注册账户</button>
+            <button id="ob-sync-login" type="button">登录</button>
+            <button id="ob-sync-now" class="ob-sync-primary" type="button">立即同步（合并）</button>
+            <button id="ob-sync-logout" type="button">退出本机账户</button>
+          </div>
+          <div id="ob-sync-status" class="ob-sync-status" aria-live="polite"></div>
+        </div>
+
         <h3>更新</h3>
         <div style="display:flex;gap:8px;align-items:center">
           <button id="ob-update" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">检查更新</button>
@@ -18590,7 +19514,7 @@
         </div>
         <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
 
-        <p style="color:#999;font-size:12px;margin-top:14px">名单、浏览数据、自动快照和 AI 规则只保存在本机，不上传。启用 AI 后，当前页截短后的评论/弹幕正文会发送到你填写的 loopback 网关；浏览器配置整体丢失时仍请使用导出 JSON。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处“模拟操作”，已带随机延迟/连续上限等安全阀。</p>
+        <p style="color:#999;font-size:12px;margin-top:14px">名单、浏览数据、AI 规则和反馈默认保存在本机；同步必须由你显式点击执行，且采用客户端加密合并。启用 AI 后，当前页截短后的评论/弹幕正文会发送到你填写的 AI API；API Key 只保存在当前设备的 Tampermonkey GM 存储。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处“模拟操作”，已带随机延迟/连续上限等安全阀。</p>
       </div>`;
     document.body.appendChild(panel);
     FloatingDock.hold('settings');
@@ -18600,8 +19524,9 @@
       gear.setAttribute('aria-expanded', 'true');
     }
     let stopLogWatch = () => {};
+    let stopSyncWatch = () => {};
     const closePanel = () => {
-      stopLogWatch(); panel.remove(); FloatingDock.release('settings');
+      stopLogWatch(); stopSyncWatch(); panel.remove(); FloatingDock.release('settings');
       const currentGear = document.getElementById('ob-gear');
       if (currentGear) currentGear.setAttribute('aria-expanded', 'false');
       EventLog.record('ui.settings.close', {}, { immediate: true });
@@ -18782,6 +19707,145 @@
       eventsEl.textContent = lines.join('\n');
     }
 
+    const syncErrorText = (error) => {
+      const code = String(error && error.code || '');
+      const messages = {
+        'config:sync-endpoint-invalid': '同步服务地址无效：只允许 HTTPS；本机测试可使用 loopback HTTP，且不能带账号、密码、查询参数或片段。',
+        'auth:sync-registration-invalid': '注册信息无效：账户名需为 3–64 位小写字母、数字、点、下划线或短横线，密码至少 8 个字符。',
+        'auth:sync-registration-response-invalid': '同步服务的注册响应无效：没有返回账户标识，未保存本机账户状态。',
+        'auth:sync-login-invalid': '请输入账户名和账户密码。',
+        'auth:sync-login-response-invalid': '同步服务的登录响应无效：没有返回完整账户令牌，未保存本机登录状态。',
+        'auth:sync-auth-failed': '账户认证失败，请检查账户密码，或重新登录。',
+        'auth:sync-credentials-missing': '请先登录同步账户。',
+        'auth:sync-passphrase-too-short': '同步口令至少需要 8 个字符。',
+        'crypto:webcrypto-unavailable': '当前页面没有可用的 Web Crypto；请使用 HTTPS 页面或更新浏览器。',
+        'crypto:sync-decrypt-failed': '同步文档解密失败：两台设备必须使用同一个同步口令。',
+        'offline:gm-xmlhttp-request-unavailable': 'Tampermonkey 未提供跨源请求能力，请确认脚本已启用 GM_xmlhttpRequest。',
+        'offline:sync-network-unavailable': '无法连接同步服务，请检查网络、服务地址和 Tampermonkey 域名权限。',
+        'offline:sync-request-timeout': '同步服务请求超时，请稍后重试。',
+        'server:sync-server-error': '同步服务返回错误，请检查服务状态。',
+        'server:sync-remote-state-invalid': '同步服务返回的数据格式无效，未应用本机状态。',
+        'storage:sync-local-data-storage-failed': '同步结果已在服务端处理，但本机名单未确认落盘；请先导出本机备份后重试。',
+        'storage:sync-local-prompt-storage-failed': '同步结果未完整写入本机提示词状态；本机名单已回退，请重试。',
+        'storage:sync-local-state-storage-failed': '同步结果已写入服务端和本机状态，但本机同步游标保存失败；下次同步会重新合并。',
+        'busy:sync-already-running': '同步正在进行，请等待当前操作完成。',
+      };
+      const message = String(error && error.message || '');
+      return messages[code + ':' + message]
+        || messages[code]
+        || messages[message]
+        || (code ? '同步失败（' + code + '）。' : '同步失败，请稍后重试。');
+    };
+
+    const refreshSync = () => {
+      const statusEl = panel.querySelector('#ob-sync-status');
+      if (!statusEl) return;
+      const status = AccountSync.status();
+      const endpointInput = panel.querySelector('#ob-sync-endpoint');
+      const usernameInput = panel.querySelector('#ob-sync-username');
+      if (endpointInput && !endpointInput.value && status.endpoint) endpointInput.value = status.endpoint;
+      if (usernameInput && !usernameInput.value && status.username) usernameInput.value = status.username;
+      if (status.syncing) {
+        statusEl.dataset.state = 'loading';
+        statusEl.textContent = '正在读取、解密并合并同步文档；不会自动写入平台。';
+      } else if (status.lastError) {
+        statusEl.dataset.state = 'error';
+        const serialized = String(status.lastError);
+        const separator = serialized.indexOf(':');
+        const error = separator >= 0
+          ? { code: serialized.slice(0, separator), message: serialized.slice(separator + 1) }
+          : { code: serialized, message: serialized };
+        statusEl.textContent = '上次同步未完成：' + syncErrorText(error);
+      } else if (!status.loggedIn) {
+        statusEl.dataset.state = 'idle';
+        statusEl.textContent = status.endpoint ? '尚未登录；同步服务地址已保存在本机。' : '尚未配置同步服务或登录账户。';
+      } else {
+        statusEl.dataset.state = 'ready';
+        const device = status.deviceId ? status.deviceId.slice(-8) : 'unknown';
+        const last = status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : '尚未同步';
+        statusEl.textContent = '已登录：' + status.username + ' · 本机设备 …' + device
+          + ' · 本地游标 ' + status.localRevision + ' · 最近同步：' + last + '。服务器只保存密文。';
+      }
+      const syncing = !!status.syncing;
+      for (const selector of ['#ob-sync-register', '#ob-sync-login', '#ob-sync-now']) {
+        const button = panel.querySelector(selector);
+        if (button) button.disabled = syncing;
+      }
+    };
+
+    const syncEndpointInput = panel.querySelector('#ob-sync-endpoint');
+    const syncUsernameInput = panel.querySelector('#ob-sync-username');
+    const syncPasswordInput = panel.querySelector('#ob-sync-password');
+    const syncPassphraseInput = panel.querySelector('#ob-sync-passphrase');
+    const syncRegister = panel.querySelector('#ob-sync-register');
+    const syncLogin = panel.querySelector('#ob-sync-login');
+    const syncNow = panel.querySelector('#ob-sync-now');
+    const syncLogout = panel.querySelector('#ob-sync-logout');
+    syncRegister.onclick = async () => {
+      const endpoint = String(syncEndpointInput.value || '').trim();
+      const username = String(syncUsernameInput.value || '').trim();
+      const password = String(syncPasswordInput.value || '');
+      try {
+        const result = await AccountSync.register({ endpoint, username, password });
+        showToast('账户已注册：' + result.username + '；请继续点击“登录”');
+        refreshSync();
+      } catch (error) {
+        EventLog.record('sync.account.register', { ok: false, code: String(error && error.code || 'error') }, { immediate: true });
+        const statusEl = panel.querySelector('#ob-sync-status');
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = syncErrorText(error); }
+      } finally { syncPasswordInput.value = ''; }
+    };
+    syncLogin.onclick = async () => {
+      const endpoint = String(syncEndpointInput.value || '').trim();
+      const username = String(syncUsernameInput.value || '').trim();
+      const password = String(syncPasswordInput.value || '');
+      try {
+        const result = await AccountSync.login({ endpoint, username, password });
+        syncUsernameInput.value = result.username;
+        showToast('已登录同步账户');
+        refreshSync();
+      } catch (error) {
+        EventLog.record('sync.account.login', { ok: false, code: String(error && error.code || 'error') }, { immediate: true });
+        const statusEl = panel.querySelector('#ob-sync-status');
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = syncErrorText(error); }
+      } finally { syncPasswordInput.value = ''; }
+    };
+    syncNow.onclick = async () => {
+      const endpoint = String(syncEndpointInput.value || '').trim();
+      const passphrase = String(syncPassphraseInput.value || '');
+      if (!AccountSync.status().loggedIn) {
+        showToast('请先登录同步账户');
+        syncPassphraseInput.value = '';
+        return;
+      }
+      if (!AccountSync.setEndpoint(endpoint)) {
+        const statusEl = panel.querySelector('#ob-sync-status');
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = syncErrorText({ code: 'config', message: 'sync-endpoint-invalid' }); }
+        syncPassphraseInput.value = '';
+        return;
+      }
+      try {
+        const result = await AccountSync.synchronizeWithRetry(passphrase);
+        refresh(); refreshQuickBlock(); refreshBulkBlock();
+        if (currentScanner) currentScanner.schedule();
+        showToast('同步完成：' + result.identities + ' 个身份，合并 ' + result.conflicts + ' 次并发冲突');
+      } catch (error) {
+        const statusEl = panel.querySelector('#ob-sync-status');
+        if (statusEl) { statusEl.dataset.state = 'error'; statusEl.textContent = syncErrorText(error); }
+      } finally {
+        syncPassphraseInput.value = '';
+        refreshSync();
+      }
+    };
+    syncLogout.onclick = () => {
+      if (!AccountSync.status().loggedIn) { showToast('当前没有登录账户'); return; }
+      if (typeof window.confirm === 'function' && !window.confirm('退出本机同步账户？云端数据不会删除，本机名单也不会删除。')) return;
+      AccountSync.logout();
+      syncPasswordInput.value = '';
+      syncPassphraseInput.value = '';
+      refreshSync();
+    };
+    stopSyncWatch = AccountSync.onChange(refreshSync);
     stopLogWatch = EventLog.onChange(refreshLogs);
     panel.querySelector('#ob-log-refresh').onclick = refreshLogs;
     panel.querySelector('#ob-log-day').onchange = refreshLogs;
@@ -18900,6 +19964,7 @@
       if (mode) mode.checked = true;
       refreshAutoRules();
       refreshLogs();
+      refreshSync();
     }
     refresh();
 
@@ -19042,6 +20107,7 @@
     openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,
     ai: AI,
     promptSystem: PromptSystem,
+    sync: AccountSync,
     logs: EventLog,
     danmakuRules: DanmakuRules,
     danmakuExemptions: DanmakuExemptions,

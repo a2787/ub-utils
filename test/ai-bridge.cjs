@@ -18,13 +18,13 @@ if (userscript === source) {
   process.exit(1);
 }
 
-const gatewayUrl = 'http://127.0.0.1:4000/v1/chat/completions';
+const providerUrl = 'http://127.0.0.1:4000/v1/chat/completions';
 const shim = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${gatewayUrl}', aiGatewayModel: 'omni-default', aiRules: []
+    aiEnabled: true, aiProviderUrl: '${providerUrl}', aiProviderModel: 'omni-default', aiRules: []
   }
 }) };
 window.GM_getValue = (key, fallback) => (key in window.__gm ? window.__gm[key] : fallback);
@@ -80,15 +80,15 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 
   const lastError = String(result.status && result.status.lastError || '');
   const bridgeFastFailed = result.status && result.status.state === 'error'
-    && /浏览器开发扩展桥接不可用/.test(lastError)
+    && /浏览器.*扩展桥接不可用/.test(lastError)
     && !/AI 网关请求超时/.test(lastError)
     && result.elapsedMs < 1000;
   if (!bridgeFastFailed) {
     console.error('FAIL: 持久化开发扩展桥接未快速失败：' + JSON.stringify({ result, pageErrors }));
     process.exit(1);
   }
-  if (!/loopback 地址校验已通过/.test(statusText || '') || /当前仅允许 loopback 网关/.test(statusText || '')) {
-    console.error('FAIL: 有效 loopback 的失败文案仍混入地址误导：' + JSON.stringify({ statusText, result }));
+  if (/当前仅允许 loopback 网关/.test(statusText || '') || /AI 网关请求/.test(statusText || '')) {
+    console.error('FAIL: 开发桥失败文案仍混入过时的单一传输误导：' + JSON.stringify({ statusText, result }));
     process.exit(1);
   }
   if (pageErrors.length) {

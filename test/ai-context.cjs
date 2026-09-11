@@ -9,12 +9,12 @@ const fs = require('fs');
 const path = require('path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {
   enabled: true, hideMode: 'collapse', showHoverButton: false, showQuickBlock: false,
-  showBulkBlock: false, aiEnabled: false, aiRules: []
+  showBulkBlock: false, aiEnabled: false, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default', aiRules: []
 } }) };
 window.GM_getValue = (key, fallback) => key in window.__gm ? window.__gm[key] : fallback;
 window.GM_setValue = (key, value) => { window.__gm[key] = value; };
@@ -74,7 +74,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) report.console.push(message.text()); });
   page.on('pageerror', (error) => report.pageErrors.push(String(error && error.stack || error)));
   await page.route('**/*', async (route) => {
-    if (route.request().url() === GATEWAY_URL) {
+    if (route.request().url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
       let input = {};
@@ -122,7 +122,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const hasOrdinalOutbound = !!(result.outbound && result.outbound.workId === 'w1' && result.outbound.itemId === 'i2' && result.outbound.parentId === 'r3');
   if (hasWork) report.pass.push('CTX-1 B站作品标题/简介进入独立 WorkContext'); else report.fail.push('CTX-1 缺少 B站作品语境：' + JSON.stringify(result.content));
   if (hasReplyParent) report.pass.push('CTX-2 回复只关联真实 root parent，不使用 DOM 邻近文本'); else report.fail.push('CTX-2 回复 parent 关系缺失：' + JSON.stringify({ reply: result.reply, summary: result.summary }));
-  if (noPrivateOutbound && hasOrdinalOutbound) report.pass.push('CTX-3 网关上下文只使用 ordinal ID，未泄露平台身份/URL'); else report.fail.push('CTX-3 出站上下文脱敏或序号化失败：' + JSON.stringify(result.outbound));
+  if (noPrivateOutbound && hasOrdinalOutbound) report.pass.push('CTX-3 provider 请求上下文只使用 ordinal ID，未泄露平台身份/URL'); else report.fail.push('CTX-3 出站上下文脱敏或序号化失败：' + JSON.stringify(result.outbound));
 
   const switched = await page.evaluate(() => {
     const title = document.querySelector('h1.video-title');

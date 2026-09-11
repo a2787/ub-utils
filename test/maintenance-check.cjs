@@ -1,7 +1,8 @@
 /*
  * OmniBlock 维护闭环：默认由维护者运行，不依赖用户 Tampermonkey 已安装版本。
- * 它会顺序执行静态门禁、AI 网关 mock、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和
- * 隔离真站探针。加 --dedicated 后，先同步并追加当前用户授权的专用 Chrome 登录态只读探针；
+ * 它会顺序执行静态门禁、userscript 直连/同步产品回归、通用/平台回归、作品级屏蔽回归、性能边界、微博虚拟列表回放和
+ * 隔离真站探针。上一轮 MV3/网关检查仍保留在仓库中，但不再是当前交付链；
+ * 加 --dedicated 后，追加当前用户授权的专用 Chrome 登录态只读探针；
  * --dedicated-only 则只保留本地门禁和专用链路，避免匿名探针阻断混入当前登录态结论。
  * 运行：node test/maintenance-check.cjs [--dedicated|--dedicated-only]
  */
@@ -27,7 +28,8 @@ for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
   'test/dev-browser.cjs', 'test/dedicated-browser.cjs', 'test/dedicated-browser-probe.cjs',
   'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-prompt-system.cjs', 'test/ai-prompt-eval.cjs', 'test/ai-platforms.cjs', 'test/content-ai.cjs', 'test/ai-autoload.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
-  'test/content-coverage.cjs', 'test/probe-hygiene.cjs']) {
+  'test/content-coverage.cjs', 'test/probe-hygiene.cjs', 'test/product-extension.cjs', 'test/userscript-product.cjs', 'test/sync.cjs', 'test/sync-server.cjs',
+  'sync-server/server.py', 'sync-server/README.md']) {
   if (!privacyFiles.includes(extra)) privacyFiles.push(extra);
 }
 const privacyPatterns = [
@@ -45,7 +47,6 @@ for (const relative of privacyFiles) {
 
 const checks = [
   { label: 'userscript syntax', command: process.execPath, args: ['--check', 'omniblock.user.js'] },
-  { label: 'AI gateway renderer syntax', command: process.execPath, args: ['--check', 'gateway/scripts/render-config.cjs'] },
   { label: 'documentation governance', command: process.execPath, args: ['test/docs-check.cjs'] },
   { label: 'comment manager syntax', command: process.execPath, args: ['--check', 'test/comment-manager.cjs'] },
   { label: 'automatic danmaku rules syntax', command: process.execPath, args: ['--check', 'test/danmaku-auto.cjs'] },
@@ -56,6 +57,7 @@ const checks = [
   { label: 'AI platform regression syntax', command: process.execPath, args: ['--check', 'test/ai-platforms.cjs'] },
   { label: 'content AI regression syntax', command: process.execPath, args: ['--check', 'test/content-ai.cjs'] },
   { label: 'multi-platform content coverage syntax', command: process.execPath, args: ['--check', 'test/content-coverage.cjs'] },
+  { label: 'userscript product regression syntax', command: process.execPath, args: ['--check', 'test/userscript-product.cjs'] },
   { label: 'AI Douyin autoload syntax', command: process.execPath, args: ['--check', 'test/ai-autoload.cjs'] },
   { label: 'generic UI/state', command: process.execPath, args: ['test/run.cjs'] },
   { label: 'core state', command: process.execPath, args: ['test/state.cjs'] },
@@ -64,7 +66,9 @@ const checks = [
   { label: 'unified comment manager', command: process.execPath, args: ['test/comment-manager.cjs'] },
   { label: 'work block', command: process.execPath, args: ['test/work-block.cjs'] },
   { label: 'performance boundaries', command: process.execPath, args: ['test/performance.cjs'] },
-  { label: 'persistent development extension', command: process.execPath, args: ['test/dev-extension.cjs'] },
+  { label: 'userscript product regression', command: process.execPath, args: ['test/userscript-product.cjs'] },
+  { label: 'account sync protocol', command: process.execPath, args: ['test/sync.cjs'] },
+  { label: 'independent Python sync server', command: process.execPath, args: ['test/sync-server.cjs'] },
   { label: 'AI screening', command: process.execPath, args: ['test/ai-screening.cjs'] },
   { label: 'AI prompt system', command: process.execPath, args: ['test/ai-prompt-system.cjs'] },
   { label: 'AI prompt offline evaluation syntax', command: process.execPath, args: ['--check', 'test/ai-prompt-eval.cjs'] },
@@ -76,7 +80,6 @@ const checks = [
   { label: 'AI request watchdog', command: process.execPath, args: ['test/ai-watchdog.cjs'] },
   { label: 'probe hygiene', command: process.execPath, args: ['test/probe-hygiene.cjs'] },
   { label: 'dedicated browser probe classification', command: process.execPath, args: ['test/dedicated-browser-probe.cjs', '--self-test'] },
-  { label: 'AI gateway Docker smoke', command: process.execPath, args: ['test/gateway-smoke.cjs'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
   { label: 'Bilibili isolated real-site probe', command: process.execPath, args: ['test/real-bilibili-probe.cjs', '--verify-local'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },
@@ -93,7 +96,7 @@ if (process.argv.includes('--dedicated-only')) {
   }
 }
 if (dedicated) {
-  checks.push({ label: 'dedicated Chrome development extension sync', command: process.execPath,
+  checks.push({ label: 'legacy dedicated Chrome harness sync', command: process.execPath,
     args: ['test/dev-browser.cjs', 'sync'] });
   checks.push({ label: 'dedicated Chrome login-state real-site probe', command: process.execPath,
     args: ['test/dedicated-browser-probe.cjs'] });
@@ -108,7 +111,7 @@ let failed = false;
 const blocked = [];
 for (const check of checks) {
   console.log('\n=== ' + check.label + ' ===');
-  if (check.label === 'dedicated Chrome development extension sync') {
+  if (check.label === 'legacy dedicated Chrome harness sync') {
     const result = spawnSync(check.command, check.args, { cwd: ROOT, encoding: 'utf8', env: process.env });
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
@@ -116,7 +119,7 @@ for (const check of checks) {
       failed = true;
       console.error('CHECK FAILED:', check.label, result.error.message);
     } else if (result.status === 2) {
-      blocked.push('专用 Chrome 扩展同步需要一次性加载或当前 CDP 不可用；详见上方 sync 结果');
+      blocked.push('历史专用 Chrome 扩展夹具需要一次性加载或当前 CDP 不可用；详见上方 sync 结果');
     } else if (result.status !== 0) {
       failed = true;
       console.error('CHECK FAILED:', check.label, 'exit ' + result.status);

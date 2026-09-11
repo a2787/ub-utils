@@ -2,6 +2,17 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（本地候选）
+
+- 保持 `omniblock.user.js` 为电脑与平板共同交付物，设置、审核浮层、内容管理器和输入控件增加窄屏/触控适配；不再把 MV3 扩展作为本版本安装路径。
+- AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 Key；Key 只进入 `Authorization` 请求头，不进入页面对象、请求正文、导出文件或同步文档，不加入本地模型和网关主链路。
+- userscript 增加账户注册/登录和显式“立即同步（合并）”；客户端用同步口令加密名单、设置、提示词个性化和反馈状态，服务端只保存 opaque 密文，支持逻辑时钟、墓碑、CAS 冲突重试和离线恢复。
+- `structure regression`：userscript product 4/4 及受影响的 AI、通用、平台、提示词、同步核心和独立 Python 服务回归通过；目标平板实际安装、真实 provider 和东京线上服务仍为 `blocked`/未部署，不宣称线上能力。
+
+详细变更、证据和边界：[v0.57.0 完整条目](docs/changelog/v0.57.0.md)。
+
+发布状态：本地候选，未 commit/push/tag/Release、未部署、未执行平台写入；当前公开版本仍为 v0.56.0。
+
 ## v0.56.0 - 作品语境 AI 请求压缩与 OB-AI-014 收口 - 2026-09-10（已发布）
 
 - loopback AI 请求升级为 context schema v2：同一作品批次共享默认语境，弹幕时间和父评论使用紧凑表示；无法安全归并时保留显式上下文，不改变语义边界。

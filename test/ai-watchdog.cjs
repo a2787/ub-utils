@@ -1,4 +1,4 @@
-/* OmniBlock AI loopback watchdog 回归。
+/* OmniBlock AI provider watchdog 回归。
  * 夹具说明：抖音评论 DOM 为人工合成，GM_xmlhttpRequest 故意模拟真实问题中的
  * “函数存在但完全不回调”桥接；旧实现会永久停留 loading，本测试把请求上限替换为 120ms。
  * 运行：node test/ai-watchdog.cjs
@@ -17,13 +17,13 @@ if (userscript === source) {
   process.exit(1);
 }
 
-const gatewayUrl = 'http://127.0.0.1:4000/v1/chat/completions';
+const providerUrl = 'http://127.0.0.1:4000/v1/chat/completions';
 const shim = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiGatewayUrl: '${gatewayUrl}', aiGatewayModel: 'omni-default',
+    aiEnabled: true, aiProviderUrl: '${providerUrl}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-watchdog-rule', text: '不许引战', enabled: true }]
   }
 }) };

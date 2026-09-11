@@ -1,6 +1,6 @@
 /* OmniBlock AI 提示词系统回归测试。
  * 夹具说明：B站评论节点和 Shadow DOM 是人工合成，沿用当前适配器契约；
- * 本测试不连接真实模型，使用 Playwright route 模拟 loopback 网关。
+ * 本测试不连接真实模型，使用 Playwright route 模拟 OpenAI-compatible API。
  * 覆盖：旧 aiRules 迁移、profile 编辑、三态反馈和理由交互、脱敏导出、
  * 有界相关示例、请求载荷接入、待确认提案生命周期、反馈重算、坏包拒绝和反馈上限。
  * 运行：node test/ai-prompt-system.cjs
@@ -11,14 +11,14 @@ const path = require('path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: false, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: false, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'legacy-rule', text: '旧版不许引战', enabled: true }]
   }
 }) };
@@ -67,7 +67,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   page.on('console', (message) => { if (message.type() === 'error' || message.type() === 'warning') report.console.push('[' + message.type() + '] ' + message.text()); });
   page.on('pageerror', (error) => report.pageErrors.push(String(error && error.stack || error)));
   await page.route('**/*', async (route) => {
-    if (route.request().url() === GATEWAY_URL) {
+    if (route.request().url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
       let input = {};

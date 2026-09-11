@@ -1,7 +1,7 @@
 /* OmniBlock 抖音一键加载与 AI 分析回归测试。
  * 夹具是人工合成 DOM；本测试不访问真实站点或真实模型。
  * 覆盖：一次调用依次编排评论/弹幕加载、把加载后的记录全部交给 AI、审核态保持，
- * 以及用户取消时 AbortSignal 能终止加载且不发起网关请求。
+ * 以及用户取消时 AbortSignal 能终止加载且不发起新的 AI 请求。
  * 运行：node test/ai-autoload.cjs
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
@@ -10,13 +10,13 @@ const path = require('node:path');
 
 const USERSCRIPT = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
-const GATEWAY_URL = 'http://127.0.0.1:4000/v1/chat/completions';
+const PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({
+window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, apiKey: 'synthetic-direct-key' }), 'omniblock:data:v1': JSON.stringify({
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: false, aiGatewayUrl: '${GATEWAY_URL}', aiGatewayModel: 'omni-default',
+    aiEnabled: false, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-autoload-rule', text: '引战', enabled: true }]
   }
 }) };
@@ -56,7 +56,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>抖音 
   page.on('pageerror', (error) => report.pageErrors.push(String(error)));
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (request.url() === GATEWAY_URL) {
+    if (request.url() === PROVIDER_URL) {
       let body = {};
       try { body = JSON.parse(request.postData() || '{}'); } catch (error) {}
       let input = {};
@@ -179,7 +179,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>抖音 
   });
   if (cancellation.result && !cancellation.result.ok && /取消/.test(cancellation.result.error || '')
     && cancellation.aborted && cancellation.status.state === 'idle' && cancellation.bodyCount === beforeCancel) {
-    report.pass.push('AUTO-AI-3 取消自动加载会终止 AbortSignal，不启动弹幕阶段且不发起新的网关请求');
+    report.pass.push('AUTO-AI-3 取消自动加载会终止 AbortSignal，不启动弹幕阶段且不发起新的 AI 请求');
   } else report.fail.push('AUTO-AI-3 取消收尾异常：' + JSON.stringify(cancellation));
 
   await browser.close();

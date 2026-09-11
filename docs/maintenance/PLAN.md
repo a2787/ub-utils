@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-10
+更新时间：2026-09-11
 
 本文件是 OmniBlock 唯一的活动计划：记录问题、范围、依赖、验收和下一步；当前事实放在
 `CURRENT.md`，用户可见变化放在 README/版本 changelog，结束项移入历史索引。
@@ -21,6 +21,46 @@ proposed → approved → in_progress → verified
 ```
 
 ## 活动项
+
+### OB-EXT-001 — 统一 MV3 扩展、API 直连与账户级加密同步
+
+- status: superseded
+- priority: P1
+- scope: 在保留 userscript 兼容发行物的同时，生成同一版本的正式 Manifest V3 扩展，兼容桌面 Chrome/Edge 与实际支持扩展的平板 Edge；将现有 GM 存储/网络桥提升为产品运行时；AI 保留本机 loopback 网关和设备/API 直连两种模式；新增独立于 V2/KB 的账户登录、端到端加密同步协议、客户端、冲突合并和本地 mock 服务。
+- non-goals: 不加入本地模型；不把 LiteLLM/Docker 嵌入扩展；不把 API Key 打包进扩展或同步到服务器；不自动执行平台举报、官方拉黑、关注或发帖；不立即替换电脑上的 Tampermonkey 安装；不共享 V2/KB 数据库；不在未完成真实设备验证前宣称平板支持；不在未取得动作级确认前修改东京服务器 DB schema、凭据、系统配置或部署。
+- dependencies: OB-AI-001, OB-AI-004
+- acceptance: required
+  - [x] 同一源码版本可生成 userscript 与正式 MV3 扩展；扩展不依赖 Tampermonkey，桌面和平板使用同一构建号（平板实际安装仍待验证）。
+  - [x] 扩展版本地名单、规则、反馈和设置可持久化；支持从 userscript 导出的 JSON 预览、校验、导入和回滚。
+  - [x] AI 运行方式明确区分本机 loopback 网关与设备直连 provider；直连 Key 仅设备本地保存，service worker 发起请求，页面和同步包均不可见。
+  - [x] 账户同步采用客户端加密文档、服务端 CAS revision、设备逻辑时钟和带墓碑的确定性合并；服务端只保存密文和最小认证/版本元数据。
+  - [x] 本地 mock server 覆盖注册/登录、401、revision 冲突、密文不透明存储、离线重试和客户端合并；独立 Python 服务也通过本地 health/auth/CAS 回归。
+  - [ ] 桌面与目标平板实际页面分别取得 `real-site verified`；本地夹具只记 `structure regression`，安装/登录/验证码/设备 API 不可用记 `blocked`。
+  - [ ] 线上 sync server 的 schema/凭据/部署/切换在独立动作确认后再执行，并完成同一密文 artifact 的只读健康和同步读回。
+- evidence: `structure regression`：product 3/3、dev 11/11、sync mock 7/7、Python 服务 5 项及既有 AI/平台回归；`blocked`：平板扩展安装、真实 provider、东京线上服务未验证/部署。
+- next: 用户已确认平板 Edge 以 Tampermonkey 为唯一安装入口；本项停止作为交付主线。现有 `extension/`、`dist/` 相关构建代码保留在未提交工作区，待后续明确确认后再决定是否清理或复用。
+- updated: 2026-09-11
+- supersedes: none
+
+### OB-TM-001 — Tampermonkey 移动端适配、API 直连与账户级加密同步
+
+- status: in_progress
+- priority: P1
+- scope: 保持 `omniblock.user.js` 为桌面与平板的共同交付物；优化窄屏/触控设置、内容入口、审核浮层和输入控件；AI 只保留用户直接填写的 OpenAI-compatible API 地址、模型名和设备本地 API Key；在 userscript 内提供账户注册/登录、客户端加密同步和显式“立即同步（合并）”入口，复用独立同步服务协议。
+- non-goals: 不继续建设或发布 MV3 安装路径；不保留 AI 主链路的 loopback 网关模式；不加入本地模型；不把 API Key、账户密码、访问令牌或同步口令放入普通设置、导出文件或云端文档；不自动同步、不执行平台举报/官方拉黑/关注/发帖；不修改东京服务器 schema、凭据、HTTPS 反向代理或部署；不删除上一项留下的实验文件。
+- dependencies: OB-AI-001, OB-AI-004
+- acceptance: required
+  - [x] userscript 的 AI 配置只显示 API 地址、模型名和“设置/更换本机 Key”，旧 gateway 配置不会再触发网关请求；Key 只写入独立 GM 存储，并且不出现在名单导出、提示词导出、同步 state、日志或请求正文。
+  - [x] userscript 在普通 Tampermonkey 运行时可以使用 GM 跨源请求直接调用已配置 provider；无 Key、无效 URL、网络错误和 HTTP 错误均给出可理解的失败状态，且不把 Key 写入页面对象。
+  - [x] 390px、768px 和触控夹具验证：入口不遮挡安全区，主要按钮/关闭按钮可触控，设置面板不横向溢出，AI 配置和同步表单可滚动/提交；真实平板安装未观察到前只记 `blocked`。
+  - [x] userscript 同步客户端复用 `sync/sync-core.js` 的 envelope/CAS/逻辑时钟/墓碑协议；账户密码和同步口令只在按钮调用期间留在内存，token/device id/本地文档单独保存；409 与离线重试可恢复，远端密文可在第二设备解密并合并。
+  - [x] 本地 mock、独立 Python 服务、AI/平台/通用回归和文档/隐私门禁通过；未执行平台写入。
+  - [ ] 目标平板实际 Tampermonkey 安装、AI provider 和东京线上同步服务分别取得 `real-site verified`，无法取得时明确记录 `blocked`，不以本地夹具替代。
+- evidence: `structure regression`：userscript product 4/4；同步核心 7/7；Python 服务 5/5；通用 20/20、状态 9/9、B站 38/38、自动弹幕 7/7、评论管理器 3/3、作品级 3/3、性能 8/8、适配器 28/28、内容 AI 11/11、内容覆盖 6/6；AI screening、平台/提示词/批次/自动加载/watchdog/事实核查均通过且页面/控制台错误为 0。维护总检本地项通过。
+- evidence: `real-site verified`：2026-09-11 匿名隔离只读会话中的 B站当前候选加载和微博当前候选加载已记录在 `CURRENT.md`；`blocked`：目标平板 Tampermonkey 实际安装、真实 provider、东京线上 endpoint，以及抖音验证码/微博活动 spacer 等外部条件未验证。线上服务仍保持未部署。
+- next: 用户在电脑和目标平板 Edge 的 Tampermonkey 中安装同一候选，分别配置本机 Key；随后做只读页面/触控检查，并在已准备 HTTPS 同步 endpoint 后验证同账户显式合并。未取得设备/线上条件前不把本地夹具升级为 `real-site verified`。
+- updated: 2026-09-11
+- supersedes: OB-EXT-001
 
 ### OB-AI-001 — AI 智能屏蔽第一阶段
 
