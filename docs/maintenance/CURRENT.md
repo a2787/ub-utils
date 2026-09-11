@@ -5,20 +5,22 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.57.2`（本轮候选，随本轮发布链公开）
+- 当前 userscript：`0.57.2`（已公开发布）
 - 构建：`0.57.2-danmaku-regex-safety`
-- 当前公开版本/功能提交：`0.57.1` / `55127dda396f5c6b1e4502c2421581abc67c9d46`
-- 最近验证的源码快照：`55127dda396f5c6b1e4502c2421581abc67c9d46`
+- 当前公开版本/功能提交：`0.57.2` / `693728aa36fac28aab74c9c80cffc953d4ebb1dc`
+- 最近验证的源码快照：`693728aa36fac28aab74c9c80cffc953d4ebb1dc`
 - 当前候选源码 SHA-256：`2673c69814e75a0f3bc207cb5d399881cf17c58b83510170906711733a310c22`
-- 发布状态：v0.57.1 功能提交 `55127dd` 已推送到 `origin/master`，`v0.57.1` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.1`；`v0.57.0` tag/Release 保持不变；独立同步服务已部署，未执行平台写入。
-- 当前公开 tag/Release：[v0.57.1](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)。
+- 发布状态：v0.57.2 功能提交 `693728a` 已推送到 `origin/master`，`v0.57.2` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.2`；`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
+- 当前公开 tag/Release：[v0.57.2](https://github.com/a2787/ub-utils/releases/tag/v0.57.2)。
 
 ## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
 
 - 范围/文件：`omniblock.user.js` 保存入口拒绝明显灾难性回溯正则（嵌套可变重复 `(a+)+` 类、量词分组分支首字符重叠 `(a|aa)+` 类），错误文案可理解；已存规则不回删；`DanmakuRules.status()` 编译计数；`.github/workflows/maintenance.yml` + 锁定依赖 `package.json`/`package-lock.json` 把 22 项本地回归搬进 CI（明确排除真实站点探针）。
 - `structure regression`：自动弹幕 8/8（新增 AUTO-REGEX-SAFETY，旧行为上失败后转通过）；quickblock 38/38、适配器 28/28、通用 20/20；维护总检本地项通过。
-- `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供；专用 Chrome 登录态批量补采受扩展桥接 CDP 会话失效影响，见下一条目。
-- 电脑侧剩余：登录态补采（换片隔离、B站分页/动态 UID、微博 spacer/点赞列表、贴吧旧版楼层、抖音基线）待桥接稳定后补跑；商汤/事实来源等用户输入。
+- `real-site verified`：2026-09-12，用户专用 Chrome 登录态只读探针（扩展桥接部分就绪）：脱敏页面形式 `bilibili.com/page/...` 读到 8 条作品内容；`douyin.com/jingxuan/...` 登录态读到 48 条作品内容（首次取得抖音登录态真实读取，匿名探针此前被验证码阻断）；`weibo.com/page/...` 读到 6 条内容、6 个身份。三条均为内容读取证据，不含评论/弹幕展开与 AI/存储链路。
+- `blocked`：专用 Chrome 批量补采仍被桥接故障阻断——B站/抖音/微博/知乎的 AI/存储链路报"桥接未就绪"，tieba/x 报 `Target.getTargets` 超时；换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音性能基线均未覆盖。故障定位：MV3 service worker 休眠后 attach 竞态（`Session with given id not found`），手动重载扩展可临时恢复，需要专门一轮修 `test/dedicated-browser.cjs` 的唤醒/重试。
+- `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供。
+- CI：`maintenance` 工作流已建（22 项本地回归，锁定依赖，明确排除真实站点探针）；首跑在文档门禁失败（v0.57.2 changelog 尚未入库），随本提交自动重跑，结果待回填。
 
 
 ## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
@@ -49,14 +51,11 @@
 
 ## 2026-09-10 作品语境感知的 AI 屏蔽与紧凑协议收口（OB-AI-014，v0.56.0，已发布）
 
-- 范围/文件：B 站视频详情页的作品标题/简介、分 P、真实评论父级关系、已观察弹幕进度进入脱敏 `WorkContext/LocalContext`；v0.56.0 新增 `contextSchemaVersion=2` 紧凑线协议；上下文候选默认确认到当前作品 `ScopedBlocks`，全局作者屏蔽仍需单独显式选择。
-- `structure regression`：上下文契约 CTX-1..9、AI screening、内容 AI、提示词系统/评测、事实核查、检索、批次、桥接、自动加载、平台 AI、watchdog、quickblock、适配器、通用运行器和性能回归通过；持久开发扩展 11/11，页面/控制台错误 0；v0.56.0 评测输入增长 `16.95%`，聚合 p95 比值 `1.0014`，unknown rule/context 不足均延期。
-- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；构建/哈希为 `0.56.0-context-aware-ai-compact` / `0094f6e800fcdaf0f12257dc9e424db1b2ad11bee5619976125413375858945a`。动态页面采集作品 1、评论 3、弹幕 95 共 99 条，99 条带作品上下文、1 条带父评论、95 条带时间；三个实际 AI 批次额外输入 `16.4%/19.8%/16.8%`。
-- `real-site verified`：同轮 AI mock 审核确认 2 条弹幕候选；审核浮层立即关闭，当前作品作用域记录 2 条，全局键保持不变，数据写入 0 次；未触发 B 站举报、官方拉黑、关注或发帖。
-- 本机 loopback 评测（2026-09-10）：人工合成 `ai-eval-v1` 按 7 个不透明作品分组，baseline/full 各 3 次、42 次请求；输入字符 `15171/17742`，加权增长 `16.95%`，p95 `2174/2177ms`、比值 `1.0014`；误阻断率差 `0`，policy/context recall 与 defer precision 均 `1.0`，schema 错误、未核查事实误阻断和身份越权均 `0`。
-- `real-site verified`：同轮来源探针确认标准文本轨道 `0`、`<track>` `0`、播放器仅有媒体存在证据且音频轨道元数据为 `0`；字幕和画面语义保持 `blocked`，未读取正文、音频或视频帧。
-- `blocked`：真实用户内容长期精度没有标注集证据；登录状态未判定，根评论分页仍可能 partial。字幕/音频/画面语义已作为有前置条件的远期预留封存，不再作为 OB-AI-014 活动项。
-- 发布状态：功能提交 `3f94c1bb7cfa75f2a5f223387492ee90b18b1de3` 已推送到 `origin/master`；`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。无登记部署链，未执行平台写入。详细设计、回滚和边界见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
+- 范围：B站视频详情页的作品标题/简介、分 P、真实评论父级与弹幕进度进入脱敏 `WorkContext/LocalContext`；`contextSchemaVersion=2` 紧凑线协议；候选默认确认到当前作品 `ScopedBlocks`，全局屏蔽仍需显式选择。
+- `structure regression`：上下文契约 CTX-1..9 与受影响 AI/平台/通用/性能回归通过；评测输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
+- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；动态页 99 条记录全部带作品语境；AI mock 确认 2 条弹幕候选只入当前作品作用域，平台写入 0 次；字幕/音频/画面语义保持 `blocked`（远期预留封存）。
+- `blocked`：真实内容长期精度无标注集证据；根评论分页仍可能 partial。
+- 发布状态：功能提交 `3f94c1bb` 已推送，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。详细设计与数据见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
 
 ## 已发布历史摘要
 
@@ -171,4 +170,4 @@ v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史
 
 ## 下一项最有价值的验证
 
-维护重心已回到电脑（2026-09-12）：活动计划两项均随平板线封存为 `deferred`。电脑侧可立即开工的是 OB-RULE-001 自动弹幕正则安全边界（纯本地：高风险表达式保存前拒绝、编译缓存）；其余电脑侧积压分两类——等用户专用 Chrome 登录态授权即可批量补采（抖音换片隔离、B站分页/动态 UID、微博 spacer、知乎/贴吧/微博覆盖补采、抖音性能基线），或等用户决策/凭据（商汤 provider、事实检索来源 allowlist、CI/CD）。
+维护重心在电脑。本完成 OB-RULE-001（随 v0.57.2 发布）与 OB-REL-001 的 CI 工作流（首跑因 changelog 未入库失败，重跑结果待回填）。下一项最有价值：① 修 `test/dedicated-browser.cjs` 的扩展桥接唤醒/重试，解除登录态批量补采阻断（换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音基线都在它后面）；② 商汤 provider 与事实检索来源仍等用户提供凭据/allowlist。

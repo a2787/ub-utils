@@ -2,6 +2,13 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.57.2 - 自动弹幕正则安全边界 - 2026-09-12（已发布）
+
+- B站/抖音关键词屏蔽弹窗保存正则规则时，明显可能引发灾难性回溯的高风险表达式（如 `(a+)+`、`(a|aa)+`）被拒绝保存并给出原因；合法正则、已保存规则和导入兼容不受影响。热路径匹配继续复用按平台缓存的已编译正则。
+- `structure regression`：自动弹幕 8/8（新增正则安全边界用例，旧行为上失败）、quickblock 38/38、适配器 28/28、通用 20/20；维护总检本地项通过。
+
+详细变更、证据和边界：[v0.57.2 完整条目](docs/changelog/v0.57.2.md)。
+
 ## v0.57.1 - 无 hover 触控入口补齐 - 2026-09-11（已发布）
 
 - coarse pointer/无 hover 设备上的页面级“内容屏蔽/弹幕屏蔽”入口常驻可见，齿轮继续直接打开设置；设置、内容管理器、AI 审核和确认框的主要控件补齐至少 44px 触控目标。
@@ -10,7 +17,7 @@
 
 详细变更、证据和边界：[v0.57.1 完整条目](docs/changelog/v0.57.1.md)。
 
-v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)（Latest）；raw 更新地址已服务 0.57.1，v0.57.0 tag/Release 保持不变。
+v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)；raw 更新地址曾服务 0.57.1，当前 Latest 已由 v0.57.2 接替，v0.57.0 tag/Release 保持不变。
 
 ## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（已发布）
 

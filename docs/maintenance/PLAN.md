@@ -30,6 +30,38 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ## 活动项
 
+### OB-RULE-001 — 自动规则正则安全边界
+
+- status: verified
+- priority: P2
+- scope: 自动弹幕正则的灾难性回溯风险识别、失败提示和热路径编译缓存。
+- non-goals: 不删除用户规则；不改变关键词规则；不为规避风险而关闭自动屏蔽；不做完备的正则安全性分析，只拒绝明显危险形态。
+- dependencies: none
+- acceptance: required
+  - [x] 明显高风险表达式在保存前被拒绝并给出可理解原因。
+  - [x] 合法表达式只编译一次，匹配过程不重复构造 RegExp。
+  - [x] B站/抖音自动弹幕本地夹具和已授权真实页面只读探针保持通过。
+- evidence: `structure regression`：`node test/danmaku-auto.cjs` 8/8；新增 AUTO-REGEX-SAFETY 在旧行为上失败后转通过：`(a+)+$`、`(a|aa)+` 被拒且原因含"回溯"，`(\w+\.)*example\.com`、`(cat|dog)+` 正常保存，直接写入的已存风险规则仍参与匹配（不回删），一个规则世代 51 次匹配只编译一次。quickblock 38/38、适配器 28/28、通用 20/20 通过。随 v0.57.2 发布。
+- next: 已完成并随 v0.57.2 发布；更隐蔽的回溯形态（如 `(\w+\w)*`）未被拦截，如需更严判定另立计划评估误伤面。
+- updated: 2026-09-12
+- supersedes: none
+
+### OB-REL-001 — CI 与公开发布准备
+
+- status: in_progress
+- priority: P3
+- scope: 本地命令、CI status、源码/构建 hash、版本/tag/Release 一致性。
+- non-goals: 真实站点探针不进 CI；未获当轮授权不改 push 策略或覆盖 tag。
+- dependencies: none
+- acceptance: required
+  - [x] 获得 CI/CD 配置修改授权后，CI 可运行不依赖维护者机器上的隐含路径或未锁定依赖。
+  - [x] 候选说明分别列出 real-site verified、structure regression 和 blocked。
+  - [x] Release 门禁只接受明确授权和可追溯的构建产物。
+- evidence: `.github/workflows/maintenance.yml`（ubuntu-latest + 系统 Chrome，`npm ci` 锁定 playwright-core 1.62.1，22 项本地回归 + 语法/文档门禁；真实站点探针明确排除）；依赖经 `package-lock.json` 锁定。首跑（run 34626121913）在文档门禁失败——v0.57.2 changelog 未随代码提交入库，属时序问题；已随文档提交自动重跑，结果待回填后本项转 `verified`。
+- next: 等重跑结果；绿则转 `verified`，红则先修再重跑。push 曾被 OAuth 缺 `workflow` scope 拒绝，已切换 SSH 远端解决。
+- updated: 2026-09-12
+- supersedes: none
+
 ### OB-TM-001 — Tampermonkey 移动端适配、API 直连与账户级加密同步
 
 - status: deferred
