@@ -5,26 +5,34 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.57.1`（已公开发布）
-- 构建：`0.57.1-tampermonkey-touch-controls`
+- 当前 userscript：`0.57.2`（本轮候选，随本轮发布链公开）
+- 构建：`0.57.2-danmaku-regex-safety`
 - 当前公开版本/功能提交：`0.57.1` / `55127dda396f5c6b1e4502c2421581abc67c9d46`
 - 最近验证的源码快照：`55127dda396f5c6b1e4502c2421581abc67c9d46`
-- 当前候选源码 SHA-256：`2efe63dff35b2f6c91497558470d6afdfe1ac92804d94f95a6ef41accb0b98fb`
+- 当前候选源码 SHA-256：`2673c69814e75a0f3bc207cb5d399881cf17c58b83510170906711733a310c22`
 - 发布状态：v0.57.1 功能提交 `55127dd` 已推送到 `origin/master`，`v0.57.1` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.1`；`v0.57.0` tag/Release 保持不变；独立同步服务已部署，未执行平台写入。
 - 当前公开 tag/Release：[v0.57.1](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)。
 
+## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
+
+- 范围/文件：`omniblock.user.js` 保存入口拒绝明显灾难性回溯正则（嵌套可变重复 `(a+)+` 类、量词分组分支首字符重叠 `(a|aa)+` 类），错误文案可理解；已存规则不回删；`DanmakuRules.status()` 编译计数；`.github/workflows/maintenance.yml` + 锁定依赖 `package.json`/`package-lock.json` 把 22 项本地回归搬进 CI（明确排除真实站点探针）。
+- `structure regression`：自动弹幕 8/8（新增 AUTO-REGEX-SAFETY，旧行为上失败后转通过）；quickblock 38/38、适配器 28/28、通用 20/20；维护总检本地项通过。
+- `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供；专用 Chrome 登录态批量补采受扩展桥接 CDP 会话失效影响，见下一条目。
+- 电脑侧剩余：登录态补采（换片隔离、B站分页/动态 UID、微博 spacer/点赞列表、贴吧旧版楼层、抖音基线）待桥接稳定后补跑；商汤/事实来源等用户输入。
+
+
 ## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
 
-- 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、B站/抖音弹幕点按入口、设备直连 API、GM Key、账户注册/登录和 PBKDF2/AES-GCM opaque-CAS；`sync/`、`sync-server/` 提供协议/本地服务回归。上一轮 `extension/` MV3 实验不属于交付路径。
-- `structure regression`：userscript product 5/5；通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28、AI screening、AI bridge、多平台、内容 AI、覆盖、提示词、批次、自动加载、watchdog、同步核心等受影响回归通过；390px/768px 触控、Authorization、Key 脱敏、密文和无横向溢出均通过。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 userscript `0.57.1`/`0.57.1-tampermonkey-touch-controls`（含平板触控目标修复，源码 SHA-256 `2efe63dff35b2f6c91497558470d6afdfe1ac92804d94f95a6ef41accb0b98fb`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0。该证据覆盖真实桌面匿名页面加载和只读入口，不覆盖平板触控、真实 provider 或线上同步。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），评论管理器 2 个标签，本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，相关项仍记为 `blocked`。
-- `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务在 loopback health 返回 200，独立 HTTPS Quick Tunnel 的 `/healthz` 也返回 200，服务标识为 `omniblock-sync`；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
+- 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、弹幕点按入口、设备直连 API、GM Key、账户注册/登录与客户端加密同步；`sync/`、`sync-server/` 提供协议/服务回归。`extension/` MV3 实验不属于交付路径。
+- `structure regression`：v0.57.1 发布时 product 6/6；通用 20/20、B站 38/38、适配器 28/28、同步核心 7/7、Python 服务 5/5 等受影响回归通过。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 `0.57.1`（源码 SHA-256 `2efe63df…`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0；不覆盖平板触控与线上同步。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，仍记 `blocked`。
+- `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务 loopback 与 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
 - `blocked`：平板实机触控、真实 provider 与双设备加密合并未取得设备结果，2026-09-12 起随平板线封存待重启；抖音匿名探针停在验证码中间页；Quick Tunnel 无固定域名，重启可能换址。
-- 发布状态：v0.57.1 已经用户当轮授权发布：功能提交推送到 `origin/master`，`v0.57.1` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.1`；目标平板真实触控/provider 与电脑/平板双设备同步仍待验证，未执行平台写入。
-- 触控入口手势：候选采用“入口常驻可见 + 齿轮单次点按进设置”，取代原计划的两段式齿轮手势（触控端 dock 挂载即 `expanded`，首触展开无对象）；旧验收标准已随之退休。
-- 平板 561px 以上触控宽度：设置面板紧凑按钮组与 AI 审核/反馈浮层的确认、取消、拒绝、作用域按钮原被组件级 `min-height` 压回 26–34px（窄屏块只兜住 ≤560px），已在组件规则后补 coarse-pointer 覆盖统一恢复 44px（2026-09-11 product 6/6）。
-- 计划收尾：2026-09-11 关闭 11 个积压计划项（1 verified、5 deferred、4 blocked、1 superseded），终态与恢复动作见 [收尾归档](plans/2026-09-11-plan-closure.md)；活动计划只剩等待用户动作的 OB-TM-001 与 OB-SYNC-001。
+- 发布状态：v0.57.1 已发布（tag/Release 在 GitHub）；当前 Latest 已由 v0.57.2 接替；未执行平台写入。
+- 触控入口手势：入口常驻可见 + 齿轮单次点按进设置；旧两段式手势在触控端 dock 挂载即 expanded，不可满足，已退休。
+- 平板 561px+ 触控宽度下紧凑按钮被组件级 min-height 压回 26–34px 的缺陷已在 v0.57.1 内修复（coarse-pointer 组件规则后置覆盖恢复 44px）。
+- 计划收尾：2026-09-11 关闭 11 个积压项，2026-09-12 重新启用并完成 OB-RULE-001；终态见 [收尾归档](plans/2026-09-11-plan-closure.md)。
 
 ## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，deferred，随平板线封存）
 

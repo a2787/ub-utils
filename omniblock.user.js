@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.57.1
+// @version       0.57.2
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.57.1-tampermonkey-touch-controls';
+  const RUNTIME_BUILD = '0.57.2-danmaku-regex-safety';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -1009,6 +1009,121 @@
       flags = Array.from(new Set((literal[2] || '').split('').concat(['i', 'u']))).join('');
     }
     try { return new RegExp(source, flags); } catch (e) { return null; }
+  }
+
+  // 保守的正则风险启发式：只拒绝“明显”会灾难性回溯的形态，不追求完备的正则分析；
+  // 拿不准的形态一律放行（宁可有漏网，不扩大拒绝面）。只在保存入口调用；
+  // 已保存的规则不在加载/匹配路径回删，避免悄悄删除用户既有规则。
+  function assessDanmakuRegexRisk(rawPattern) {
+    const literal = String(rawPattern || '').match(/^\/(.*)\/([dgimsuvy]*)$/);
+    const pattern = literal ? literal[1] : String(rawPattern || '');
+    if (!pattern) return null;
+    // 读量词 token：variable 表示重复长度可变，才会让重复分组的边界产生歧义。
+    function readQuantifierAt(index) {
+      const ch = pattern[index];
+      if (ch === '*' || ch === '+') return { next: index + 1, variable: true };
+      if (ch === '?') return { next: index + 1, variable: false };
+      if (ch === '{') {
+        const close = pattern.indexOf('}', index + 1);
+        if (close < 0) return { next: index + 1, variable: false };
+        const body = pattern.slice(index + 1, close);
+        const match = body.match(/^(\d+)(?:,(\d*))?$/);
+        if (!match) return { next: index + 1, variable: false };
+        const max = match[2] === undefined ? null : (match[2] === '' ? Infinity : Number(match[2]));
+        return { next: close + 1, variable: max === null ? false : (max === Infinity ? true : Number(match[2]) > Number(match[1])) };
+      }
+      return null;
+    }
+    // 分支首个有意义字符：字面量参与重叠判定；类别/分组/空分支不参与（宁可放行）。
+    function branchHead(text, start, end) {
+      for (let i = start; i < end;) {
+        const ch = text[i];
+        if (ch === '\\') return i + 1 < end ? { kind: 'char', value: text[i + 1] } : { kind: 'empty' };
+        if (ch === '^') { i++; continue; }
+        if (ch === '[' || ch === '(') return { kind: 'wild' };
+        if (ch === ')' || ch === '|' || ch === '*' || ch === '+' || ch === '?' || ch === '{' || ch === '$') return { kind: 'empty' };
+        return { kind: 'char', value: ch };
+      }
+      return { kind: 'empty' };
+    }
+    function duplicatedHead(heads) {
+      const seen = new Map();
+      for (const head of heads) {
+        if (head.kind !== 'char') continue;
+        if (seen.has(head.value)) return head.value;
+        seen.set(head.value, true);
+      }
+      return null;
+    }
+    const stack = [];
+    let lastClosed = null;   // 最近关闭的分组：{ endsVariable, branchHeads }
+    let lastClosedAt = -1;   // 该分组 ')' 的位置；量词必须紧跟才算修饰这个分组
+    let pendingAtomEnd = -1; // 最近一个可被量词修饰的原子的结束位置
+    let i = 0;
+    while (i < pattern.length) {
+      const ch = pattern[i];
+      if (ch === '\\') {
+        pendingAtomEnd = i + 2; lastClosedAt = -1;
+        const frame = stack[stack.length - 1];
+        if (frame) frame.currentEndsVariable = false; // 转义原子固定宽度，分支结尾封口
+        i += 2; continue;
+      }
+      if (ch === '[') {
+        let j = i + 1;
+        if (pattern[j] === '^') j++;
+        if (pattern[j] === ']') j++;
+        while (j < pattern.length && pattern[j] !== ']') { if (pattern[j] === '\\') j++; j++; }
+        pendingAtomEnd = j + 1; lastClosedAt = -1;
+        const frame = stack[stack.length - 1];
+        if (frame) frame.currentEndsVariable = false; // 字符类固定宽度，分支结尾封口
+        i = pendingAtomEnd; continue;
+      }
+      if (ch === '(') {
+        stack.push({ branchStart: i + 1, branchHeads: [], endsVariable: false, currentEndsVariable: false });
+        lastClosedAt = -1; i++; continue;
+      }
+      if (ch === '|') {
+        const frame = stack[stack.length - 1];
+        if (frame) {
+          frame.branchHeads.push(branchHead(pattern, frame.branchStart, i));
+          frame.endsVariable = frame.endsVariable || frame.currentEndsVariable;
+          frame.currentEndsVariable = false;
+          frame.branchStart = i + 1;
+        }
+        lastClosedAt = -1; i++; continue;
+      }
+      if (ch === ')') {
+        const frame = stack.pop() || { branchHeads: [], endsVariable: false, currentEndsVariable: false };
+        frame.branchHeads.push(branchHead(pattern, frame.branchStart, i));
+        frame.endsVariable = frame.endsVariable || frame.currentEndsVariable;
+        lastClosed = frame; lastClosedAt = i;
+        pendingAtomEnd = i + 1;
+        const outer = stack[stack.length - 1];
+        // 分组原子在外层分支里的宽度是否可变，取决于分组自身的内容。
+        if (outer) outer.currentEndsVariable = frame.endsVariable;
+        i++; continue;
+      }
+      const quant = (ch === '*' || ch === '+' || ch === '?' || ch === '{') ? readQuantifierAt(i) : null;
+      if (quant) {
+        if (quant.variable && lastClosed && lastClosedAt === pendingAtomEnd - 1) {
+          const dup = duplicatedHead(lastClosed.branchHeads);
+          if (dup) return { reason: '正则被拒绝：量词分组的多个分支都以“' + dup + '”开头（类似 (a|aa)+），重复时可能引发灾难性回溯' };
+          if (lastClosed.endsVariable) return { reason: '正则被拒绝：被重复的分组内部还套着可变长度匹配（类似 (a+)+），可能引发灾难性回溯' };
+        }
+        lastClosedAt = -1;
+        const frame = stack[stack.length - 1];
+        if (frame) frame.currentEndsVariable = quant.variable;
+        i = quant.next;
+        if (pattern[i] === '?') i++; // 惰性修饰符不改变歧义判定
+        continue;
+      }
+      // 普通字符是固定宽度原子：分支结尾由此“封口”。
+      pendingAtomEnd = i + 1; lastClosedAt = -1;
+      const frame = stack[stack.length - 1];
+      if (frame) frame.currentEndsVariable = false;
+      i++;
+    }
+    return null;
   }
 
   function normalizeDanmakuRule(raw) {
@@ -2434,6 +2549,7 @@
   // 这样 B站的 PAKKU 可以继续独立处理去重，OmniBlock 只在命中后接入现有屏蔽链。
   const DanmakuRules = (function () {
     const compiledCache = new Map();
+    let compileRuns = 0;
     // 规则数组只有在 Store 变更时才会被替换；弹幕热路径不再为每条消息
     // JSON.stringify 一次完整设置，也不再重复编译相同正则。
     Store.onChange(() => compiledCache.clear());
@@ -2453,8 +2569,10 @@
       const rules = rulesFor(platform);
       const next = rules.map((rule) => ({ rule, regex: compileDanmakuRule(rule) }));
       compiledCache.set(platform, next);
+      compileRuns++;
       return next;
     }
+    function status() { return { compileRuns }; }
     function match(platform, value) {
       const text = ruleText(value);
       if (!text) return null;
@@ -2478,6 +2596,10 @@
       if (!key || !DANMAKU_RULE_KINDS.has(kind)) return { ok: false, error: '规则类型不支持' };
       const rule = normalizeDanmakuRule({ kind, pattern });
       if (!rule) return { ok: false, error: kind === 'regex' ? '正则表达式无效或为空' : '关键词不能为空' };
+      if (kind === 'regex') {
+        const risk = assessDanmakuRegexRisk(rule.pattern);
+        if (risk) return { ok: false, error: risk.reason };
+      }
       const rules = rulesFor(platform);
       if (rules.some((item) => item.id === rule.id)) return { ok: false, error: '这条规则已经存在' };
       if (rules.length >= DANMAKU_RULE_LIMIT) return { ok: false, error: '单个平台最多保存 ' + DANMAKU_RULE_LIMIT + ' 条规则' };
@@ -2502,7 +2624,7 @@
       Store.setSetting(key, next);
       return true;
     }
-    return { settingKey, rulesFor, signature, match, hasEnabled, add, remove, setEnabled };
+    return { settingKey, rulesFor, signature, match, hasEnabled, status, add, remove, setEnabled };
   })();
 
   // 自动规则例外是独立于屏蔽名单的本地 allowlist：恢复一个误命中的发送者时，

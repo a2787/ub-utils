@@ -197,6 +197,39 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       && settingsUi.exemptionRows === 1 && settingsUi.exemptionRemove && settingsUi.exemptionRemoved && settingsUi.pakkuNote)
       report.pass.push('AUTO-UI 设置页仅保留迁移说明，B站内容弹窗承载关键词/正则和例外入口');
     else report.fail.push('AUTO-UI 规则面板分平台/兼容说明失败：' + JSON.stringify(settingsUi));
+    const regexSafety = await bili.evaluate(() => {
+      // 明显高风险形态：嵌套可变重复、分支首字符重叠。保存入口必须拒绝并说明原因。
+      const rejectNested = window.OB.danmakuRules.add('bili', 'regex', '(a+)+$');
+      const rejectOverlap = window.OB.danmakuRules.add('bili', 'regex', '(a|aa)+');
+      // 合法形态：分支以固定字符封口、首字符互不重叠。必须照常保存。
+      const acceptSealed = window.OB.danmakuRules.add('bili', 'regex', '(\\w+\\.)*example\\.com');
+      const acceptDistinct = window.OB.danmakuRules.add('bili', 'regex', '(cat|dog)+');
+      const rules = window.OB.danmakuRules.rulesFor('bili');
+      const saved = rules.filter((rule) => rule.kind === 'regex').map((rule) => rule.pattern);
+      // 已保存的风险规则不在加载/匹配路径回删（不删除用户规则），仍参与匹配。
+      const key = window.OB.danmakuRules.settingKey('bili');
+      const seeded = { id: 'r_seeded_risky', kind: 'regex', pattern: '(a+)+', enabled: true };
+      const compileRunsBefore = window.OB.danmakuRules.status().compileRuns;
+      window.OB.Store.setSetting(key, rules.concat(seeded));
+      const seededHit = window.OB.danmakuRules.match('bili', 'aaaaaaaa');
+      const compileRunsAfterFirst = window.OB.danmakuRules.status().compileRuns;
+      for (let i = 0; i < 50; i++) window.OB.danmakuRules.match('bili', 'aaaa' + i);
+      const compileRunsAfter = window.OB.danmakuRules.status().compileRuns;
+      window.OB.Store.setSetting(key, rules);
+      return {
+        rejectNested: rejectNested.ok === false && /回溯/.test(rejectNested.error || ''),
+        rejectOverlap: rejectOverlap.ok === false && /回溯/.test(rejectOverlap.error || ''),
+        acceptSealed: acceptSealed.ok === true,
+        acceptDistinct: acceptDistinct.ok === true,
+        saved: saved.includes('(\\w+\\.)*example\\.com') && saved.includes('(cat|dog)+'),
+        seededStillMatches: !!(seededHit && seededHit.rules.some((rule) => rule.pattern === seeded.pattern)),
+        compileOnce: compileRunsAfterFirst - compileRunsBefore === 1 && compileRunsAfter === compileRunsAfterFirst,
+      };
+    });
+    if (regexSafety.rejectNested && regexSafety.rejectOverlap && regexSafety.acceptSealed && regexSafety.acceptDistinct
+      && regexSafety.saved && regexSafety.seededStillMatches && regexSafety.compileOnce)
+      report.pass.push('AUTO-REGEX-SAFETY 明显高风险正则在保存入口被拒并说明原因，合法/已存规则不受影响，热路径只编译一次');
+    else report.fail.push('AUTO-REGEX-SAFETY 正则安全边界失败：' + JSON.stringify(regexSafety));
     await bili.close();
 
     const douyin = await browser.newPage();
