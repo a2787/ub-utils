@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>OmniBlock 扩展设置</title>
+  <link rel="stylesheet" href="extension.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">OmniBlock</p>
+        <h1>扩展设置</h1>
+        <p class="muted">电脑和支持扩展的平板使用同一份 MV3 构建。API Key 只保存在当前设备；同步服务只接收客户端加密后的文档。</p>
+      </div>
+      <div id="runtime-version" class="version-chip">正在读取版本…</div>
+    </header>
+
+    <section class="card">
+      <h2>设备直连 API</h2>
+      <p class="muted">这是 AI 的第二种方式。保存成功后会同时启用 direct；请求由扩展 service worker 发出，页面脚本和同步包都看不到 Key。地址必须是 HTTPS；本机测试才允许 loopback HTTP。</p>
+      <label>API 地址
+        <input id="provider-url" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1/chat/completions">
+      </label>
+      <label>模型名
+        <input id="provider-model" type="text" autocomplete="off" placeholder="填写 provider 的模型名">
+      </label>
+      <label>当前设备 API Key
+        <input id="provider-key" type="password" autocomplete="new-password" placeholder="只在此设备输入，不要发到聊天里">
+      </label>
+      <div class="button-row">
+        <button id="save-provider" class="primary" type="button">保存设备直连配置</button>
+        <button id="clear-provider" class="danger" type="button">清除当前设备 Key</button>
+      </div>
+      <p id="provider-status" class="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card">
+      <h2>数据导入 / 导出</h2>
+      <p class="muted">可导入旧 Tampermonkey 的 OmniBlock JSON，也可导入本扩展导出的完整包。导入前会先保存一次本机回滚点，不包含 API Key、登录令牌、事件日志或本地快照。</p>
+      <div class="button-row">
+        <button id="export-data" type="button">导出当前数据</button>
+        <label class="file-button">选择 JSON 文件<input id="import-file" type="file" accept="application/json"></label>
+      </div>
+      <pre id="import-preview" class="preview" hidden></pre>
+      <div class="button-row" id="import-actions" hidden>
+        <button id="confirm-import" class="primary" type="button">确认导入并替换</button>
+        <button id="cancel-import" type="button">取消</button>
+      </div>
+      <div class="button-row">
+        <button id="rollback-import" type="button">恢复上一次导入前状态</button>
+      </div>
+      <p id="import-status" class="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card">
+      <h2>账户级加密同步</h2>
+      <p class="muted">同步前在每台设备上使用同一个账户和同步口令。账户密码用于登录，独立同步口令用于客户端 AES-GCM 加密；服务器看不到名单、规则、反馈和 API Key。当前按钮执行“本机与云端合并后写回”，遇到并发 revision 冲突会自动重试。</p>
+      <label>同步服务地址
+        <input id="sync-endpoint" type="url" inputmode="url" autocomplete="url" placeholder="https://your-sync.example">
+      </label>
+      <div class="two-col">
+        <label>账户名
+          <input id="sync-username" type="text" autocomplete="username" placeholder="账户名">
+        </label>
+        <label>账户密码
+          <input id="sync-password" type="password" autocomplete="current-password" placeholder="仅用于登录请求">
+        </label>
+      </div>
+      <div class="button-row">
+        <button id="register-account" type="button">注册账户</button>
+        <button id="login-account" class="primary" type="button">登录账户</button>
+        <button id="logout-account" type="button">清除本机登录令牌</button>
+      </div>
+      <label>同步口令
+        <input id="sync-passphrase" type="password" autocomplete="new-password" placeholder="每台设备输入同一个口令，至少 8 个字符">
+      </label>
+      <div class="button-row">
+        <button id="sync-now" class="primary" type="button">立即同步（合并）</button>
+      </div>
+      <p id="sync-status" class="status" aria-live="polite"></p>
+    </section>
+
+    <footer class="footer muted">成功同步不主动打扰；失败、登录过期、口令错误和需要用户操作的状态会显示在这里。</footer>
+  </main>
+  <script src="sync-core.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

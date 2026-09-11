@@ -8,7 +8,8 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const SOURCE_PATH = path.join(ROOT, 'omniblock.user.js');
-const OUTPUT_DIR = path.join(ROOT, 'test', '_dev-extension');
+const PRODUCT_MODE = process.argv.includes('--product') || process.env.OMNIBLOCK_EXTENSION_PRODUCT === '1';
+const OUTPUT_DIR = PRODUCT_MODE ? path.join(ROOT, 'dist', 'extension') : path.join(ROOT, 'test', '_dev-extension');
 const source = fs.readFileSync(SOURCE_PATH, 'utf8');
 const version = (source.match(/\/\/\s*@version\s+([\d.]+)/) || [])[1];
 const build = (source.match(/const RUNTIME_BUILD\s*=\s*['"]([^'"]+)['"]/) || [])[1];
@@ -32,9 +33,11 @@ const matches = [
 // fetch/XHR 原型和 DOM 运行环境，等存储快照就绪后再执行 userscript。
 const manifest = {
   manifest_version: 3,
-  name: 'OmniBlock development runtime',
+  name: PRODUCT_MODE ? 'OmniBlock' : 'OmniBlock development runtime',
   version,
-  description: 'Local-only development runtime for OmniBlock browser validation.',
+  description: PRODUCT_MODE
+    ? 'Cross-device local content filtering with optional encrypted account sync.'
+    : 'Local-only development runtime for OmniBlock browser validation.',
   permissions: ['storage'],
   background: { service_worker: 'bridge-service-worker.js' },
   host_permissions: [
@@ -44,6 +47,11 @@ const manifest = {
     'http://127.0.0.1/*',
     'http://[::1]/*',
   ],
+  ...(PRODUCT_MODE ? {
+    action: { default_popup: 'popup.html', default_title: 'OmniBlock 设置' },
+    options_page: 'options.html',
+    optional_host_permissions: ['https://*/*'],
+  } : {}),
   content_scripts: [
     { matches, js: ['bridge-isolated.js'], run_at: 'document_start' },
     { matches, js: ['runtime-main.js'], run_at: 'document_start', world: 'MAIN' },
@@ -146,6 +154,18 @@ const isolatedBridge = String.raw`(() => {
       const url = new URL(String(value || ''));
       if (url.protocol !== 'http:' || url.username || url.password || url.hash
         || !['localhost', '127.0.0.1', '[::1]'].includes(String(url.hostname || '').toLowerCase())) return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
+  function normalizeDirectAIUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      const host = String(url.hostname || '').toLowerCase();
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(host);
+      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+        || url.username || url.password || url.hash) return '';
       url.search = '';
       url.hash = '';
       return url.href;
@@ -335,6 +355,10 @@ const isolatedBridge = String.raw`(() => {
     if (method === 'POST' && aiUrl && headers && isAllowedFactRequestData(message && message.data)) {
       return { url: aiUrl, method, headers, body: message.data, timeout: 10000 };
     }
+    const directUrl = message && message.type === 'direct-ai' ? normalizeDirectAIUrl(message.url) : '';
+    if (method === 'POST' && directUrl && headers && isAllowedAIRequestData(message && message.data)) {
+      return { url: directUrl, method, headers, body: message.data, timeout: MAX_AI_REQUEST_TIMEOUT_MS, transport: 'direct' };
+    }
     return null;
   }
   function rememberOwn(key, entry) {
@@ -387,14 +411,15 @@ const isolatedBridge = String.raw`(() => {
       chrome.storage.local.remove(key).catch(() => forgetOwn(key, own));
       return;
     }
-    if (message.type === 'xhr') {
+    if (message.type === 'xhr' || message.type === 'direct-ai') {
       const id = String(message.id || '');
       const request = normalizeAllowedRequest(message);
       if (!id || !request) {
         post({ type: 'xhr-response', id, ok: false, error: 'request-not-allowed' });
         return;
       }
-      chrome.runtime.sendMessage({ type: 'omniblock-xhr', id, url: request.url,
+      const runtimeType = message.type === 'direct-ai' ? 'omniblock-direct-ai' : 'omniblock-xhr';
+      chrome.runtime.sendMessage({ type: runtimeType, id, url: request.url,
         method: request.method, headers: request.headers, body: request.body,
         timeout: message.timeout }, (response) => {
         if (chrome.runtime.lastError) {
@@ -409,6 +434,10 @@ const isolatedBridge = String.raw`(() => {
     if (message.type === 'xhr-abort') {
       chrome.runtime.sendMessage({ type: 'omniblock-xhr-abort', id: String(message.id || '') });
     }
+    if (message.type === 'direct-ai-abort') {
+      chrome.runtime.sendMessage({ type: 'omniblock-direct-ai-abort', id: String(message.id || '') });
+    }
+    if (message.type === 'open-options') chrome.runtime.sendMessage({ type: 'omniblock-open-options' });
   }
 
   window.addEventListener('message', (event) => {
@@ -802,6 +831,18 @@ const mainBridge = String.raw`(() => {
       return url.href;
     } catch (error) { return ''; }
   }
+  function normalizeDirectAIUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      const host = String(url.hostname || '').toLowerCase();
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(host);
+      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+        || url.username || url.password || url.hash) return '';
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    } catch (error) { return ''; }
+  }
   function normalizeAIHeaders(headers) {
     if (!headers || typeof headers !== 'object') return null;
     const out = {};
@@ -986,6 +1027,10 @@ const mainBridge = String.raw`(() => {
     if (method === 'POST' && aiUrl && headers && isAllowedFactRequestData(details && details.data)) {
       return { url: aiUrl, method, headers, data: details.data };
     }
+    const directUrl = details && details.__obTransport === 'direct' ? normalizeDirectAIUrl(details.url) : '';
+    if (method === 'POST' && directUrl && headers && isAllowedAIRequestData(details && details.data)) {
+      return { url: directUrl, method, headers, data: details.data, transport: 'direct' };
+    }
     return null;
   }
   function failReady(reason) {
@@ -1100,9 +1145,10 @@ const mainBridge = String.raw`(() => {
     }
     const id = 'xhr_' + (++requestSequence);
     xhrCallbacks.set(id, details || {});
-    post({ type: 'xhr', id, url: request.url, method: request.method,
+    const transportType = request.transport === 'direct' ? 'direct-ai' : 'xhr';
+    post({ type: transportType, id, url: request.url, method: request.method,
       headers: request.headers, data: request.data, timeout: details && details.timeout });
-    return { abort: () => { xhrCallbacks.delete(id); post({ type: 'xhr-abort', id }); } };
+    return { abort: () => { xhrCallbacks.delete(id); post({ type: request.transport === 'direct' ? 'direct-ai-abort' : 'xhr-abort', id }); } };
   };
   const GM_openInTab = (url) => {
     const normalizedUrl = normalizeAllowedUrl(url);
@@ -1115,7 +1161,11 @@ const mainBridge = String.raw`(() => {
     name: '本地内容过滤增强', version: '__OB_VERSION__', namespace: 'https://github.com/a2787/ub-utils',
   } };
   window.__OB_EXTENSION_RUNTIME__ = {
-    mode: 'persistent-dev-extension', version: '__OB_VERSION__', build: '__OB_BUILD__', bridge: bridgeStatus,
+    mode: '__OB_RUNTIME_MODE__', version: '__OB_VERSION__', build: '__OB_BUILD__', bridge: bridgeStatus,
+  };
+  window.__OB_EXTENSION_OPEN_OPTIONS__ = () => {
+    post({ type: 'open-options' });
+    return true;
   };
   requestReady();
 `;
@@ -1124,22 +1174,39 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.writeFileSync(path.join(OUTPUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 fs.writeFileSync(path.join(OUTPUT_DIR, 'bridge-isolated.js'), isolatedBridge
   .replaceAll('__OB_BRIDGE_SECRET__', bridgeSecret), 'utf8');
-fs.writeFileSync(path.join(OUTPUT_DIR, 'bridge-service-worker.js'), serviceWorker, 'utf8');
+const productServiceWorkerExtraPath = path.join(ROOT, 'extension', 'service-worker-extra.js');
+const serviceWorkerOutput = PRODUCT_MODE && fs.existsSync(productServiceWorkerExtraPath)
+  ? serviceWorker + '\n' + fs.readFileSync(productServiceWorkerExtraPath, 'utf8')
+  : serviceWorker;
+fs.writeFileSync(path.join(OUTPUT_DIR, 'bridge-service-worker.js'), serviceWorkerOutput, 'utf8');
 const runtimeMain = mainBridge
   .replaceAll('__OB_BRIDGE_SECRET__', bridgeSecret)
   .replaceAll('__OB_VERSION__', version)
   .replaceAll('__OB_BUILD__', build)
+  .replaceAll('__OB_RUNTIME_MODE__', PRODUCT_MODE ? 'persistent-extension' : 'persistent-dev-extension')
   + '\n' + source + '\n})();\n';
 fs.writeFileSync(path.join(OUTPUT_DIR, 'runtime-main.js'), runtimeMain, 'utf8');
 
+if (PRODUCT_MODE) {
+  for (const file of ['options.html', 'options.js', 'popup.html', 'popup.js', 'extension.css']) {
+    const sourceFile = path.join(ROOT, 'extension', file);
+    if (!fs.existsSync(sourceFile)) throw new Error('正式扩展缺少资源：' + file);
+    fs.copyFileSync(sourceFile, path.join(OUTPUT_DIR, file));
+  }
+  const syncSource = path.join(ROOT, 'sync', 'sync-core.js');
+  if (!fs.existsSync(syncSource)) throw new Error('正式扩展缺少同步核心：sync/sync-core.js');
+  fs.copyFileSync(syncSource, path.join(OUTPUT_DIR, 'sync-core.js'));
+}
+
 const sourceHash = crypto.createHash('sha256').update(source).digest('hex');
-console.log(JSON.stringify({
+const buildReport = {
   status: 'built',
   directory: path.relative(ROOT, OUTPUT_DIR).replaceAll(path.sep, '/'),
   version,
   build,
   sourceHash,
   pages: 'new matching documents load automatically; no per-page source injection',
-}, null, 2));
+};
+if (require.main === module) console.log(JSON.stringify(buildReport, null, 2));
 
-module.exports = { ROOT, OUTPUT_DIR, version, build, sourceHash };
+module.exports = { ROOT, OUTPUT_DIR, version, build, sourceHash, buildReport };
