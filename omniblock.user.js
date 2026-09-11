@@ -3436,6 +3436,17 @@
     #ob-ai-feedback .ob-ai-feedback-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; }
     #ob-ai-feedback .ob-ai-feedback-foot button { min-height: 28px; border: 1px solid #ccc; border-radius: 5px; padding: 4px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; }
     #ob-ai-feedback .ob-ai-feedback-foot .ob-ai-feedback-save { border-color: #5b6db1; background: #5b6db1; color: #fff; }
+    /* 上面的 .ob-ai-key-row/.ob-sync-actions 等组件规则比触控块的通用按钮规则更具体，
+       会把面板紧凑按钮压回 32/34px；触控设备在组件规则之后统一恢复 44px 触控目标。 */
+    @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
+      #ob-panel .ob-ai-key-row button, #ob-content-manager .ob-ai-key-row button,
+      #ob-panel .ob-sync-actions button,
+      #ob-panel .ob-ai-rule-add button, #ob-content-manager .ob-ai-rule-add button,
+      #ob-panel .ob-ai-prompt-card-actions button, #ob-content-manager .ob-ai-prompt-card-actions button,
+      #ob-panel .ob-ai-feedback-card button, #ob-content-manager .ob-ai-feedback-card button {
+        min-height: 44px;
+      }
+    }
     @media (max-width: 560px) {
       #ob-panel { box-sizing: border-box; align-items: flex-start; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
       #ob-panel .ob-box { width: 100%; max-width: 100%; max-height: 100dvh; max-height: 100vh; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
