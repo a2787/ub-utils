@@ -3,17 +3,19 @@
 更新时间：2026-09-13
 状态来源：v0.57.2 为公开版本，v0.57.4（撤销右键接管）是当前本地候选；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
-> 🔴 2026-09-13 仓库事故（未修复）：工作区源码与测试文件完整，但 `E:\pluginforchrome\.git` 的对象库与 `refs/` 已丢失
-> （`objects/pack` 只剩两个孤立 `.idx`，无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer）。`refs/heads/master` 与
-> `refs/remotes/origin/master` 已按 reflog 恢复为 `c025d8b` / `a3a769f`，但对象缺失使 `git log`、`git status` 和 `docs-check`
-> 的快照/哈希门禁暂时无法运行；v0.57.3 候选提交 `c025d8b` 从未推送，可能无法从远端恢复。恢复方案待用户决定。
+> 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 的对象库与 `refs/` 于当日丢失（`objects/pack` 只剩孤立 `.idx`、
+> 无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer；工作区文件自始至终无损失）。经用户同意后从远端重建：重新克隆
+> `git@github.com:a2787/ub-utils.git` 并把校验通过的 `.git` 植入原位，对象库、`refs/heads/master`（`a3a769f`）与
+> v0.55.0~v0.57.2 全部 tag 恢复，`git fsck` 无错误；损坏的 `.git` 与孤立索引已备份到
+> `%TEMP%\omniblock-broken-git-20260913\`（未删除，可继续排查根因）。唯一无法恢复的是未推送提交 `c025d8b`（v0.57.3），
+> 其代码内容完整保留在工作区，并已随本轮提交 `b83003a` 落库。
 
 ## 当前版本
 
 - 当前 userscript：`0.57.4`（本轮候选，未公开发布）
 - 构建：`0.57.4-native-context-menu`
 - 当前公开版本/功能提交：`0.57.2` / `693728aa36fac28aab74c9c80cffc953d4ebb1dc`
-- 最近验证的源码快照：`693728aa36fac28aab74c9c80cffc953d4ebb1dc`
+- 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
 - 当前候选源码 SHA-256：`caacf22786c3722e6a8939338993ee26e1b9d2fdcdeb5feeaf44a33ac784223d`
 - 发布状态：v0.57.2 功能提交 `693728a` 已推送到 `origin/master`，`v0.57.2` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.2`；`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.57.2](https://github.com/a2787/ub-utils/releases/tag/v0.57.2)。
@@ -37,8 +39,11 @@
 - 未决（非产品回归）：`node test/ai-screening.cjs` 25 项断言全部通过且 `FAIL: 无`，但退出码非零——其判据把任何控制台
   错误都算失败，而 AI-24 用例自身 mock 的 HTTP 429 在当前 Chrome 上被记为一条资源加载 console error。需单独一轮修
   测试退出判据，本轮不改测试标准。
-- 未决：本轮改动尚未 commit（`.git` 对象库丢失，见顶部事故说明）；v0.57.4 版本条目、README 与计划已同步。
-- 计划收尾：OB-CTX-001 的验收项与证据见 [PLAN.md](PLAN.md)；旧日期条目已移至 [移出存档](plans/2026-09-13-current-dated-archive.md)。
+- 提交与门禁：改动提交为 `b83003a56b901796cacf25da369dc6642bca4428`（工作区干净，`git fsck` 无错误）；
+  `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。本轮**未 push、未创建
+  tag/Release、未部署**，公开发布仍待当轮授权。
+- 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
+  [移出存档](plans/2026-09-13-current-dated-archive.md)。
 
 ## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
 
