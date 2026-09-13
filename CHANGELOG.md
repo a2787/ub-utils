@@ -2,13 +2,15 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（本地候选，未公开发布）
+## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（已公开发布）
 
 - **右键交还页面**：删除"命中评论/帖子条目时接管右键、弹出自建「🚫 拉黑此用户」菜单"的整套实现（`contextmenu` 捕获监听、`buildContextMenu`、仅供其使用的 `findItem` 与 `#ob-ctx` 样式）；此前这些位置右键被 `preventDefault`，平台原生菜单与页面上下文操作失效。
 - 本地拉黑链路不受影响：平台原生菜单旁「🚫 本地拉黑」、确认气泡、撤销、B站弹幕工具、批量与作品级屏蔽全部保留。
 - `structure regression`：run 20/20（新增"右键保持原生"断言，旧源码上以 `defaultPrevented:true` 失败）、adapters 28/28、quickblock 38/38、userscript-product 7/7，错误 0；`real-site verified`：2026-09-13 匿名 B站 2 次、微博 7 次真实条目右键均 `prevented=0/menu=0`，专用登录态 Chrome 的知乎/抖音/X 也保持原生；`blocked`：贴吧 CDP 渲染进程卡死，未读取右键状态。
 
 详细变更、证据和边界：[v0.57.4 完整条目](docs/changelog/v0.57.4.md)。
+
+GitHub Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
 
 ## v0.57.3 - AI 直连配置连通性测试与瞬态重试 - 2026-09-12（本地候选，未公开发布）
 

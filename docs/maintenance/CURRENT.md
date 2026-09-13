@@ -1,7 +1,7 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-09-13
-状态来源：v0.57.2 为公开版本，v0.57.4（撤销右键接管）是当前本地候选；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.57.4（撤销右键接管）为当前公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 的对象库与 `refs/` 于当日丢失（`objects/pack` 只剩孤立 `.idx`、
 > 无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer；工作区文件自始至终无损失）。经用户同意后从远端重建：重新克隆
@@ -12,15 +12,15 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.57.4`（本轮候选，未公开发布）
+- 当前 userscript：`0.57.4`（当前公开版本）
 - 构建：`0.57.4-native-context-menu`
-- 当前公开版本/功能提交：`0.57.2` / `693728aa36fac28aab74c9c80cffc953d4ebb1dc`
+- 当前公开版本/功能提交：`0.57.4` / `b83003a56b901796cacf25da369dc6642bca4428`
 - 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
 - 当前候选源码 SHA-256：`caacf22786c3722e6a8939338993ee26e1b9d2fdcdeb5feeaf44a33ac784223d`
-- 发布状态：v0.57.2 功能提交 `693728a` 已推送到 `origin/master`，`v0.57.2` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.2`；`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
-- 当前公开 tag/Release：[v0.57.2](https://github.com/a2787/ub-utils/releases/tag/v0.57.2)。
+- 发布状态：v0.57.4 功能提交 `b83003a` 已推送到 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.4`；`v0.57.2`/`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
+- 当前公开 tag/Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
 
-## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，本地候选）
+## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
 - 范围/文件：删除"命中评论/帖子条目时接管右键并弹出自建菜单「🚫 拉黑此用户」"的整套实现——`document` 级 `contextmenu`
   捕获监听、`buildContextMenu`、仅供该监听使用的 `findItem`、`#ob-ctx` 样式与引导"试右键"的提示文案（`omniblock.user.js`）。
@@ -39,8 +39,8 @@
 - `blocked`：`node test/dev-browser.cjs sync` 已读到当前 `0.57.4-native-context-menu` 与右键目标，但专用扩展 bridge 在刷新前后均为 `degraded/ready-timeout`，因此不能把专用浏览器完整 AI/存储链路写成 ready；这不是右键证据失败。
 - 提交与门禁：产品行为提交为 `b83003a56b901796cacf25da369dc6642bca4428`；本轮接手审计未修改
   `omniblock.user.js`，验证脚本/文档差异与工作区状态须以 `git status --short` 实时核对；`git fsck` 无错误。
-  `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。本轮**未 push、未创建
-  tag/Release、未部署**，公开发布仍待当轮授权。
+  `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。v0.57.4 已推送到
+  `origin/master`，`v0.57.4` tag 与 GitHub Release 已创建；本仓库没有登记的插件生产部署链，未执行平台写入。
 - 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
   [移出存档](plans/2026-09-13-current-dated-archive.md)。
 
@@ -158,8 +158,8 @@ node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
 固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-13 v0.57.4 右键只读证据见顶部 OB-CTX-001 条目，未执行平台写入。
-v0.57.2 tag 与 Release 已创建并作为当前公开版本；v0.57.4 仍是本地候选，未 push/tag/Release；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
+v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v0.57.0 的历史 tag/Release 保持不变；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-`OB-MAINT-002` 的本地门禁与交接提交已完成（维护提交 `bd7ec3b`）；探针只有在命中真实条目、当前版本/build 且事件状态可读时才给出 verified。贴吧真实右键证据仍为 `blocked`，若用户后续明确授权登录态验证，再使用专用 Chrome 手动/只读探针补齐；v0.57.4 的 push/tag/Release 仍需当轮明确授权。
+`OB-MAINT-002` 的本地门禁、交接提交与 v0.57.4 发布已完成（维护提交 `bd7ec3b`，发布后文档回写随后提交）；探针只有在命中真实条目、当前版本/build 且事件状态可读时才给出 verified。贴吧真实右键证据仍为 `blocked`，若用户后续明确授权登录态验证，再使用专用 Chrome 手动/只读探针补齐；专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
