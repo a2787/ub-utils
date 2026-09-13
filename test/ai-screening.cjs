@@ -120,6 +120,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 (async () => {
   const report = { pass: [], fail: [], console: [], pageErrors: [] };
+  let providerAttempts = 0;
   const watchdogReady = USERSCRIPT.includes("const AI_REQUEST_TIMEOUT_MS = 60000;")
     && USERSCRIPT.includes("const AI_REQUEST_WATCHDOG_SLACK_MS = 250;")
     && USERSCRIPT.includes("timer = setTimeout(() => cancel(label + '请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);")
@@ -156,10 +157,21 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       return;
     }
     if (request.url() === PROVIDER_URL) {
+      // 首次请求返回 429，验证直连批量请求的瞬态失败重试：分析必须靠
+      // 第二次请求完成，旧行为（无重试）会让整轮分析失败。
+      providerAttempts++;
+      if (providerAttempts === 1) {
+        await route.fulfill({ status: 429, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ error: 'rate limited' }) });
+        return;
+      }
       let body = {};
       try { body = JSON.parse(request.postData() || '{}'); } catch (error) {}
       let input = {};
       try { input = JSON.parse(body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
+      if (input && input.items && input.items.length === 0 && body.max_tokens === 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ choices: [{ message: { content: 'pong' } }] }) });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json; charset=utf-8',
@@ -183,6 +195,8 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-ai-screening.cjs' });
   await page.goto('https://www.bilibili.com/video/ai-screening-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai && document.querySelector('#ob-gear')), null, { timeout: 8000 }).catch(() => {});
+  // 自动分析含一次 429 重试延迟；等审核浮层出现而不是固定 sleep。
+  await page.waitForFunction(() => !!document.querySelector('#ob-ai-review'), null, { timeout: 15000 }).catch(() => {});
   await sleep(3000);
 
   const initial = await page.evaluate(() => {
@@ -629,6 +643,14 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && Number.isFinite(Number(timing.providerMs)) && Number(timing.providerMs) >= 0) {
     report.pass.push('AI-21 AI 分析日志拆分记录采集、API 和总耗时，不含正文或身份键');
   } else report.fail.push('AI-21 AI 分析耗时日志缺少分段字段：' + JSON.stringify(timing));
+
+  const recovered = await page.evaluate(() => {
+    const status = window.OB && window.OB.ai ? window.OB.ai.status() : null;
+    return !!status && (status.analyzed > 0 || status.candidates > 0 || status.state === 'review' || status.state === 'idle');
+  });
+  if (providerAttempts >= 2 && recovered) {
+    report.pass.push('AI-24 直连请求 429 后自动重试一次，分析靠第二次请求完成（旧行为整轮失败）');
+  } else report.fail.push('AI-24 直连重试未生效：providerAttempts=' + providerAttempts + ' recovered=' + recovered);
 
   }
   await browser.close();

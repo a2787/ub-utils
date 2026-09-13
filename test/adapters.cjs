@@ -325,8 +325,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     } else report.fail.push('zhihu-quick-menu: ' + JSON.stringify(zhihuMenu));
     await zhihuMenuPage.close();
 
-    // 通用右键命中：事件目标落在条目内部的正文 span 时，仍应沿父链找到
-    // 现代贴吧评论项；旧实现只检查 target 自身，会在真站静默失效。
+    // 通用右键不再被接管（OB-CTX-001）：事件目标落在条目内部的正文 span 时，
+    // 插件既不 preventDefault 也不弹自建菜单；贴吧 Vue 身份解析保持可用。
     const tiebaNestedContextPage = await browser.newPage();
     const tiebaNestedFixture = `<!doctype html><html><body>
       <div class="pb-comment-item" id="tieba-comment"><div class="comment-content"><span id="tieba-comment-text">正文</span></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654399, name: 'nested-user', name_show: '嵌套作者' } };</script></div>
@@ -338,12 +338,18 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const tiebaNested = await tiebaNestedContextPage.evaluate(async () => {
       await new Promise((resolve) => setTimeout(resolve, 180));
       const target = document.querySelector('#tieba-comment-text');
-      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 40, clientY: 40, button: 2 }));
-      const ctx = document.getElementById('ob-ctx');
-      return { shown: !!ctx, text: ctx ? ctx.innerText : '', key: window.OB.adapters.tieba.extract(document.querySelector('#tieba-comment')).keys };
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 40, clientY: 40, button: 2 });
+      const notCancelled = target.dispatchEvent(event);
+      return {
+        defaultPrevented: event.defaultPrevented,
+        notCancelled,
+        ctxShown: !!document.getElementById('ob-ctx'),
+        key: window.OB.adapters.tieba.extract(document.querySelector('#tieba-comment')).keys,
+      };
     });
-    if (tiebaNested.shown && tiebaNested.text.includes('嵌套作者') && tiebaNested.key.includes('tieba:uid:987654399')) {
-      report.pass.push('tieba-nested-context: nested comment target climbs to Vue identity and opens local menu');
+    if (tiebaNested.defaultPrevented === false && tiebaNested.notCancelled === true && !tiebaNested.ctxShown
+      && tiebaNested.key.includes('tieba:uid:987654399')) {
+      report.pass.push('tieba-nested-context: nested comment right-click stays native and Vue identity still resolves');
     } else report.fail.push('tieba-nested-context: ' + JSON.stringify(tiebaNested));
     await tiebaNestedContextPage.close();
 
@@ -438,8 +444,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     await tiebaMenuPage.close();
 
     // 人工合成 B 站评论夹具使用开放 Shadow DOM；浏览器会把事件 target 重定向到
-    // `bili-comments` 宿主，右键命中必须读取 Event.composedPath() 才能找到
-    // 内层 `bili-comment-renderer`。该回归覆盖真实页面的事件边界。
+    // `bili-comments` 宿主。右键不得被接管（OB-CTX-001），同时该事件边界下评论
+    // 身份与正文仍必须可解析。
     const biliShadowContextPage = await browser.newPage();
     const biliShadowFixture = `<!doctype html><html><body><script>
       const comment = document.createElement('bili-comment-renderer');
@@ -456,15 +462,24 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     await biliShadowContextPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const biliShadow = await biliShadowContextPage.evaluate(async () => {
       await new Promise((resolve) => setTimeout(resolve, 220));
-      const target = document.querySelector('bili-comments')?.shadowRoot?.querySelector('bili-comment-renderer')?.shadowRoot?.querySelector('#bili-comment-text');
-      target?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 44, clientY: 44, button: 2 }));
-      const ctx = document.getElementById('ob-ctx');
-      const info = window.OB.adapters.bilibili.extract(document.querySelector('bili-comments')?.shadowRoot?.querySelector('bili-comment-renderer'));
-      return { shown: !!ctx, text: ctx?.innerText || '', keys: info.keys, note: info.note, target: target?.tagName || '' };
+      const renderer = document.querySelector('bili-comments')?.shadowRoot?.querySelector('bili-comment-renderer');
+      const target = renderer?.shadowRoot?.querySelector('#bili-comment-text');
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, composed: true, clientX: 44, clientY: 44, button: 2 });
+      const notCancelled = target?.dispatchEvent(event);
+      const info = window.OB.adapters.bilibili.extract(renderer);
+      return {
+        defaultPrevented: event.defaultPrevented,
+        notCancelled,
+        ctxShown: !!document.getElementById('ob-ctx'),
+        keys: info.keys,
+        note: info.note,
+        target: target?.tagName || '',
+      };
     });
-    if (biliShadow.shown && biliShadow.text.includes('B站评论作者') && biliShadow.keys.includes('bili:uid:987654401')
+    if (biliShadow.defaultPrevented === false && biliShadow.notCancelled === true && !biliShadow.ctxShown
+      && biliShadow.keys.includes('bili:uid:987654401')
       && biliShadow.note.includes('B站评论正文') && !biliShadow.note.includes(':host')) {
-      report.pass.push('bilibili-shadow-context: Event.composedPath climbs redirected target to comment renderer and opens local menu');
+      report.pass.push('bilibili-shadow-context: redirected shadow target keeps native right-click while identity and body resolve');
     } else report.fail.push('bilibili-shadow-context: ' + JSON.stringify(biliShadow));
     await biliShadowContextPage.close();
 

@@ -58,7 +58,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站测
 <div class="comment-list" id="clist"></div>
 <div class="nested-wrap" id="nwrap"><span>下面的 Frank 在双层影子 DOM 内</span></div>
 <script>
-  function mk(uid, name, text, sub){
+  function mk(uid, name, text, sub, menu){
     const host = document.createElement('bili-comment-renderer');
     const sr = host.attachShadow({mode:'open'});
     const a = document.createElement('a'); a.className='user-name';
@@ -73,12 +73,27 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站测
       const st=document.createElement('span'); st.className='text'; st.textContent=sub.text;
       ssr.appendChild(sa); ssr.appendChild(st); sr.appendChild(sh);
     }
+    if(menu){
+      // 人工合成 B站评论菜单：bili-comment-menu 的 Shadow DOM 内 #options > li。
+      // 真站菜单在用户点开"更多"后才挂载，这里同样延迟到点击后创建，使回归
+      // 覆盖"菜单挂载触发补扫并注入本地入口"的真实链路（OB-CTX-001 后不再走右键）。
+      const more=document.createElement('button');
+      more.id='ob-fixture-more'; more.textContent='更多';
+      more.addEventListener('click',()=>{
+        const menuHost=document.createElement('bili-comment-menu');
+        const msr=menuHost.attachShadow({mode:'open'});
+        const options=document.createElement('div'); options.id='options';
+        const report=document.createElement('li'); report.textContent='举报';
+        options.appendChild(report); msr.appendChild(options); sr.appendChild(menuHost);
+      });
+      sr.appendChild(more);
+    }
     return host;
   }
   const list=document.getElementById('clist');
   list.appendChild(mk(111,'Alice','Alice 的正常评论'));
   list.appendChild(mk(222,'Bob','Bob 的评论（应被预拉黑隐藏）'));
-  list.appendChild(mk(333,'Carol','Carol 的评论（用于右键拉黑测试）'));
+  list.appendChild(mk(333,'Carol','Carol 的评论（用于本地拉黑流程测试）',null,true));
   list.appendChild(mk(444,'Dave','Dave 的评论',{uid:555,name:'Eve',text:'Eve 的楼中楼回复'}));
 
   // Frank(666) 放在"外层阴影 -> 内层阴影 -> bili-comment-renderer"的双层嵌套里
@@ -281,32 +296,56 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
 
   await page.screenshot({ path: path.join(ROOT, 'test', '_shot_1_load.png'), fullPage: true });
 
-  // C. 右键穿透 Shadow DOM：Carol 影子内 <a> 派发 contextmenu
+  // C. 右键必须交还页面（OB-CTX-001）：即使命中 B站评论条目（含 Shadow DOM），
+  // 也不得 preventDefault 或弹出插件的 #ob-ctx 菜单；身份解析能力不受影响。
   const c = await page.evaluate(`(() => {
     const f = ${hostOf};
     const carol = f('333'); if(!carol) return { missing:true };
     const a = carol.shadowRoot.querySelector('a.user-name');
-    const ev = new MouseEvent('contextmenu', { bubbles:true, cancelable:true, composed:true, clientX:40, clientY:40 });
-    a.dispatchEvent(ev);
-    const ctx = document.getElementById('ob-ctx');
-    return { ctxShown: !!ctx, text: ctx ? ctx.textContent : '' };
+    const ev = new MouseEvent('contextmenu', { bubbles:true, cancelable:true, composed:true, clientX:40, clientY:40, button:2 });
+    const notCancelled = a.dispatchEvent(ev);
+    const live = window.OB.identifyFromAnchor(a);
+    return {
+      defaultPrevented: ev.defaultPrevented,
+      notCancelled,
+      ctxShown: !!document.getElementById('ob-ctx'),
+      key: live && live.keys && live.keys[0],
+    };
   })()`);
-  (c.ctxShown && c.text.includes('Carol')) ? report.pass.push('C 右键穿透 Shadow DOM：菜单识别 Carol') : report.fail.push('C 右键菜单失败：' + JSON.stringify(c));
+  (c.defaultPrevented === false && c.notCancelled === true && !c.ctxShown && c.key === 'bili:uid:333')
+    ? report.pass.push('C 右键交还页面：评论条目上不接管右键、不弹插件菜单，身份仍可解析')
+    : report.fail.push('C 右键仍被接管或身份解析失败：' + JSON.stringify(c));
 
-  // D. 走完拉黑流程：Carol(333) 隐藏并入库
+  // D. 拉黑全流程：点开平台"更多"挂载评论菜单，从原生菜单旁的「本地拉黑」
+  // 快捷入口进入确认，Carol(333) 隐藏并进名单（不再经由右键菜单）。
   const d = await page.evaluate(`(async () => {
     const f = ${hostOf};
-    if(!document.getElementById('ob-ctx')) return { step:'no-ctx' };
-    document.querySelector('#ob-ctx button').click();
+    const carol = f('333'); if(!carol) return { step:'no-comment' };
+    const more = carol.shadowRoot.querySelector('#ob-fixture-more');
+    if(!more) return { step:'no-trigger' };
+    more.click();
+    const menuOf = () => carol.shadowRoot.querySelector('bili-comment-menu');
+    const quickOf = () => { const menu = menuOf(); return menu && menu.shadowRoot && menu.shadowRoot.querySelector('.ob-quick'); };
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !quickOf()) await new Promise(r=>setTimeout(r,50));
+    const quick = quickOf();
+    if(!quick) return { step:'no-quick-entry' };
+    quick.click();
     await new Promise(r=>setTimeout(r,150));
     const conf = document.getElementById('ob-confirm');
-    if(!conf) return { step:'no-confirm' };
+    if(!conf) return { step:'no-confirm', quickText: quick.textContent };
+    const sub = conf.querySelector('.ob-sub').textContent;
     conf.querySelector('.ob-ok').click();
     await new Promise(r=>setTimeout(r,400));
-    const carol = f('333');
-    return { confirmShown:true, carolBlocked: !!(carol && carol.getAttribute('data-ob-blocked')==='1'), inList: !!(window.OB && window.OB.Index.isBlocked(['bili:uid:333'])) };
+    return {
+      confirmShown:true, sub, quickText: quick.textContent,
+      carolBlocked: !!(carol && carol.getAttribute('data-ob-blocked')==='1'),
+      inList: !!(window.OB && window.OB.Index.isBlocked(['bili:uid:333'])),
+    };
   })()`);
-  (d.confirmShown && d.carolBlocked && d.inList) ? report.pass.push('D 拉黑全流程：Carol 已隐藏且进名单') : report.fail.push('D 拉黑流程失败：' + JSON.stringify(d));
+  (d.confirmShown && d.sub.includes('bili:uid:333') && d.carolBlocked && d.inList)
+    ? report.pass.push('D 拉黑全流程：原生菜单快捷入口确认后 Carol 已隐藏且进名单')
+    : report.fail.push('D 拉黑流程失败：' + JSON.stringify(d));
 
   await page.screenshot({ path: path.join(ROOT, 'test', '_shot_2_after_block.png'), fullPage: true });
 

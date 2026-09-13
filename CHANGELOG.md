@@ -2,6 +2,21 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（本地候选，未公开发布）
+
+- **右键交还页面**：删除"命中评论/帖子条目时接管右键、弹出自建「🚫 拉黑此用户」菜单"的整套实现（`contextmenu` 捕获监听、`buildContextMenu`、仅供其使用的 `findItem` 与 `#ob-ctx` 样式）；此前这些位置右键被 `preventDefault`，平台原生菜单与页面上下文操作失效。
+- 本地拉黑链路不受影响：平台原生菜单旁「🚫 本地拉黑」、确认气泡、撤销、B站弹幕工具、批量与作品级屏蔽全部保留。
+- `structure regression`：run 20/20（新增"右键保持原生"断言，旧源码上以 `defaultPrevented:true` 失败）、adapters 28/28、quickblock 38/38、userscript-product 7/7，错误 0；`blocked`：用户已决定暂停实页验证，本轮无真实站点证据。
+
+详细变更、证据和边界：[v0.57.4 完整条目](docs/changelog/v0.57.4.md)。
+
+## v0.57.3 - AI 直连配置连通性测试与瞬态重试 - 2026-09-12（本地候选，未公开发布）
+
+- AI 设置新增「测试连接」按钮：发送 `max_tokens=1` 最小请求即时验证 API 地址/模型/本机 Key，成功显示延迟，失败给出可理解原因；直连批量请求遇 429/5xx/超时/网络抖动自动重试一次（1.5s 退避），4xx 语义错误与取消不重试。适配任意 OpenAI-compatible provider（官方 DeepSeek API 即填即用）。
+- `structure regression`：ai-screening 25 项全绿（新增 AI-24 429 重试用例，旧行为整轮失败）；userscript product 全绿（新增测试连接用例）。
+
+详细变更、证据和边界：[v0.57.3 完整条目](docs/changelog/v0.57.3.md)。
+
 ## v0.57.2 - 自动弹幕正则安全边界 - 2026-09-12（已发布）
 
 - B站/抖音关键词屏蔽弹窗保存正则规则时，明显可能引发灾难性回溯的高风险表达式（如 `(a+)+`、`(a|aa)+`）被拒绝保存并给出原因；合法正则、已保存规则和导入兼容不受影响。热路径匹配继续复用按平台缓存的已编译正则。
@@ -11,9 +26,8 @@
 
 ## v0.57.1 - 无 hover 触控入口补齐 - 2026-09-11（已发布）
 
-- coarse pointer/无 hover 设备上的页面级“内容屏蔽/弹幕屏蔽”入口常驻可见，齿轮继续直接打开设置；设置、内容管理器、AI 审核和确认框的主要控件补齐至少 44px 触控目标。
-- 抖音滚动弹幕、B站播放器浮动弹幕都增加点按目标后显示自有本地入口的路径；桌面鼠标悬停路径保持不变，不触发平台举报、官方拉黑、关注或发帖。
-- `structure regression`：userscript product 6/6、通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28；`real-site verified`：2026-09-11 匿名 B站只读候选加载无页面/控制台错误；`blocked`：目标平板触控实机和抖音验证码页面未完成。
+- coarse pointer/无 hover 设备上的页面级“内容屏蔽/弹幕屏蔽”入口常驻可见，齿轮继续直接打开设置；设置、内容管理器、AI 审核和确认框的主要控件补齐至少 44px 触控目标。抖音滚动弹幕、B站播放器浮动弹幕均增加点按后显示自有本地入口的路径；桌面悬停路径不变，不触发平台举报/官方拉黑/关注/发帖。
+- `structure regression`：userscript product 6/6、通用 20/20、B站 quickblock 38/38、跨平台适配器 28/28；`real-site verified`：2026-09-11 匿名 B站只读候选加载无页面/控制台错误；`blocked`：平板触控实机与抖音验证码未完成。
 
 详细变更、证据和边界：[v0.57.1 完整条目](docs/changelog/v0.57.1.md)。
 
@@ -32,10 +46,7 @@ v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/relea
 
 ## v0.56.0 - 作品语境 AI 请求压缩与 OB-AI-014 收口 - 2026-09-10（已发布）
 
-- loopback AI 请求升级为 context schema v2：同一作品批次共享默认语境，弹幕时间和父评论使用紧凑表示；无法安全归并时保留显式上下文，不改变语义边界。
-- 持久化开发扩展三层桥同步校验 v2 字段，继续拒绝 UID、hash、URL、Cookie、Token 和原始平台对象。
-- `structure regression` 与真实 B站只读探针通过；最近三个 AI 批次上下文额外输入为 `16.4%/19.8%/16.8%`，loopback 单作品分组评测总输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
-- 真实用户内容长期精度、字幕/音频/画面语义没有可验证输入，已从活动计划移出并作为远期预留封存，不宣称已支持。
+- loopback AI 请求升级为 context schema v2（同批次共享默认语境、弹幕时间与父评论紧凑表示），开发扩展三层桥同步校验 v2 字段并继续拒绝 UID/hash/URL/Cookie/Token。`structure regression` 与真实 B站只读探针通过（评测总输入增长 `16.95%`、聚合 p95 比值 `1.0014`）；真实内容长期精度与字幕/音频/画面语义无可验证输入，移出活动计划作远期预留，不宣称已支持。详细数字见完整条目。
 
 详细变更、证据和边界：[v0.56.0 完整条目](docs/changelog/v0.56.0.md)。
 
@@ -43,10 +54,7 @@ v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/relea
 
 ## v0.55.0 - 作品语境感知的 AI 屏蔽 - 2026-09-10（已发布）
 
-- B站视频详情页 AI 记录加入作品标题/简介、分 P、真实回复父评论和弹幕进度；同文跨作品/楼层/位置不再只凭文字合并。
-- AI 审核默认按当前作品作用域确认，显式选择“全局作者”且身份可靠时才写入全局名单；确认后浮层立即关闭，当前作品内容立即生效。
-- contextCatalog 共享作品元数据，条目只发送 ordinal 引用和必要上下文；语境不足、未知 rule ID 和旧响应缺少语境字段统一延期。
-- `structure regression` 与匿名 B站只读真实探针已通过；线上模型精度、字幕/音频理解和成本基线仍按 `blocked` 记录。
+- B站视频详情页 AI 记录加入作品标题/简介、分 P、真实回复父评论和弹幕进度，contextCatalog 共享作品元数据（条目只发 ordinal 引用），语境不足或未知 rule ID 统一延期。AI 审核默认按当前作品作用域确认，显式选“全局作者”且身份可靠才进全局名单。`structure regression` 与匿名 B站只读探针通过；线上模型精度、字幕/音频理解和成本基线按 `blocked` 记录。
 
 详细变更、证据和限制：[v0.55.0 完整条目](docs/changelog/v0.55.0.md)。
 
@@ -54,19 +62,13 @@ v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/relea
 
 ## v0.54.0 - 独立 AI 评测与受控事实核查 - 2026-09-10（已发布）
 
-- 增加 24 条人工合成/脱敏独立评测集、schema/隐私校验和 mock-oracle 指标 runner；报告不把 mock 结果冒充真实模型精度。
-- 增加 loopback-only 本机事实 broker 和显式来源 allowlist；无来源、冲突、过期、不可访问或证据不足统一保守延后，不把事实证据变成 UID 或屏蔽键。
-- AI 事实核查默认关闭；`shadow` 只观测，`canary` 只有受限证据才能进入人工审核，仍不自动屏蔽、不扩大身份关联、不触发平台写入。
-- `structure regression`：评测、broker、FACT-1..4、AI screening、内容 AI、提示词、批次和既有平台矩阵通过；`blocked`：真实来源 allowlist、线上模型精度和成本基线未配置/未观察。
+- 新增 24 条人工合成/脱敏评测集与 mock-oracle 指标 runner（不把 mock 结果冒充真实精度），以及 loopback-only 事实 broker + 显式来源 allowlist；无来源、冲突、过期或证据不足统一保守延后，不把事实证据变成屏蔽键。事实核查默认关闭，`shadow`/`canary` 均不自动屏蔽、不扩身份关联、不触发平台写入；真实来源 allowlist、线上精度与成本基线为 `blocked`。
 
 详细变更、测试证据和限制：[v0.54.0 完整条目](docs/changelog/v0.54.0.md)。
 
 ## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（已发布）
 
-- B站 AI 审核确认后立即关闭浮层，基础 hash/已有 UID 先写入；右下状态条显示后台 UID 进度和撤销入口，完成后提示结果。
-- hidden 时暂停，换路由/换视频/停用/撤销/运行时销毁时取消旧任务；迟到 UID 不写入新会话。
-- UID 卡片缓存增加有界 TTL/LRU 和失败指数退避；唯一正向校验才关联 UID，碰撞/失败仍保留 hash-only。
-- `structure regression`：AI screening 23 项、B站 quickblock 38/38；完整矩阵、真实只读探针和发布边界见[当前维护状态](docs/maintenance/CURRENT.md)。
+- B站 AI 审核确认后立即关闭浮层并先写基础 hash/已有 UID，状态条显示后台 UID 进度与撤销入口；hidden、换路由/换视频、停用、撤销、运行时销毁均取消旧任务，迟到 UID 不写入新会话。UID 卡片缓存有界 TTL/LRU + 失败退避，仅唯一正向校验才关联 UID，碰撞/失败保留 hash-only。`structure regression`：AI screening 23 项、B站 quickblock 38/38。
 
 详细用户变化和证据：[v0.53.1 完整条目](docs/changelog/v0.53.1.md)。
 

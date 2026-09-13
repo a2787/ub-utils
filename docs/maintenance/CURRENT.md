@@ -1,17 +1,44 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-09-11
-状态来源：v0.57.1 已发布为公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+更新时间：2026-09-13
+状态来源：v0.57.2 为公开版本，v0.57.4（撤销右键接管）是当前本地候选；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+
+> 🔴 2026-09-13 仓库事故（未修复）：工作区源码与测试文件完整，但 `E:\pluginforchrome\.git` 的对象库与 `refs/` 已丢失
+> （`objects/pack` 只剩两个孤立 `.idx`，无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer）。`refs/heads/master` 与
+> `refs/remotes/origin/master` 已按 reflog 恢复为 `c025d8b` / `a3a769f`，但对象缺失使 `git log`、`git status` 和 `docs-check`
+> 的快照/哈希门禁暂时无法运行；v0.57.3 候选提交 `c025d8b` 从未推送，可能无法从远端恢复。恢复方案待用户决定。
 
 ## 当前版本
 
-- 当前 userscript：`0.57.2`（已公开发布）
-- 构建：`0.57.2-danmaku-regex-safety`
+- 当前 userscript：`0.57.4`（本轮候选，未公开发布）
+- 构建：`0.57.4-native-context-menu`
 - 当前公开版本/功能提交：`0.57.2` / `693728aa36fac28aab74c9c80cffc953d4ebb1dc`
 - 最近验证的源码快照：`693728aa36fac28aab74c9c80cffc953d4ebb1dc`
-- 当前候选源码 SHA-256：`2673c69814e75a0f3bc207cb5d399881cf17c58b83510170906711733a310c22`
+- 当前候选源码 SHA-256：`caacf22786c3722e6a8939338993ee26e1b9d2fdcdeb5feeaf44a33ac784223d`
 - 发布状态：v0.57.2 功能提交 `693728a` 已推送到 `origin/master`，`v0.57.2` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.2`；`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.57.2](https://github.com/a2787/ub-utils/releases/tag/v0.57.2)。
+
+## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，本地候选）
+
+- 范围/文件：删除"命中评论/帖子条目时接管右键并弹出自建菜单「🚫 拉黑此用户」"的整套实现——`document` 级 `contextmenu`
+  捕获监听、`buildContextMenu`、仅供该监听使用的 `findItem`、`#ob-ctx` 样式与引导"试右键"的提示文案（`omniblock.user.js`）。
+  平台原生右键菜单、页面上下文操作与此前被 `preventDefault` 掉的功能全部交还页面。
+- `structure regression`：`node test/run.cjs` 20/20（C 用例改为断言右键不再被接管且身份仍可解析，旧源码上以
+  `{"defaultPrevented":true,"ctxShown":true}` 失败后转通过）；`node test/adapters.cjs` 28/28（贴吧嵌套正文目标与 B站
+  Shadow DOM 两处右键用例同样在旧源码上失败后转通过，六平台其余 26 项保持通过）；`quickblock` 38/38、
+  `userscript-product` 7/7；页面/控制台错误 0。`run.cjs` D 用例仍覆盖完整拉黑链路：点开"更多"挂载评论菜单 →
+  原生菜单旁快捷入口 → 确认气泡 → `bili:uid:333` 进名单且评论隐藏。
+- `structure regression`：与 CI 同一组本地矩阵 21/22 脚本退出 0（state、comment-manager、danmaku-auto、work-block、
+  performance、weibo-replay、douyin、sync、sync-server、ai-platforms、content-ai、content-coverage、ai-autoload、
+  ai-watchdog、probe-hygiene、ai-prompt-system、ai-prompt-eval 等）。
+- `blocked`：本轮未运行真实站点探针。用户 2026-09-12 决定备考期间暂停全部实页验证，因此"真实网站右键菜单不再被接管"
+  只有夹具证据，未取得 `real-site verified`；需要恢复时按 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 的
+  授权前提，对 B站至少各跑一次 `--verify-local` 与只读真站探针。
+- 未决（非产品回归）：`node test/ai-screening.cjs` 25 项断言全部通过且 `FAIL: 无`，但退出码非零——其判据把任何控制台
+  错误都算失败，而 AI-24 用例自身 mock 的 HTTP 429 在当前 Chrome 上被记为一条资源加载 console error。需单独一轮修
+  测试退出判据，本轮不改测试标准。
+- 未决：本轮改动尚未 commit（`.git` 对象库丢失，见顶部事故说明）；v0.57.4 版本条目、README 与计划已同步。
+- 计划收尾：OB-CTX-001 的验收项与证据见 [PLAN.md](PLAN.md)；旧日期条目已移至 [移出存档](plans/2026-09-13-current-dated-archive.md)。
 
 ## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
 
@@ -20,15 +47,17 @@
 - `real-site verified`：2026-09-12，用户专用 Chrome 登录态只读探针（扩展桥接部分就绪）：脱敏页面形式 `bilibili.com/page/...` 读到 8 条作品内容；`douyin.com/jingxuan/...` 登录态读到 48 条作品内容（首次取得抖音登录态真实读取，匿名探针此前被验证码阻断）；`weibo.com/page/...` 读到 6 条内容、6 个身份。三条均为内容读取证据，不含评论/弹幕展开与 AI/存储链路。
 - `blocked`：专用 Chrome 批量补采仍被桥接故障阻断——B站/抖音/微博/知乎的 AI/存储链路报"桥接未就绪"，tieba/x 报 `Target.getTargets` 超时；换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音性能基线均未覆盖。故障定位：MV3 service worker 休眠后 attach 竞态（`Session with given id not found`），手动重载扩展可临时恢复，需要专门一轮修 `test/dedicated-browser.cjs` 的唤醒/重试。
 - `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供。
-- `structure regression`：CI `maintenance` 工作流转绿（run 34628105864，commit `dce2810`）：22 项本地回归 + 语法/文档门禁在 ubuntu-latest + 系统 Chrome 上通过，依赖 `npm ci` 锁定，真实站点探针明确排除。迭代中修了三个测试/工作流脆弱点：checkout 浅克隆使快照祖先校验失败、work-block 方向键未落定采样、adapters 弹幕按钮 3px 对中在 Linux 字体下误报；均不涉及产品行为。
+- `structure regression`：CI `maintenance` 工作流转绿（run 34628105864）：22 项本地回归 + 门禁在 ubuntu-latest + 系统 Chrome + 锁定依赖通过，真实站点探针排除在外；迭代修了 checkout 浅克隆、方向键采样、弹幕按钮对中三个测试脆弱点。
+- v0.57.3 追加：AI 设置新增「测试连接」（`max_tokens=1` 最小请求即时验证 provider 配置，成功显示延迟、失败给可理解原因），直连批量请求 429/5xx/超时/网络抖动自动重试一次（1.5s 退避，取消与 4xx 不重试）；ai-screening 25 项全绿（AI-24 重试用例旧行为失败后转通过）、userscript product 全绿。适配任意 OpenAI-compatible provider：用户确认将填写官方 DeepSeek API，无需 provider 专项评估。
+- 用户决策（2026-09-12）：① OB-AI-001 商汤评估作废（直连 provider 无关，见归档追记）；② 因用户备考使用专注插件（自动关闭社交/娱乐页面），所有实页验证（登录态补采、换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版、抖音探针/基线）暂缓，待条件允许恢复；本轮完善只用本地夹具与 mock provider。
 
 
 ## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
 
 - 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、弹幕点按入口、设备直连 API、GM Key、账户注册/登录与客户端加密同步；`sync/`、`sync-server/` 提供协议/服务回归。`extension/` MV3 实验不属于交付路径。
 - `structure regression`：v0.57.1 发布时 product 6/6；通用 20/20、B站 38/38、适配器 28/28、同步核心 7/7、Python 服务 5/5 等受影响回归通过。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 `0.57.1`（源码 SHA-256 `2efe63df…`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，评论菜单 `本地拉黑`/`屏蔽回复` 注入，单条屏蔽与撤销恢复通过，页面/控制台错误 0；不覆盖平板触控与线上同步。
-- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），本地拉黑确认/隐藏/撤销恢复通过，页面/控制台错误 0；活动顶层虚拟评论 spacer 未出现，仍记 `blocked`。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 `0.57.1`（源码 SHA-256 `2efe63df…`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，本地拉黑注入与撤销恢复通过，页面/控制台错误 0；不覆盖平板触控与线上同步。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），本地拉黑/撤销恢复通过，页面/控制台错误 0；spacer 未出现，仍记 `blocked`。
 - `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务 loopback 与 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
 - `blocked`：平板实机触控、真实 provider 与双设备加密合并未取得设备结果，2026-09-12 起随平板线封存待重启；抖音匿名探针停在验证码中间页；Quick Tunnel 无固定域名，重启可能换址。
 - 发布状态：v0.57.1 已发布（tag/Release 在 GitHub）；当前 Latest 已由 v0.57.2 接替；未执行平台写入。
@@ -38,11 +67,11 @@
 
 ## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，deferred，随平板线封存）
 
-- 范围/文件：东京机新增独立 `/opt/omniblock-sync/server.py`、`/opt/omniblock-sync/data/omniblock-sync.sqlite3`、`omniblock-sync.service` 和独立 Quick Tunnel 服务；未改 Vibeme/V2/KB 数据库、代码、网关路由或既有隧道。
-- `structure regression`：本地 sync-core 7/7、Python 服务 5/5；服务模板启用 loopback、独立数据目录、最小权限和不记录请求内容。
-- `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地源码 SHA-256 一致。
-- `blocked`：还没有用用户真实账户完成注册/登录、第一台写入、第二台解密合并和墓碑/冲突读回；稳定 HTTPS 域名/命名隧道也未配置。
-- 当前限制：Quick Tunnel 地址只作为本轮电脑/平板互测入口；隧道重启可能更换地址，若更换需在两台设备更新同步服务地址。API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
+- 范围：东京机新增独立 `/opt/omniblock-sync`（server.py、独立 SQLite、systemd 服务、独立 Quick Tunnel）；未改 Vibeme/V2/KB 数据库、代码、网关路由或既有隧道。
+- `structure regression`：本地 sync-core 7/7、Python 服务 5/5；服务启用 loopback、独立数据目录、最小权限、不记录请求内容。
+- `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地 SHA-256 一致。
+- `blocked`：真实账户注册/登录、第一台写入、第二台解密合并与墓碑读回未执行；稳定 HTTPS 域名未配置。
+- 当前限制：Quick Tunnel 重启可能换址，需两台设备同步更新；API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
 - 下一步：随平板线封存；重启时按 [封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再双设备互测。
 
 ## 2026-09-11 上一轮 MV3 方案收回（OB-EXT-001，superseded）
@@ -78,55 +107,14 @@
 - 账户同步必须由用户点击“立即同步（合并）”触发；名单、可同步设置、提示词和反馈在客户端加密，API Key、密码、同步口令、令牌和日志不进入同步文档。东京服务器尚未部署或改 schema。
 - `real-site verified` 的当前只读入口与阻断以本文件顶部和版本条目为准；未判定登录、验证码、根评论 partial、模型精度和平台写入不能从夹具推导。
 
-## 2026-09-08 B站新增内容累计增量 AI 分析（OB-AI-003）
+## 2026-09-06 至 2026-09-08 日期条目（已移出活动正文以守住 24 KiB 预算）
 
-- 范围：修复评论滚动/楼中楼新增内容和后续弹幕数据段只更新采集计数、未触发 AI 的问题；修复增量完成态把“已分析数量”显示成本批新增数量的问题。每个网关请求仍最多 80 条。
-- 改动文件：`omniblock.user.js`、`test/ai-screening.cjs`、`docs/architecture/ARCHITECTURE.md`、`README.md`、`CHANGELOG.md`、`docs/changelog/INDEX.md`、`docs/changelog/v0.51.1.md`、`docs/maintenance/PLAN.md`、`docs/maintenance/CURRENT.md`。
-- `structure regression`：`node test/ai-screening.cjs` 18/18；覆盖评论/楼中楼滚动与点击、弹幕数据段增量、累计 `analyzed` 和稳定 ID 去重，页面错误和控制台错误均为 0。`node test/content-ai.cjs` 8/8、`node test/ai-batch.cjs` 2/2、`node test/ai-autoload.cjs` 3/3、`node test/ai-platforms.cjs` 7/7、`node test/quickblock.cjs` 37/37 通过。
-- `real-site verified`：2026-09-08 专用 Chrome 持久化开发扩展，B站只读视频页（登录状态未判定，页面形式 `bilibili.com/video/...`）bridge 为 `ready`；首轮 224 条弹幕完成 `224/224`，滚动到评论区后累计 `247/247`（采集 24 条评论，增量事件 23 条），继续加载/展开楼中楼后累计 `273/273`（采集 30 条评论、244 条弹幕，最后一次增量事件 6 条）；旧内容未重复发送，页面错误 0。未点击举报、官方拉黑、关注或发帖控件。
-- `blocked`：B站根评论分页仍为 partial，不能由当前样本推导全量；登录态未判定，本轮未运行需要用户授权的登录态探针。
-- 发布状态：0.51.1 已 commit 并 push 到 `origin/master`，未创建 tag、GitHub Release、部署或执行平台写入；下一步转入下一版本提示词系统的设计计划。
-
-## 2026-09-08 平台关键词屏蔽与评论 AI 建议提醒（OB-RULE-002）
-
-- 范围：将 B站/抖音既有关键词/正则规则从设置页迁移到各自内容屏蔽弹窗的「关键词屏蔽」标签；命中当前已观察且身份可靠的评论/弹幕时直接走本地名单链，不请求 AI、不弹确认。AI 采集先排除关键词/本地名单命中，并为 B站/抖音评论晚到首轮的情况增加有界稳定哈希增量触发；微博、知乎新增当前可靠评论的 AI 采集和统一评论/AI 入口。
-- 改动文件：`omniblock.user.js`、`test/content-ai.cjs`、`test/ai-screening.cjs`、`test/ai-platforms.cjs`、`test/danmaku-auto.cjs`、`test/quickblock.cjs`、`test/comment-manager.cjs`、`test/adapters.cjs`、`test/real-bilibili-probe.cjs`、`test/real-platform-probe.cjs`、`test/maintenance-check.cjs`、`README.md`、`CHANGELOG.md`、`docs/changelog/INDEX.md`、`docs/changelog/v0.51.0.md`、`docs/maintenance/PLAN.md`、`docs/maintenance/CURRENT.md`。
-- `structure regression`：内容规则夹具 8/8；AI screening 14/14；AI 多平台 7/7；自动弹幕 7/7；B站 quickblock 37/37；统一评论管理器 3/3；跨平台适配器 28/28；基础运行器 20/20；AI 自动加载 3/3；watchdog 1/1；持久化开发扩展 6/6。以上本轮受影响浏览器回归均无页面错误/控制台错误；userscript 与探针语法通过。
-- `real-site verified`：2026-09-08 匿名/登录状态未判定的隔离只读会话，自动发现 `bilibili.com/video/...` 页面，源码运行标识与候选一致；观察到 2 个评论 renderer、2 位当前评论作者，内容弹窗 4 个标签（评论/弹幕/AI/关键词），评论管理器 2 行可读取/搜索/全选且关键词面板实际挂载；公开评论 API 返回 3 条根评论和 14 条楼中楼回复。未点击 B站举报、官方拉黑、关注或发帖控件。
-- `real-site verified`：同日匿名/登录状态未判定的隔离只读会话，自动发现 `weibo.com/...` 详情页，观察到 26 个评论节点、23 个可识别身份、21 个根评论和 5 个回复行；内容弹窗 2 个标签（评论/AI），AI 控件实际挂载；最新一次本地评论屏蔽后撤销恢复可见。未点击微博举报、官方拉黑、关注或发帖控件。
-- `blocked`：B站根评论分页仍是 partial，不能由样本推导全量；微博本轮没有可测的活动顶层虚拟列表 spacer，作品级补位不记为通过；抖音匿名入口停留验证码中间页，知乎匿名入口重定向登录页，因此本轮没有真实的抖音关键词/AI 或知乎评论/AI 样本。用户没有对本轮登录态验证显式授权，未运行登录态探针。
-- 发布状态：0.51.0 仅是本地候选，未 commit、push、tag、GitHub Release、部署或执行平台写入；公开版本仍为 0.46.2。下一步最有价值的动作是审阅差异、源码哈希和隐私门禁；公开发布需要当轮单独授权。
-
-## 2026-09-07 B站入口、列表正文与弹幕 UID 按需关联（OB-BILI-001）
-
-- 范围：只修改 B站统一内容入口的位置、评论/弹幕列表正文提取，以及已经选中的弹幕目标在屏蔽动作中的 hash→UID 按需关联；没有修改其他平台、B站平台写入或初始全量反查。
-- `structure regression`：quickblock 37/37、AI 13/13、评论管理器 3/3、自动弹幕 7/7、适配器 28/28、运行器 20/20；覆盖入口、正文、目标关联和碰撞边界。
-- `real-site verified`：2026-09-07 B站公开视频页（登录未判定）复现旧入口左下（`left=32`、`right=196.7`、宽 1707），捕获 `bili-rich-text`/操作组件/菜单；当前 0.50.0 匿名隔离探针在公开页 `pageLoaded=true`，看到 2 个评论 renderer、1 个子评论、3 个菜单，统一评论管理器 3 行可读取/搜索/全选，弹幕工具 89 组/36 位发送者的单条与批量屏蔽均可撤销，6 条浮动弹幕可命中并撤销，UID 卡片请求 12 次且无路由错误，评论隐藏撤销和自动 hash 路径通过。独立坐标测量确认内容入口为 fixed 右下并位于设置齿轮上方。
-- `real-site verified`：同日使用当前源码生成的持久化 MV3 开发扩展，在 Edge 临时隔离 profile 打开公开 B站视频页（登录状态未判定，页面形式 `bilibili.com/video/...`），未注入页面源码；bridge 为 `ready`，自动加载版本/构建一致，观察到 48 行弹幕，按需查询 2 个单 hash 目标后得到 1 个唯一候选，点击「拉黑本人」不出现二次确认，UID 与 hash 同时进入本地索引，撤销后两者均恢复，页面错误 0。
-- `blocked`：该公开页的根评论分页状态仍显示 partial，不能把 3 行样本扩写成全分页结论；持久化 smoke 只覆盖实际加载到的 48 行和第 2 个查询到的唯一候选，不扩写为全视频全量 UID 反查。
-
-## 2026-09-06 AI 智能屏蔽第一阶段（OB-AI-001）
-
-- `structure regression`：AI 7/7；gateway mock smoke 通过；run20/20、state9/9、B站36/36、自动弹幕7/7、评论3/3、作品3/3、性能8/8、适配28/28、微博13/13、扩展5/5，均无错误。
-- `real-site verified`：2026-09-06 专用 Chrome 的 `bilibili.com/video/...` 显示 0.47.0 AI 区块，AI 关闭未发请求。启用后官方 DeepSeek V4 Flash 经本机 LiteLLM 完成 45/80 条样本及页面附加规则分析，显示“本轮分析完成”；登录状态未判定，未读 Cookie、未点平台写入，未确认候选。隔离只读探针退出码 0：2 根/3 子/5 菜单，3 个子菜单有入口，主评论隐藏/恢复 1 次；根评论分页 partial。
-- `blocked`：商汤未配置；多 provider fallback、额度、cooldown 和记忆未联调。未关闭 DeepSeek V4 thinking 时曾超 20 秒，现由 `thinkingMode=disabled` 解决；本地 mock 已验证 429 fallback。OpenClaw 未接入，V2 未改。
-
-## 2026-09-06 AI 多平台采集与一键网关启动（OB-AI-002）
-
-- 范围：保留 B站 AI 采集，新增抖音已观察评论/弹幕、活动视频会话隔离和根目录双击启动；当时明确不自动展开/滚动、不调用私有接口、不改 V2。
-- `structure regression`：AI、平台、网关、生命周期、评论/弹幕、性能、扩展、适配器和文档矩阵均按 v0.48.0 记录通过；网关健康、429 fallback、Key/YAML 分离和 `启动网关.cmd` 静态/实际启动门禁通过。
-- `real-site verified`：2026-09-06 B站匿名探针与专用 Chrome 设置/审核框通过；2026-09-07 抖音登录态当前视频 15 条带身份弹幕、10 条评论及管理器/自动规则闭环通过，未点平台写入控件。
-- `blocked`：同 URL 换片后的新行不足、匿名入口验证码；商汤 provider、额度、长期 cooldown/fallback 未联调。
-
-## 2026-09-07 AI 分析 watchdog、全量分批、抖音正文清洗与超时预算（OB-AI-003~007）
-
-- `structure regression`：watchdog 1/1、探针清理 1/1、抖音 AI 6/6、全量分批 2/2、开发扩展 5/5、桥接降级失败 1/1；userscript 与 service worker 60 秒预算断言通过，页面/控制台错误为 0。
-- `real-site verified`：2026-09-07 用户授权专用 Chrome 抖音登录态刷新候选扩展后，当前页观察到 245 条内容；“分析本页”进入 4 批并完成 245/245，审核态 8 条候选，桥接为 `ready`，网关收到 4 次 POST 且均为 HTTP 200，`lastError` 为空，控件尾缀命中 0；未点平台写入控件。
-- `blocked`：抖音验证码；换片新行不足；商汤未联调。2026-09-07 Docker engine 已恢复（Model Runner 关闭）；health/models 200、compose healthy；目录保留，数据卷未动。
-
-## 近期历史事实路由（OB-AI-008 及更早）
-
-- 2026-09-07 抖音一键加载、评论/弹幕会话隔离和取消清理的详细证据已归档在历史版本条目；当前只保留其仍影响本版本的外部门禁。
+- OB-AI-001、OB-AI-002、OB-AI-003、OB-AI-003~007、OB-BILI-001、OB-RULE-002 的原始范围、改动文件、
+  证据与当时发布状态逐字保存在 [2026-09-13 移出存档](plans/2026-09-13-current-dated-archive.md)；
+  本节只保留仍影响当前版本的边界。
+- 仍然生效的边界：B站根评论分页长期为 partial，不能由样本推导全量；抖音匿名入口验证码、知乎登录墙与
+  微博 spacer 未被推翻；商汤 provider 与多 provider fallback 从未联调（商汤评估已作废）；抖音一键加载、
+  评论/弹幕会话隔离的详细证据在版本条目中，本页不重复。以上项目前仍按未验证处理。
 
 ## 历史事实路由
 
@@ -170,4 +158,4 @@ v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史
 
 ## 下一项最有价值的验证
 
-维护重心在电脑。本完成 OB-RULE-001（随 v0.57.2 发布）与 OB-REL-001 的 CI 工作流（首跑因 changelog 未入库失败，重跑结果待回填）。下一项最有价值：① 修 `test/dedicated-browser.cjs` 的扩展桥接唤醒/重试，解除登录态批量补采阻断（换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音基线都在它后面）；② 商汤 provider 与事实检索来源仍等用户提供凭据/allowlist。
+用户备考期间专注插件会自动关闭社交/娱乐页面，所有实页验证暂缓；本轮 v0.57.3（AI 测试连接 + 瞬态重试）只依赖本地夹具。用户填入官方 DeepSeek API 后，先用 AI 设置里的「测试连接」确认可用，再在 B站真实页面跑一次 AI 分析即可把直连链路记为 `real-site verified`（用户自行操作，一轮一次）。其余暂停项（登录态补采、换片隔离、B站分页/动态 UID 等）待用户条件允许后从 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 与历史归档恢复。

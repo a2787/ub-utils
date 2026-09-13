@@ -283,6 +283,23 @@ function corsHeaders() {
       && !aiUi.text.includes('网关') && aiUi.managerNoHorizontalOverflow && aiUi.managerTouchTargets, JSON.stringify(aiUi));
     report.pass.push('AI settings expose only provider URL/model and local Key controls');
 
+    const connectionTest = await page.evaluate(async () => {
+      const button = document.querySelector('#ob-content-manager #ob-ai-test-connection');
+      const status = document.querySelector('#ob-content-manager #ob-ai-test-status');
+      if (!button || !status) return { present: false };
+      button.click();
+      for (let i = 0; i < 50 && !/连接|失败|地址|Key|模型/.test(status.textContent || ''); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      for (let i = 0; i < 50 && /正在发送/.test(status.textContent || ''); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return { present: true, state: status.dataset.state || '', text: status.textContent || '' };
+    });
+    assert.ok(connectionTest.present && connectionTest.state === 'ok'
+      && /连接成功/.test(connectionTest.text), JSON.stringify(connectionTest));
+    report.pass.push('AI settings 测试连接 button sends a minimal request and reports success with latency');
+
     const sync = await page.evaluate(async (args) => {
       const login = await window.OB.sync.login({ endpoint: args.endpoint, username: 'synthetic-user', password: 'synthetic-account-password' });
       const result = await window.OB.sync.synchronize(args.passphrase);

@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-09-11
+更新时间：2026-09-13
 
 本文件是 OmniBlock 唯一的活动计划：记录问题、范围、依赖、验收和下一步；当前事实放在
 `CURRENT.md`，用户可见变化放在 README/版本 changelog，结束项移入历史索引。
@@ -100,6 +100,24 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 - evidence: `structure regression`：本地 sync-core 7/7、Python 服务 5/5；`real-site verified`：2026-09-11 独立服务 loopback 与 HTTPS Quick Tunnel health 返回 200，源码 SHA-256 一致；真实账户与双设备互测待本项完成。
 - next: 双设备互测随平板线于 2026-09-12 封存（服务器保持部署在线，不改 schema/凭据）；重启时按 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再电脑+平板互测并回填 `real-site verified`。
 - updated: 2026-09-12
+- supersedes: none
+
+### OB-CTX-001 — 撤销接管右键的本地拉黑菜单
+
+- status: in_progress
+- priority: P1
+- scope: 移除 userscript 中"命中条目时接管页面右键、弹出自建「🚫 拉黑此用户」菜单"的整套实现：`document` 级 `contextmenu` 捕获监听、`buildContextMenu`、只为该监听服务的 `findItem` 沿 `composedPath` 命中逻辑，以及 `#ob-ctx` 样式与相关提示文案；右键交还页面与平台原生菜单。
+- non-goals: 不删除本地名单、确认气泡、撤销 toast、平台原生菜单旁的「本地拉黑」快捷入口、B站弹幕工具、批量/作品级屏蔽或任何存储格式；不新增替代手势或新入口；不改动身份键规范与平台写入红线。
+- dependencies: none
+- acceptance: required
+  - [x] 任意平台条目（含 Shadow DOM 内的 B站评论）上派发 `contextmenu` 不再 `preventDefault`，也不再出现 `#ob-ctx`。
+  - [x] 本地拉黑全流程仍可用：从平台原生菜单旁的快捷入口进入确认气泡、写入本地名单、条目隐藏并可撤销。
+  - [x] `findItem`/`buildContextMenu`/`#ob-ctx` 在源码、样式与文档中无残留引用。
+  - [x] `node test/run.cjs` 20/20、`node test/adapters.cjs` 28/28、`node test/quickblock.cjs` 38/38、`node test/userscript-product.cjs` 7/7，页面/控制台错误为 0。
+  - [ ] `node test/docs-check.cjs` 与 `git diff --check` 通过——被 2026-09-13 `.git` 对象库丢失事故阻断，恢复后补跑。
+- evidence: `structure regression`：`test/run.cjs` C 用例改为"右键既不 `preventDefault` 也不出现 `#ob-ctx`，身份仍解析为 `bili:uid:333`"，在旧源码上以 `{"defaultPrevented":true,"ctxShown":true}` 失败、删除实现后转通过；`test/adapters.cjs` 的贴吧嵌套正文目标与 B站 Shadow DOM 两处右键用例同样在旧源码上以 `defaultPrevented:true` 失败后转通过，六平台其余 26 项保持通过；`run.cjs` D 用例（原生菜单快捷入口 → 确认 → `bili:uid:333` 入库并隐藏）证明拉黑链路未受影响；与 CI 同一组本地矩阵 21/22 脚本退出 0。`blocked`：未运行真实站点探针（用户 2026-09-12 决定暂停实页验证），真实网站右键行为只有夹具证据。非本轮回归：`ai-screening` 25 项断言全绿但因其自身 429 mock 的控制台噪声使退出码非零。
+- next: `.git` 事故恢复后补跑 `docs-check`/`git diff --check`，提交本轮改动并把本项转 `verified`；`ai-screening` 退出判据另立计划。
+- updated: 2026-09-13
 - supersedes: none
 
 ## 关闭规则

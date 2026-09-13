@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.57.2
+// @version       0.57.4
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.57.2-danmaku-regex-safety';
+  const RUNTIME_BUILD = '0.57.4-native-context-menu';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -404,38 +404,6 @@
     return api;
   }
 
-  // 沿 composedPath（含影子宿主）找到第一个匹配适配器的条目
-  function findItem(targetOrEvent, adapter) {
-    // 事件目标在开放 Shadow DOM 中会被浏览器重定向为宿主元素；只有从
-    // Event.composedPath() 才能取得真正命中的评论节点。保留元素参数路径
-    // 兼容快捷入口等非事件调用。
-    const event = targetOrEvent && typeof targetOrEvent.composedPath === 'function' ? targetOrEvent : null;
-    const target = event ? event.target : targetOrEvent;
-    const path = event ? event.composedPath() : (() => {
-      const out = [];
-      let node = target && target.nodeType === 1 ? target : target && (target.parentElement || target.parentNode);
-      for (let guard = 0; node && guard < 64; guard++) {
-        out.push(node);
-        if (node.parentElement) node = node.parentElement;
-        else {
-          const root = node.getRootNode && node.getRootNode();
-          node = (root && root.host) || null;
-        }
-      }
-      return out;
-    })();
-    for (const n of path) {
-      if (!n || n.nodeType !== 1 || !n.matches) continue;
-      for (const sel of adapter.selectors) {
-        if (n.matches(sel)) {
-          const info = adapter.extract(n);
-          if (info && info.keys && info.keys.length) return { el: n, info };
-        }
-      }
-    }
-    return null;
-  }
-
   // 归一化身份值：去空白、小写（平台 uid 多为数字，sec_uid 大小写敏感故保留原样）
   function normId(v) {
     if (v == null) return '';
@@ -558,6 +526,7 @@
   // provider 可能在服务端进行有限重试；客户端预算需要覆盖一次完整响应窗口，
   // 让超时、取消和页面生命周期都能有界收尾。
   const AI_REQUEST_TIMEOUT_MS = 60000;
+  const AI_DIRECT_RETRY_DELAY_MS = 1500;
   const AI_REQUEST_WATCHDOG_SLACK_MS = 250;
 
   function aiRuleText(value, maxLength = AI_RULE_MAX_LENGTH) {
@@ -2756,18 +2725,6 @@
     }
     .ob-dy-dm-block:hover { background: #a93226 !important; }
 
-    /* 右键浮动菜单 */
-    #ob-ctx {
-      position: fixed; z-index: 2147483647; background: #fff; color: #222;
-      border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.18);
-      padding: 4px; min-width: 140px; font-size: 13px;
-    }
-    #ob-ctx button {
-      display: block; width: 100%; text-align: left; border: 0; background: transparent;
-      padding: 7px 10px; border-radius: 5px; cursor: pointer; color: #c0392b; font-size: 13px;
-    }
-    #ob-ctx button:hover { background: #f5f5f5; }
-
     /* 确认气泡 */
     #ob-confirm {
       position: fixed; z-index: 2147483646; background: #fff; color: #222;
@@ -3447,6 +3404,8 @@
     #ob-panel .ob-ai-key-row button, #ob-content-manager .ob-ai-key-row button { min-height: 32px; border: 1px solid #c8c8c8; border-radius: 6px; padding: 6px 10px; background: #fff; color: #333; cursor: pointer; white-space: nowrap; }
     #ob-panel .ob-ai-key-row button:hover, #ob-content-manager .ob-ai-key-row button:hover { background: #f5f5f5; }
     #ob-panel .ob-ai-key-row .ob-ai-key-clear, #ob-content-manager .ob-ai-key-row .ob-ai-key-clear { color: #a33; border-color: #e0b0aa; }
+    #ob-panel .ob-ai-test-status, #ob-content-manager .ob-ai-test-status { margin: 2px 0 0; color: #777; font-size: 11px; line-height: 1.45; word-break: break-word; }
+    #ob-panel .ob-ai-test-status[data-state="error"], #ob-content-manager .ob-ai-test-status[data-state="error"] { color: #b03a2e; }
     #ob-panel .ob-sync-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
     #ob-panel .ob-sync-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
     #ob-panel .ob-sync-form label { min-width: 0; color: #555; font-size: 11px; }
@@ -7357,23 +7316,8 @@
   }
 
   // ====================================================================
-  // 4. 拉黑入口 UI（平台右键/快捷入口 + 确认气泡 + 撤销 toast）
+  // 4. 拉黑入口 UI（平台原生菜单快捷入口 + 确认气泡 + 撤销 toast）
   // ====================================================================
-  function buildContextMenu(x, y, info, onBlock) {
-    let ctx = $('#ob-ctx');
-    if (ctx) ctx.remove();
-    ctx = document.createElement('div');
-    ctx.id = 'ob-ctx';
-    ctx.style.left = x + 'px';
-    ctx.style.top = y + 'px';
-    const btn = document.createElement('button');
-    btn.textContent = `🚫 拉黑此用户${info.label ? '：' + info.label : ''}`;
-    btn.onclick = (e) => { e.stopPropagation(); ctx.remove(); onBlock(); };
-    ctx.appendChild(btn);
-    document.body.appendChild(ctx);
-    setTimeout(() => { const close = (ev) => { if (!ctx.contains(ev.target)) { ctx.remove(); document.removeEventListener('click', close); } }; document.addEventListener('click', close); }, 0);
-  }
-
   function reasonFromAnchor(anchorEl) {
     const a = currentAdapter;
     if (!a || !a.extract || !anchorEl) return '';
@@ -7516,17 +7460,8 @@
     observedSenders: 0, matchedMessages: 0, matchedHashes: 0, linkedUids: 0, hashOnly: 0, unidentifiable: 0, uidLimit: 0,
   });
 
-  // 右键：若光标在某条目上，弹出自建菜单（不触发平台原生"不感兴趣"）
-  document.addEventListener('contextmenu', (e) => {
-    if (!Store.getSetting('enabled')) return;
-    const adapter = currentAdapter;
-    if (!adapter || !adapter.selectors) return;
-    // 沿 composedPath 穿透 Shadow DOM 找到命中条目
-    const found = findItem(e, adapter);
-    if (!found) return;
-    e.preventDefault();   // 仅当命中条目时接管右键
-    buildContextMenu(e.clientX, e.clientY, found.info, () => showConfirm(found.info.label, found.info.keys, found.el));
-  }, true);
+  // 页面右键、原生菜单和平台自身的上下文操作完全交还页面：插件不再注册
+  // contextmenu 监听，也不接管或改写平台的右键菜单行为。
 
   // ====================================================================
   // 5. 各平台适配器
@@ -12070,7 +12005,7 @@
       const info = liveInfo && liveInfo.keys && liveInfo.keys.length ? liveInfo : btn.__obQuickInfo;
       if (!info || !info.keys || !info.keys.length) {
         EventLog.record('ui.quick.rejected', { platform: currentAdapter && currentAdapter.id || 'unknown', reasonCode: 'no-reliable-identity' }, { immediate: true });
-        showToast('⚠️ 无法识别该用户，请重新打开菜单或试右键'); return;
+        showToast('⚠️ 无法识别该用户，请重新打开菜单后重试'); return;
       }
       EventLog.record('ui.quick.open-confirm', { platform: currentAdapter && currentAdapter.id || 'unknown' }, { immediate: true });
       showConfirm(info.label || '该用户', info.keys, anchorEl, null, null, info.note);
@@ -18739,21 +18674,39 @@
               ],
             };
           };
+          // 直连瞬态失败（限流/5xx/超时/网络抖动）自动重试一次；取消、代次
+          // 过期与 4xx 语义错误不重试，失败状态保持可理解。
+          const isRetryableAiError = (error) => {
+            const message = String(error && error.message || error);
+            if (/HTTP 4\d\d/.test(message) && !/HTTP 429/.test(message)) return false;
+            return /HTTP 429|HTTP 5\d\d|请求超时|服务连接失败|服务请求失败/.test(message);
+          };
+          async function requestWithRetry(payload, label) {
+            for (let attempt = 0; ; attempt++) {
+              const request = requestJSON(transport.url, payload, AI_REQUEST_TIMEOUT_MS, label, 'direct');
+              activeRequest = request;
+              const startedAt = monotonicNow();
+              try {
+                const response = await request.promise;
+                timing.providerMs += elapsedMs(startedAt);
+                if (activeRequest === request) activeRequest = null;
+                return response;
+              } catch (error) {
+                timing.providerMs += elapsedMs(startedAt);
+                if (activeRequest === request) activeRequest = null;
+                if (attempt > 0 || !isRetryableAiError(error) || runGeneration !== generation || stopped) throw error;
+                timing.providerRetries = (timing.providerRetries || 0) + 1;
+                await new Promise((resolve) => setTimeout(resolve, AI_DIRECT_RETRY_DELAY_MS));
+                if (runGeneration !== generation || stopped) throw error;
+              }
+            }
+          }
           const prompt = PromptSystem.render({
             platform: currentAdapter && currentAdapter.id || 'other',
             records: batch,
           });
           const payload = makePayload(batch, prompt);
-          const request = requestJSON(transport.url, payload, AI_REQUEST_TIMEOUT_MS, 'AI API', 'direct');
-          activeRequest = request;
-          let response;
-          const providerStartedAt = monotonicNow();
-          try {
-            response = await request.promise;
-          } finally {
-            timing.providerMs += elapsedMs(providerStartedAt);
-            if (activeRequest === request) activeRequest = null;
-          }
+          const response = await requestWithRetry(payload, 'AI API');
           if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
           const parsedResult = parseCandidates(response, batch, rules,
             factMode === 'off' ? undefined : { collectFacts: true, deferFacts: false });
@@ -18775,16 +18728,7 @@
                 records: factRecords,
                 factEvidence,
               });
-              const verificationRequest = requestJSON(transport.url, makePayload(factRecords, verificationPrompt), AI_REQUEST_TIMEOUT_MS, 'AI API', 'direct');
-              activeRequest = verificationRequest;
-              const verificationStartedAt = monotonicNow();
-              let verificationResponse;
-              try {
-                verificationResponse = await verificationRequest.promise;
-              } finally {
-                timing.providerMs += elapsedMs(verificationStartedAt);
-                if (activeRequest === verificationRequest) activeRequest = null;
-              }
+              const verificationResponse = await requestWithRetry(makePayload(factRecords, verificationPrompt), 'AI API');
               if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
               verificationResult = parseCandidates(verificationResponse, factRecords, rules);
               if (factMode === 'canary') incoming = mergeAICandidates(incoming, verificationResult.candidates);
@@ -19055,8 +18999,34 @@
       return true;
     }
 
+    // 直连配置的即时连通性检查：发一个 max_tokens=1 的最小请求，只看 HTTP
+    // 状态与响应形状，不进入分析管线、不写任何状态。用于保存 DeepSeek 等
+    // 官方 API 后立即确认地址/模型/Key 是否可用。
+    async function testConnection() {
+      const url = normalizeAIProviderUrl(Store.getSetting('aiProviderUrl'));
+      if (!url) return { ok: false, error: '请先保存有效的 AI API 地址（HTTPS；本机测试可用 loopback HTTP）' };
+      if (!isFormalExtensionRuntime() && readAIDirectKey().length < 8) return { ok: false, error: '尚未设置本机 Key，请先点“设置/更换本机 Key”' };
+      const model = normalizeAIModel(Store.getSetting('aiProviderModel'));
+      if (!model) return { ok: false, error: '请先填写模型名（例如 deepseek-chat）' };
+      const startedAt = monotonicNow();
+      try {
+        const request = requestJSON(url, {
+          model,
+          temperature: 0,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        }, 15000, 'AI 连接测试', 'direct');
+        const payload = await request.promise;
+        const choices = payload && Array.isArray(payload.choices) ? payload.choices.length : 0;
+        return { ok: true, model, choices, latencyMs: elapsedMs(startedAt) };
+      } catch (error) {
+        return { ok: false, error: String(error && error.message || error) };
+      }
+    }
+
     return {
       start, status, onChange, addRule, removeRule, setRuleEnabled, analyzePage, loadAndAnalyzePage, cancel,
+      testConnection,
       closeReview: () => closeReview('api'),
       context: AIContext,
       scopedBlocks: ScopedBlocks,
@@ -19265,7 +19235,8 @@
         <div class="ob-ai-provider">
           <label>AI API 地址<input id="ob-ai-provider-url" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1/chat/completions"></label>
           <label>模型名<input id="ob-ai-provider-model" type="text" autocomplete="off" placeholder="填写 provider 的模型名"></label>
-          <div class="ob-ai-key-row"><span id="ob-ai-key-status" class="ob-ai-key-status" aria-live="polite"></span><button id="ob-ai-set-key" class="ob-ai-save" type="button">设置/更换本机 Key</button><button id="ob-ai-clear-key" class="ob-ai-key-clear" type="button">清除 Key</button></div>
+          <div class="ob-ai-key-row"><span id="ob-ai-key-status" class="ob-ai-key-status" aria-live="polite"></span><button id="ob-ai-set-key" class="ob-ai-save" type="button">设置/更换本机 Key</button><button id="ob-ai-clear-key" class="ob-ai-key-clear" type="button">清除 Key</button><button id="ob-ai-test-connection" class="ob-ai-test" type="button">测试连接</button></div>
+          <div id="ob-ai-test-status" class="ob-ai-test-status" aria-live="polite"></div>
           <button id="ob-ai-save" class="ob-ai-save" type="button">保存 API 设置</button>
         </div>
         <div class="ob-ai-fact">
@@ -19613,6 +19584,31 @@
       if (typeof window.confirm === 'function' && !window.confirm('清除当前设备的 AI API Key？之后需要重新输入才能分析。')) return;
       if (!AI.clearApiKey()) { showToast('本机 API Key 清除失败'); return; }
       refreshKeyStatus(); refreshStatus(); showToast('本机 API Key 已清除');
+    };
+    const testButton = query('#ob-ai-test-connection');
+    const testStatus = query('#ob-ai-test-status');
+    if (testButton) testButton.onclick = async () => {
+      // 测试前先落盘当前输入，避免“保存过的配置”与输入框不一致导致误报。
+      const providerUrl = String(providerUrlInput && providerUrlInput.value || '').trim();
+      if (!AI.validateProviderUrl(providerUrl)) {
+        if (testStatus) { testStatus.dataset.state = 'error'; testStatus.textContent = 'AI API 地址只允许 HTTPS（本机测试可使用 loopback HTTP），且不能包含账号、密码、查询参数或片段。'; }
+        return;
+      }
+      Store.setSetting('aiMode', 'direct');
+      Store.setSetting('aiProviderUrl', providerUrl);
+      Store.setSetting('aiProviderModel', normalizeAIModel(providerModelInput && providerModelInput.value));
+      if (testStatus) { testStatus.dataset.state = ''; testStatus.textContent = '正在发送测试请求（最多 15 秒）…'; }
+      testButton.disabled = true;
+      let result;
+      try { result = await AI.testConnection(); }
+      finally { testButton.disabled = false; }
+      EventLog.record('settings.ai-connection.test', { ok: !!(result && result.ok) }, { immediate: true });
+      if (testStatus) {
+        testStatus.dataset.state = result && result.ok ? 'ok' : 'error';
+        testStatus.textContent = result && result.ok
+          ? '连接成功：' + result.model + ' 返回正常（' + Math.round(result.latencyMs) + 'ms）'
+          : '连接失败：' + (result && result.error || '未知原因');
+      }
     };
     const saveFactRetrieval = () => {
       const url = String(factUrlInput && factUrlInput.value || '').trim();
