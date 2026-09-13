@@ -33,13 +33,12 @@
 - `structure regression`：与 CI 同一组本地矩阵 21/22 脚本退出 0（state、comment-manager、danmaku-auto、work-block、
   performance、weibo-replay、douyin、sync、sync-server、ai-platforms、content-ai、content-coverage、ai-autoload、
   ai-watchdog、probe-hygiene、ai-prompt-system、ai-prompt-eval 等）。
-- `blocked`：本轮未运行真实站点探针。用户 2026-09-12 决定备考期间暂停全部实页验证，因此"真实网站右键菜单不再被接管"
-  只有夹具证据，未取得 `real-site verified`；需要恢复时按 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 的
-  授权前提，对 B站至少各跑一次 `--verify-local` 与只读真站探针。
-- 未决（非产品回归）：`node test/ai-screening.cjs` 25 项断言全部通过且 `FAIL: 无`，但退出码非零——其判据把任何控制台
-  错误都算失败，而 AI-24 用例自身 mock 的 HTTP 429 在当前 Chrome 上被记为一条资源加载 console error。需单独一轮修
-  测试退出判据，本轮不改测试标准。
-- 提交与门禁：改动提交为 `b83003a56b901796cacf25da369dc6642bca4428`（工作区干净，`git fsck` 无错误）；
+- `real-site verified`：2026-09-13 用户授权恢复实页验证。隔离匿名只读探针 `--verify-local`：脱敏页面形式 `bilibili.com/video/...` 实际命中 2 个评论 renderer、派发 2 次 `contextmenu`，`prevented=0`、`menu=0`；`weibo.com/...` 实际派发 7 次，`prevented=0`、`menu=0`。登录态专用 Chrome（开发扩展 `0.57.4-native-context-menu`，源码 SHA-256 `caacf227…`）：知乎/抖音/X 在扩展活跃（`ob=true`、`#ob-gear`=1、`runtime=0.57.4`）下 `ctxShown=false`、`ctxDefaultPrevented=false`，右键保持原生。新增 `test/dedicated-rightclick-probe.cjs` 用浏览器级 WS + 单次 `Target.attachToTarget` 绕开 Chrome 148 浏览器级 `Target.getTargets` 偶发卡死（页面级 WS 在本机构建上整体不可响应）。
+- `blocked`：贴吧在 CDP 驱动下渲染进程卡死（反爬/重资源使 `Runtime.evaluate` 与 `Page.captureScreenshot` 均超时并连带卡死后续会话），无法读取右键状态；属环境限制而非产品回归，需用户在真实登录浏览器手动确认。右键接管本是覆盖全部平台的单一 `document` 级监听，已在 B站/微博/知乎/抖音/X 五平台（扩展均确认活跃）验证移除。
+- `structure regression`：`node test/ai-screening.cjs` 25/25 断言通过并退出 0；AI-24 预期 mock HTTP 429 被单独归档为 expected console event，未知 console/page error 仍会使测试失败。
+- `blocked`：`node test/dev-browser.cjs sync` 已读到当前 `0.57.4-native-context-menu` 与右键目标，但专用扩展 bridge 在刷新前后均为 `degraded/ready-timeout`，因此不能把专用浏览器完整 AI/存储链路写成 ready；这不是右键证据失败。
+- 提交与门禁：产品行为提交为 `b83003a56b901796cacf25da369dc6642bca4428`；本轮接手审计未修改
+  `omniblock.user.js`，验证脚本/文档差异与工作区状态须以 `git status --short` 实时核对；`git fsck` 无错误。
   `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。本轮**未 push、未创建
   tag/Release、未部署**，公开发布仍待当轮授权。
 - 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
@@ -109,7 +108,7 @@
 - 运行时、桥接、存储、Shadow DOM、generation、AbortController、只读平台写入边界和页面隐藏暂停规则以架构正文为准；当前版本仍只把用户确认后的本地动作写入 GM 存储。
 - B站/抖音弹幕会话按视频隔离；统一内容弹窗按平台提供评论、弹幕、AI、关键词标签，正文采集排除操作文字，身份缺失不生成可执行入口。
 - AI 入口只保留用户配置的 provider 直连、脱敏、最多 80 条分批、人工确认和事实核查保守门禁；本机 loopback 网关仅属于历史兼容/评测路径，不能作为当前 userscript 默认方式。B站新增后台 UID 增强遵守 OB-AI-012 的暂停/取消/hash-only 约束。
-- 账户同步必须由用户点击“立即同步（合并）”触发；名单、可同步设置、提示词和反馈在客户端加密，API Key、密码、同步口令、令牌和日志不进入同步文档。东京服务器尚未部署或改 schema。
+- 账户同步必须由用户点击“立即同步（合并）”触发；名单、可同步设置、提示词和反馈在客户端加密，API Key、密码、同步口令、令牌和日志不进入同步文档。东京独立同步服务已部署并有 health 证据；本项目未改 Vibeme/V2/KB schema。
 - `real-site verified` 的当前只读入口与阻断以本文件顶部和版本条目为准；未判定登录、验证码、根评论 partial、模型精度和平台写入不能从夹具推导。
 
 ## 2026-09-06 至 2026-09-08 日期条目（已移出活动正文以守住 24 KiB 预算）
@@ -158,9 +157,9 @@ node test/real-platform-probe.cjs <platform> --verify-local
 node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
 ```
 
-固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-10 v0.56.0 B站只读探针结果见顶部 OB-AI-014 条目，未执行平台写入。
-v0.56.0 tag 与 Release 已创建并作为当前公开版本；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-13 v0.57.4 右键只读证据见顶部 OB-CTX-001 条目，未执行平台写入。
+v0.57.2 tag 与 Release 已创建并作为当前公开版本；v0.57.4 仍是本地候选，未 push/tag/Release；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
 
 ## 下一项最有价值的验证
 
-用户备考期间专注插件会自动关闭社交/娱乐页面，所有实页验证暂缓；本轮 v0.57.3（AI 测试连接 + 瞬态重试）只依赖本地夹具。用户填入官方 DeepSeek API 后，先用 AI 设置里的「测试连接」确认可用，再在 B站真实页面跑一次 AI 分析即可把直连链路记为 `real-site verified`（用户自行操作，一轮一次）。其余暂停项（登录态补采、换片隔离、B站分页/动态 UID 等）待用户条件允许后从 [平板线封存记录](plans/2026-09-12-tablet-track-sealed.md) 与历史归档恢复。
+本轮最有价值的下一步是完成 `OB-MAINT-002` 的本地门禁与交接提交：确认探针只有在命中真实条目、当前版本/build 且事件状态可读时才给出 verified；贴吧真实右键证据仍为 `blocked`。若用户后续明确授权登录态验证，再使用专用 Chrome 手动/只读探针补齐。v0.57.4 的 push/tag/Release 仍需当轮明确授权。

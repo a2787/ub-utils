@@ -115,8 +115,24 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [x] `findItem`/`buildContextMenu`/`#ob-ctx` 在源码、样式与文档中无残留引用。
   - [x] `node test/run.cjs` 20/20、`node test/adapters.cjs` 28/28、`node test/quickblock.cjs` 38/38、`node test/userscript-product.cjs` 7/7，页面/控制台错误为 0。
   - [x] `node test/docs-check.cjs` 与 `git diff --check` 通过——曾因 2026-09-13 `.git` 对象库丢失事故阻断，重建后已补跑通过。
-- evidence: `structure regression`：`test/run.cjs` C 用例改为"右键既不 `preventDefault` 也不出现 `#ob-ctx`，身份仍解析为 `bili:uid:333`"，在旧源码上以 `{"defaultPrevented":true,"ctxShown":true}` 失败、删除实现后转通过；`test/adapters.cjs` 的贴吧嵌套正文目标与 B站 Shadow DOM 两处右键用例同样在旧源码上以 `defaultPrevented:true` 失败后转通过，六平台其余 26 项保持通过；`run.cjs` D 用例（原生菜单快捷入口 → 确认 → `bili:uid:333` 入库并隐藏）证明拉黑链路未受影响；与 CI 同一组本地矩阵 21/22 脚本退出 0；`node --check`、`docs-check`、`git diff --check` 通过。`blocked`：未运行真实站点探针（用户 2026-09-12 决定暂停实页验证），真实网站右键行为只有夹具证据。非本轮回归：`ai-screening` 25 项断言全绿但因其自身 429 mock 的控制台噪声使退出码非零。
-- next: 已完成并随候选 v0.57.4 提交为 `b83003a56b901796cacf25da369dc6642bca4428`（本地提交，未 push/tag/Release）。后续可做：按当轮授权发布 v0.57.4；恢复实页验证后补 `real-site verified`；`ai-screening` 退出判据另立计划修。
+- evidence: `structure regression`：`test/run.cjs` C 用例改为"右键既不 `preventDefault` 也不出现 `#ob-ctx`，身份仍解析为 `bili:uid:333`"，在旧源码上以 `{"defaultPrevented":true,"ctxShown":true}` 失败、删除实现后转通过；`test/adapters.cjs` 的贴吧嵌套正文目标与 B站 Shadow DOM 两处右键用例同样在旧源码上以 `defaultPrevented:true` 失败后转通过，六平台其余 26 项保持通过；`run.cjs` D 用例（原生菜单快捷入口 → 确认 → `bili:uid:333` 入库并隐藏）证明拉黑链路未受影响；与 CI 同一组本地矩阵 21/22 脚本退出 0；`node --check`、`docs-check`、`git diff --check` 通过。`real-site verified`：2026-09-13 用户授权恢复实页验证，隔离匿名探针在脱敏 `bilibili.com/video/...` 页面命中 2 个评论 renderer 并派发 2 次右键（`prevented=0`、`menu=0`），在脱敏 `weibo.com/...` 页面派发 7 次右键（`prevented=0`、`menu=0`）；专用登录态 Chrome 在知乎、抖音、X 上确认当前扩展版本/build 活跃且右键保持原生。`blocked`：贴吧因 CDP 驱动下渲染进程卡死，无法读取右键状态；本轮没有把 body 或空页面当成条目证据。`structure regression`：`ai-screening` 25/25 断言通过，预期 AI-24 429 mock console error 单独归档，未知 console/page error 仍使退出失败。
+- next: 已完成并随候选 v0.57.4 提交为 `b83003a56b901796cacf25da369dc6642bca4428`（本地提交，未 push/tag/Release）。按当轮授权发布 v0.57.4 仍需另行执行。
+- updated: 2026-09-13
+- supersedes: none
+
+### OB-MAINT-002 — 接手审计、探针判据与活动文档一致性
+
+- status: verified
+- priority: P2
+- scope: 审计最近维护对话、当前 Git/工作区和 v0.57.4 交接；修复真实右键探针的目标命中、`preventDefault`、build 版本和失败退出判据；将 AI screening 的预期 429 mock console error 与未知错误分开；同步活动文档、版本索引和临时调试产物规则。
+- non-goals: 不改变 `omniblock.user.js` 行为；不 push、tag、创建 Release、部署或触碰平台写入；不执行本轮未授权的登录态验证；不删除上一轮调试文件，不修改 `.env`、凭据、存储格式或数据库。
+- dependencies: OB-CTX-001
+- acceptance: required
+  - [x] 探针没有命中真实条目、读不到事件状态、版本/build 不匹配或检测到右键接管时，不得给出 verified；专用右键探针对失败平台返回非零退出码，通用平台探针由 `maintenance-check` 解析为 `blocked` 或失败。
+  - [x] 当前公开版本、候选版本、东京同步服务状态和右键证据在 README、CHANGELOG、知识树、CURRENT、PLAN 中一致。
+  - [x] 忽略规则覆盖本轮临时导航调试脚本，但不吞掉可交付探针；AI screening 只归档预期 429，未知 console/page error 仍失败；脚本语法、聚焦回归、文档/隐私门禁通过。
+- evidence: `structure regression`：`node test/dedicated-rightclick-probe.cjs --self-test`、`node test/dedicated-browser-probe.cjs --self-test` 分别通过 5/5 与 8/8 分类断言；userscript、探针脚本语法检查通过；`node test/ai-screening.cjs` 25/25 且退出 0，预期 429 单独归档；`node test/maintenance-check.cjs` 的本地矩阵全部通过，最终只保留预期的外部 `blocked` 分类；`node test/dev-browser.cjs sync` 能通过 `/json/list` 找到扩展页并完成刷新路径，bridge 仍如实报告 `degraded/ready-timeout`。`real-site verified`：2026-09-13 隔离匿名 B站脱敏视频页命中 2 个评论 renderer 并派发 2 次右键（`prevented=0`、`menu=0`）；微博脱敏详情页派发 7 次右键（`prevented=0`、`menu=0`）。同日此前获得用户授权的专用登录态 Chrome 记录了知乎、抖音、X 的当前 build 活跃且 `ctxShown=false`、`ctxDefaultPrevented=false`。`blocked`：匿名抖音验证码中间页、微博该页无可测顶层 spacer、贴吧专用 CDP 渲染进程卡死；这些阻断均未被探针升级为 verified。活动文档、版本索引、东京服务状态和隐私门禁已同步。
+- next: 维护审计已完成；v0.57.4 的 push/tag/Release 仍需当轮明确授权，贴吧右键证据待用户再次授权登录态验证或改用人工浏览器确认。
 - updated: 2026-09-13
 - supersedes: none
 

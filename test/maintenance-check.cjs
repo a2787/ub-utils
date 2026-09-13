@@ -27,6 +27,7 @@ const privacyFiles = [...new Set([...trackedFiles, ...collectMarkdownFiles('docs
 for (const extra of ['test/comment-manager.cjs', 'test/weibo-replay.cjs', 'test/danmaku-auto.cjs', 'test/work-block.cjs',
   'test/maintenance-check.cjs', 'test/build-dev-extension.cjs', 'test/dev-extension.cjs', 'test/installed-browser-probe.cjs',
   'test/dev-browser.cjs', 'test/dedicated-browser.cjs', 'test/dedicated-browser-probe.cjs',
+  'test/dedicated-rightclick-probe.cjs',
   'test/performance.cjs', 'test/ai-screening.cjs', 'test/ai-prompt-system.cjs', 'test/ai-prompt-eval.cjs', 'test/ai-platforms.cjs', 'test/content-ai.cjs', 'test/ai-autoload.cjs', 'test/ai-watchdog.cjs', 'test/gateway-smoke.cjs', 'gateway/scripts/render-config.cjs',
   'test/content-coverage.cjs', 'test/probe-hygiene.cjs', 'test/product-extension.cjs', 'test/userscript-product.cjs', 'test/sync.cjs', 'test/sync-server.cjs',
   'sync-server/server.py', 'sync-server/README.md']) {
@@ -54,6 +55,7 @@ const checks = [
   { label: 'installed browser probe syntax', command: process.execPath, args: ['--check', 'test/installed-browser-probe.cjs'] },
   { label: 'dedicated browser probe syntax', command: process.execPath, args: ['--check', 'test/dedicated-browser.cjs'] },
   { label: 'dedicated browser probe wrapper syntax', command: process.execPath, args: ['--check', 'test/dedicated-browser-probe.cjs'] },
+  { label: 'dedicated right-click probe classification', command: process.execPath, args: ['test/dedicated-rightclick-probe.cjs', '--self-test'] },
   { label: 'AI platform regression syntax', command: process.execPath, args: ['--check', 'test/ai-platforms.cjs'] },
   { label: 'content AI regression syntax', command: process.execPath, args: ['--check', 'test/content-ai.cjs'] },
   { label: 'multi-platform content coverage syntax', command: process.execPath, args: ['--check', 'test/content-coverage.cjs'] },

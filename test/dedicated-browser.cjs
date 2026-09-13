@@ -263,9 +263,28 @@ async function readSnapshot(client, page, platform) {
     const finalUrl = String(location.href || '');
     const gate = /登录|signin|sign in|安全验证|验证码|slide|滑动|登录后查看|Log in|Sign in/i.test(title + ' ' + bodyText)
       || /\\/(signin|login)\\b/i.test(location.pathname);
+    let ctxDefaultPrevented = null;
+    let ctxShown = null;
+    let ctxTargetFound = false;
+    try {
+      const ctxSelectors = Array.isArray(adapter && adapter.selectors)
+        ? adapter.selectors : ${JSON.stringify(discoverSelectors(platform))};
+      let ctxTarget = null;
+      for (const sel of ctxSelectors) { const el = document.querySelector(sel); if (el) { ctxTarget = el; break; } }
+      if (ctxTarget) {
+        ctxTargetFound = true;
+        const evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2, clientX: 120, clientY: 120 });
+        ctxTarget.dispatchEvent(evt);
+        ctxDefaultPrevented = !!evt.defaultPrevented;
+        ctxShown = !!document.getElementById('ob-ctx');
+      }
+    } catch (e) { ctxDefaultPrevented = null; ctxShown = null; ctxTargetFound = null; }
     return {
       loaded: document.readyState === 'interactive' || document.readyState === 'complete',
       finalUrl,
+      ctxDefaultPrevented,
+      ctxShown,
+      ctxTargetFound,
       route: location.pathname || '/',
       titleGate: gate,
       ob: !!ob,
@@ -308,6 +327,9 @@ function publicSnapshot(snapshot) {
     loaded: !!value.loaded,
     ob: !!value.ob,
     adapter: !!value.adapter,
+    ctxDefaultPrevented: value.ctxDefaultPrevented,
+    ctxShown: !!value.ctxShown,
+    ctxTargetFound: value.ctxTargetFound,
     runtime: value.runtime || null,
     bridge: value.bridge || null,
     extensionMode: value.extensionMode || '',
@@ -371,6 +393,16 @@ function looksLikeDetail(platform, snapshot) {
 function assessSnapshot(snapshot) {
   const problem = runtimeProblem(snapshot);
   if (problem) return { status: 'failed', reason: problem };
+  if (snapshot.ctxTargetFound !== true) {
+    return { status: 'blocked', reason: snapshot.ctxTargetFound === null
+      ? '真实条目右键探测执行失败，无法读取事件状态'
+      : '当前页面没有可探测的真实条目，不能用 body 代替条目验证右键' };
+  }
+  if (typeof snapshot.ctxDefaultPrevented !== 'boolean') {
+    return { status: 'blocked', reason: '右键事件状态不可读，不能判定页面是否保持原生' };
+  }
+  if (snapshot.ctxShown) return { status: 'failed', reason: '当前页面右键被脚本接管（出现 #ob-ctx 浮层），与 v0.57.4 右键接管移除冲突' };
+  if (snapshot.ctxDefaultPrevented) return { status: 'failed', reason: '当前页面右键仍被脚本 preventDefault 接管，与 v0.57.4 右键接管移除冲突' };
   const total = Number(snapshot.ai && snapshot.ai.total || 0);
   if (!total && snapshot.titleGate) return { status: 'blocked', reason: '页面落在登录或安全验证门禁，当前没有可读取内容' };
   if (!total) return { status: 'blocked', reason: '当前页面没有可读取的语义内容' };
@@ -527,16 +559,19 @@ function extensionCardRefreshScript() {
   })();`;
 }
 
-async function refreshExtensionCard(client) {
+async function refreshExtensionCard(client, cdpEndpoint = endpoint) {
   let extensionPage;
   let created = false;
   try {
-    const targets = await client.send('Target.getTargets');
-    const existing = (targets.targetInfos || []).find((target) => target.type === 'page' && target.url === 'chrome://extensions/');
+    // Chrome 148 的本机构建上 Target.getTargets 会在多次调用后卡死；
+    // /json/list 是同一浏览器的只读 HTTP 列表，足以找到既有扩展页，
+    // 再用单次 attach 继续操作。
+    const pages = await httpJSON(cdpEndpoint + '/json/list');
+    const existing = (pages || []).find((target) => target.type === 'page' && target.url === 'chrome://extensions/');
     if (existing) {
-      extensionPage = existing;
-      const attached = await client.send('Target.attachToTarget', { targetId: existing.targetId, flatten: true });
-      extensionPage = { targetId: existing.targetId, sessionId: attached.sessionId };
+      const targetId = existing.id;
+      const attached = await client.send('Target.attachToTarget', { targetId, flatten: true });
+      extensionPage = { targetId, sessionId: attached.sessionId };
       await client.send('Runtime.enable', {}, attached.sessionId).catch(() => {});
       await client.send('DOM.enable', {}, attached.sessionId).catch(() => {});
     } else {
@@ -599,7 +634,7 @@ async function syncDevExtension(options = {}) {
     if (before.status === 'ready' && !options.force) {
       return { status: 'ready', action: 'already-current', expected: { version: expectedVersion, build: expectedBuild }, before };
     }
-    const refresh = await refreshExtensionCard(client);
+    const refresh = await refreshExtensionCard(client, cdpEndpoint);
     if (!refresh || !refresh.found) {
       return {
         status: 'blocked', action: 'manual-install-required', expected: { version: expectedVersion, build: expectedBuild }, before, refresh,
@@ -634,10 +669,13 @@ function selfTest() {
   check(redactedTarget('https://www.bilibili.com/video/private-token') === 'bilibili.com/video/...', 'route redaction');
   check(runtimeProblem({ loaded: false }) === '页面没有完成加载', 'load failure classification');
   check(runtimeProblem({ loaded: true, ob: true, runtime: { version: '0.0.0', build: 'old' }, bridge: { state: 'ready' }, adapter: true, gearCount: 1 }) === '专用浏览器仍加载旧版本或旧构建', 'version failure classification');
-  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: true, ai: { total: 0 } }).status === 'blocked', 'gate classification');
-  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 1 } }).status === 'verified', 'content classification');
+  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: true, ai: { total: 0 }, ctxTargetFound: true, ctxDefaultPrevented: false }).status === 'blocked', 'gate classification');
+  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 1 }, ctxTargetFound: true, ctxDefaultPrevented: false }).status === 'verified', 'content classification');
   check(isDedicatedEnvironmentBlock(new Error('connect ECONNREFUSED 127.0.0.1:9222')), 'CDP availability classification');
   check(!isDedicatedEnvironmentBlock(new Error('CDP timeout: Runtime.evaluate')), 'unexpected probe failure classification');
+  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: true, ctxDefaultPrevented: false, ctxShown: true }).status === 'failed', 'right-click menu hijack regression classification');
+  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: true, ctxDefaultPrevented: true }).status === 'failed', 'right-click preventDefault regression classification');
+  check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: false, ctxDefaultPrevented: false }).status === 'blocked', 'right-click target absence classification');
   return failures;
 }
 

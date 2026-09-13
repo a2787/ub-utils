@@ -119,8 +119,9 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站 AI
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 (async () => {
-  const report = { pass: [], fail: [], console: [], pageErrors: [] };
+  const report = { pass: [], fail: [], console: [], expectedConsole: [], pageErrors: [] };
   let providerAttempts = 0;
+  let expectedProvider429Console = 0;
   const watchdogReady = USERSCRIPT.includes("const AI_REQUEST_TIMEOUT_MS = 60000;")
     && USERSCRIPT.includes("const AI_REQUEST_WATCHDOG_SLACK_MS = 250;")
     && USERSCRIPT.includes("timer = setTimeout(() => cancel(label + '请求超时'), timeoutMs + AI_REQUEST_WATCHDOG_SLACK_MS);")
@@ -143,7 +144,17 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   else report.fail.push('AI-11 userscript 直连 API 或本机 Key 边界缺失');
   const browser = await launchChromium({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
   const page = await browser.newPage();
-  page.on('console', (message) => { if (message.type() === 'error' || message.type() === 'warning') report.console.push('[' + message.type() + '] ' + message.text()); });
+  page.on('console', (message) => {
+    const type = message.type();
+    const text = message.text();
+    if ((type === 'error' || type === 'warning') && expectedProvider429Console > 0
+      && /responded with a status of 429/i.test(text)) {
+      expectedProvider429Console--;
+      report.expectedConsole.push('[' + type + '] ' + text);
+      return;
+    }
+    if (type === 'error' || type === 'warning') report.console.push('[' + type + '] ' + text);
+  });
   page.on('pageerror', (error) => report.pageErrors.push(String(error && error.stack || error)));
   await page.route('**/*', async (route) => {
     const request = route.request();
@@ -161,6 +172,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       // 第二次请求完成，旧行为（无重试）会让整轮分析失败。
       providerAttempts++;
       if (providerAttempts === 1) {
+        expectedProvider429Console++;
         await route.fulfill({ status: 429, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ error: 'rate limited' }) });
         return;
       }
@@ -658,6 +670,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   console.log('FAIL:', report.fail.join(' | ') || '无');
   console.log('PAGEERRORS:', JSON.stringify(report.pageErrors));
   console.log('CONSOLE:', JSON.stringify(report.console));
+  console.log('EXPECTED_CONSOLE:', JSON.stringify(report.expectedConsole));
   process.exitCode = report.fail.length || report.pageErrors.length || report.console.length ? 1 : 0;
 })().catch((error) => {
   console.error('AI TEST ERROR:', error && error.stack || error);

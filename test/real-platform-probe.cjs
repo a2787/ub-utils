@@ -250,6 +250,28 @@ async function pickWeiboDetailTarget(browser, candidates) {
               bulkLabel: bulk && bulk.textContent || '',
             };
           })() : undefined;
+          // OB-CTX-001：真实条目上的右键必须保持原生，不被插件接管。
+          // 只派发合成 contextmenu，不触碰平台举报/拉黑等写入控件。
+          const rightClick = { attempts: 0, prevented: 0, menuShown: 0, menuElementPresent: false, targetFound: false };
+          if (adapter) {
+            const items = [];
+            for (const selector of adapter.selectors || []) {
+              for (const item of Array.from(document.querySelectorAll(selector)).slice(0, 6)) items.push(item);
+              if (items.length >= 8) break;
+            }
+            for (const item of items.slice(0, 8)) {
+              const target = item.querySelector('a,span,p,div') || item;
+              rightClick.targetFound = true;
+              const event = new MouseEvent('contextmenu', {
+                bubbles: true, cancelable: true, composed: true, button: 2, clientX: 60, clientY: 60,
+              });
+              try { target.dispatchEvent(event); } catch (error) { continue; }
+              rightClick.attempts++;
+              if (event.defaultPrevented) rightClick.prevented++;
+              if (document.getElementById('ob-ctx')) rightClick.menuShown++;
+            }
+          }
+          rightClick.menuElementPresent = !!document.getElementById('ob-ctx');
           return {
             finalUrl: location.href,
             title: document.title,
@@ -264,6 +286,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
             contentRoute: !!(adapter && typeof adapter.contentRouteAvailable === 'function' && adapter.contentRouteAvailable()),
             aiContent,
             aiContentError,
+            rightClick,
             platform,
           };
         }, { id: target.id, showDetails });
@@ -641,6 +664,19 @@ async function pickWeiboDetailTarget(browser, candidates) {
             result.errors.push('blocked：真实页面没有可解析的条目（未登录会话下无内容）');
           } else if (!page.identityCount) {
             result.errors.push('验证失败：真实页面有条目但没有任何条目解析出身份');
+          }
+        }
+        // OB-CTX-001：所有平台的真实条目右键都必须保持原生（含微博）。
+        // 只有确实派发过事件时才判定；没有可探测条目属于上面的 blocked 范围。
+        const rcPage = result.page || {};
+        const rightClick = rcPage.rightClick;
+        if (rcPage.obReady && rcPage.adapterReady && rightClick) {
+          if (rcPage.candidateCount && !rightClick.attempts) {
+            result.errors.push('验证失败：真实页面存在可解析条目，但右键探针没有命中任何适配器条目');
+          } else if (rightClick.attempts
+            && (rightClick.prevented || rightClick.menuShown || rightClick.menuElementPresent)) {
+            result.errors.push('验证失败：真实页面上右键仍被插件接管（prevented=' + rightClick.prevented
+              + '，自建菜单=' + rightClick.menuShown + '）');
           }
         }
       } catch (error) {

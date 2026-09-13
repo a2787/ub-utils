@@ -13,6 +13,7 @@ test/_*.png
 test/_*.txt
 test/_*.log
 test/_*.json
+test/_dbg_nav*.cjs
 
 # 2026-08-22 B站/微博真站诊断脚本；仅供当轮排查，不属于可交付测试。
 test/_probe_dm_rows.cjs

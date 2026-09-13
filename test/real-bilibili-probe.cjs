@@ -372,6 +372,53 @@ async function pickLocalCommentTarget(candidates) {
       if (found.children || found.roots >= 10) break;
     }
 
+    // OB-CTX-001 真站验证：右键必须交还页面。在真实评论条目（含 Shadow DOM）上
+    // 派发合成 contextmenu，插件不得 preventDefault，也不得出现自建 #ob-ctx 菜单。
+    // 只派发事件、不触碰平台举报/拉黑等写入控件，因此仍是只读探针。
+    result.rightClick = await evaluateStable(page, () => {
+      function collect(root, selector, limit) {
+        const out = [];
+        const walk = (node) => {
+          if (!node || out.length >= limit) return;
+          if (node.nodeType === 1 && node.matches && node.matches(selector)) out.push(node);
+          if (node.shadowRoot) walk(node.shadowRoot);
+          for (const child of node.children || []) walk(child);
+        };
+        walk(root); return out;
+      }
+      const renderers = collect(document, 'bili-comment-renderer', 8);
+      const deepTargets = [];
+      for (const renderer of renderers) {
+        if (!renderer.shadowRoot) continue;
+        const deep = renderer.shadowRoot.querySelector(
+          'bili-rich-text, a[href*="space.bilibili.com"], .user-name, .reply-content, span');
+        if (deep) deepTargets.push(deep);
+      }
+      let attempts = 0;
+      let prevented = 0;
+      let menuShown = 0;
+      for (const target of deepTargets) {
+        const event = new MouseEvent('contextmenu', {
+          bubbles: true, cancelable: true, composed: true, button: 2, clientX: 60, clientY: 60,
+        });
+        target.dispatchEvent(event);
+        attempts++;
+        if (event.defaultPrevented) prevented++;
+        if (document.getElementById('ob-ctx')) menuShown++;
+      }
+      const runtime = window.OB && window.OB.runtime;
+      return {
+        obReady: !!runtime,
+        version: runtime ? runtime.version : '',
+        build: runtime ? runtime.build : '',
+        renderers: renderers.length,
+        attempts,
+        prevented,
+        menuShown,
+        menuElementPresent: !!document.getElementById('ob-ctx'),
+      };
+    });
+
     if (EXPAND_REPLIES) {
       result.replyExpansion = { attempts: 0, clicked: 0, tags: [], replyCount: 0 };
       for (let attempt = 0; attempt < 6; attempt++) {
@@ -1660,6 +1707,12 @@ async function pickLocalCommentTarget(candidates) {
         failed.push('真实主评论“屏蔽该楼回复”未读取并撤销至少一位回复作者');
       }
       if (!(probe.danmakuXhrTypes || []).some((item) => item.responseType === 'arraybuffer')) failed.push('未捕获 seg.so 的 ArrayBuffer XHR');
+      const rightClick = result.rightClick || {};
+      if (!rightClick.attempts) failed.push('未能在真实评论条目上派发右键探测事件');
+      if (rightClick.prevented || rightClick.menuShown || rightClick.menuElementPresent) {
+        failed.push('真实页面上右键仍被插件接管（prevented=' + (rightClick.prevented || 0)
+          + '，自建菜单=' + (rightClick.menuShown || 0) + '）');
+      }
       if (failed.length) result.errors.push('验证失败：' + failed.join('；'));
     }
     if (SAVE_SCREENSHOT) {

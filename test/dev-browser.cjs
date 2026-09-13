@@ -8,6 +8,7 @@
  *   node test/dev-browser.cjs build
  *   node test/dev-browser.cjs sync
  *   node test/dev-browser.cjs ensure
+ *   node test/dev-browser.cjs launch
  *   node test/dev-browser.cjs guide
  */
 const { execFileSync } = require('child_process');
@@ -86,6 +87,25 @@ function buildDevExtension() {
   return JSON.parse(output);
 }
 
+async function launchFresh() {
+  const defaultProfile = path.resolve(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
+  if (PROFILE === defaultProfile) throw new Error('拒绝使用 Chrome 默认配置目录');
+  fs.mkdirSync(PROFILE, { recursive: true });
+  const chrome = findChrome();
+  const child = spawn(chrome, [
+    `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${PROFILE}`,
+    `--load-extension=${DEV_EXTENSION_DIR}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--new-window',
+    'about:blank',
+  ], { detached: true, stdio: 'ignore', windowsHide: false });
+  child.unref();
+  await waitForReady();
+  return { launched: true, cdpUrl: ENDPOINT, profile: PROFILE, chrome };
+}
+
 async function ensure() {
   const extension = buildDevExtension();
   const before = await ready();
@@ -97,39 +117,30 @@ async function ensure() {
       cdpUrl: ENDPOINT, profile: PROFILE,
       extension,
       sync,
-      requiresManualInstall: sync.status === 'blocked',
+      requiresManualInstall: sync.action === 'manual-install-required',
       note: sync.status === 'ready'
         ? '复用已有专用 Chrome，并已核对新页面会运行当前开发扩展。'
+        : sync.action === 'manual-install-required'
+          ? '复用已有专用 Chrome，但尚未发现已加载的 OmniBlock 扩展，需要一次性加载 test/_dev-extension。'
         : syncFailed
           ? '复用已有专用 Chrome，但扩展同步发生内部错误；未把 CDP 可用误报为扩展 ready。'
-          : '复用已有专用 Chrome，但当前扩展仍需一次性加载；同步命令已明确报告原因，不把 CDP 可用误报为扩展 ready。',
+          : '复用已有专用 Chrome，当前扩展版本已读到但桥接或刷新链路未就绪；同步命令已明确报告原因，不把 CDP 可用误报为完整 ready。',
     };
   }
-  const defaultProfile = path.resolve(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
-  if (PROFILE === defaultProfile) throw new Error('拒绝使用 Chrome 默认配置目录');
-  fs.mkdirSync(PROFILE, { recursive: true });
-  const chrome = findChrome();
-  const child = spawn(chrome, [
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${PROFILE}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--new-window',
-    'about:blank',
-  ], { detached: true, stdio: 'ignore', windowsHide: false });
-  child.unref();
-  await waitForReady();
+  await launchFresh();
   const sync = await syncDevExtension({ endpoint: ENDPOINT });
   const syncFailed = sync.status === 'failed';
   return {
-    status: sync.status === 'ready' ? 'ready' : (syncFailed ? 'failed' : 'ready-install-required'), launched: true, cdpUrl: ENDPOINT, profile: PROFILE, chrome, extension,
+    status: sync.status === 'ready' ? 'ready' : (syncFailed ? 'failed' : 'ready-install-required'), launched: true, cdpUrl: ENDPOINT, profile: PROFILE, extension,
     sync,
-    requiresManualInstall: sync.status === 'blocked',
+    requiresManualInstall: sync.action === 'manual-install-required',
     note: sync.status === 'ready'
       ? '专用 Chrome 已启动，并已核对新页面会运行当前开发扩展。'
+      : sync.action === 'manual-install-required'
+        ? '专用 Chrome 已启动并传入 --load-extension，但扩展页仍未发现可刷新控件；需按 guide 检查一次性加载状态。'
       : syncFailed
         ? '专用 Chrome 已启动，但扩展同步发生内部错误；未把 CDP 可用误报为扩展 ready。'
-        : `专用 Chrome 已启动；首次仍需在 chrome://extensions 加载 ${extension.directory}，之后可由 sync 自动刷新已加载扩展。`,
+        : '专用 Chrome 已启动并自动加载当前开发扩展，但桥接或刷新链路未就绪；未把 CDP 可用误报为完整 ready。',
   };
 }
 
@@ -155,15 +166,23 @@ function guide() {
   try {
     const result = command === 'ensure'
       ? await ensure()
-      : command === 'build'
-        ? buildDevExtension()
-        : command === 'sync'
-          ? await (async () => { const extension = buildDevExtension(); const sync = await syncDevExtension({ endpoint: ENDPOINT, force: process.argv.includes('--force') }); return { extension, sync }; })()
-        : command === 'guide'
-          ? guide()
-          : command === 'status'
-          ? { status: (await ready()).ready ? 'ready' : 'stopped', cdpUrl: ENDPOINT, profile: PROFILE }
-          : (() => { throw new Error('用法：node test/dev-browser.cjs status|build|sync|ensure|guide'); })();
+      : command === 'launch'
+        ? await (async () => {
+          const pre = await ready();
+          if (pre.ready) return { status: 'ready-existing', launched: false, cdpUrl: ENDPOINT, profile: PROFILE, note: '复用已有专用 Chrome（已带 --load-extension 自动加载扩展）' };
+          const extension = buildDevExtension();
+          await launchFresh();
+          return { status: 'ready', launched: true, cdpUrl: ENDPOINT, profile: PROFILE, extension, note: '专用 Chrome 已启动并自动加载 ' + DEV_EXTENSION_DIR };
+        })()
+        : command === 'build'
+          ? buildDevExtension()
+          : command === 'sync'
+            ? await (async () => { const extension = buildDevExtension(); const sync = await syncDevExtension({ endpoint: ENDPOINT, force: process.argv.includes('--force') }); return { extension, sync }; })()
+            : command === 'guide'
+              ? guide()
+              : command === 'status'
+                ? { status: (await ready()).ready ? 'ready' : 'stopped', cdpUrl: ENDPOINT, profile: PROFILE }
+                : (() => { throw new Error('用法：node test/dev-browser.cjs status|build|sync|ensure|launch|guide'); })();
     console.log(JSON.stringify(result, null, 2));
     if (command === 'sync' && result.sync && result.sync.status !== 'ready') process.exit(result.sync.status === 'failed' ? 1 : 2);
     if (command === 'ensure' && result.status !== 'ready' && result.status !== 'ready-existing') process.exit(result.status === 'failed' ? 1 : 2);
