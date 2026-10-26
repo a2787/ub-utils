@@ -15,7 +15,7 @@
 - 当前 userscript：`0.58.0`（当前公开版本）
 - 构建：`0.58.0-ai-manual-first`
 - 当前公开版本/功能提交：`0.58.0` / `b0f0f7a`
-- 最近验证的源码快照：`b0f0f7a`（AI 手动优先 `ceadc77` + 页面句柄安全门禁 `b0f0f7a`；策略与文档提交在其后）
+- 最近验证的源码快照：`b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`（AI 手动优先 `ceadc77` + 页面句柄安全门禁；策略与文档提交在其后）
 - 当前候选源码 SHA-256：`fdf5928742caee1556ad3aec412b6c3e52a3f3529fafe0f9e52935fe85a99b29`
 - 发布状态：v0.58.0 功能提交已推送到 `origin/master`（头 `8306017`，含安全策略），`v0.58.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.58.0` / `0.58.0-ai-manual-first`；`v0.57.4`/`v0.57.2`/`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。

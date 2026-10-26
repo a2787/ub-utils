@@ -6,8 +6,8 @@
 
 - 新增独立的「自动分析新内容」开关（默认关闭）：启用 AI 后仅点击「分析本页」才请求 API，页面加载/内容变化不再自动请求；手动分析不再强制填写页面附加规则。
 - 自动模式的候选不再自动弹窗，等在屏幕右侧「AI 待审建议」浮条，点击才进入审核；确认前不写名单。
-- AI 面板新增本机用量计数（请求/条数/字符，仅本地保存）与"本地名单/关键词已先行处理 N 条"提示；关键词/正则与名单命中的内容继续零 API 消耗。
-- `structure regression`：新增 ai-auto-gate 5 项（默认 0 次自动请求、手动免页规则、浮条契约、用量计数，旧行为上失败）；ai-screening 25、content-ai 12、ai-platforms 7、prompt-system 13、run 20、quickblock 38、danmaku 8、product 7 全绿。
+- AI 面板新增本机用量计数（请求/条数/字符，仅本地）与"本地名单/关键词已先行处理 N 条"提示；关键词与名单命中继续零 API 消耗。
+- `structure regression`：新增 ai-auto-gate 5 项（默认 0 次自动请求、手动免页规则、浮条契约、用量计数，旧行为上失败）；ai-screening 25、content-ai 12、run 20、quickblock 38、product 7 等全量矩阵全绿。
 
 详细变更、证据和边界：[v0.58.0 完整条目](docs/changelog/v0.58.0.md)。
 
