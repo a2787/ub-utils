@@ -180,7 +180,10 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     report.pass.push('PROMPT-12 提示词将事实核查与屏蔽决策分离，未核查不得直接判假');
   } else report.fail.push('PROMPT-12 缺少事实核查保守边界或结构化输出字段：' + rendered.system.slice(0, 2200));
 
-  await page.evaluate(() => window.OB.Store.setSetting('aiEnabled', true));
+  await page.evaluate(() => {
+    window.OB.Store.setSetting('aiEnabled', true);
+    window.OB.Store.setSetting('aiAutoAnalyze', true);
+  });
   await page.waitForFunction(() => (window.__aiBodies || []).length >= 1, null, { timeout: 5000 }).catch(() => {});
   const requestShape = await page.evaluate(() => {
     const body = (window.__aiBodies || [])[0] || {};
@@ -199,6 +202,8 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     report.pass.push('PROMPT-6 结构化提示词已接入实际 AI 请求载荷，仍不携带身份字段');
   } else report.fail.push('PROMPT-6 AI 请求载荷异常：' + JSON.stringify(requestShape));
 
+  // 自动候选不再自动弹窗（OB-AI-015）；手动打开审核后再验证负反馈链路。
+  await page.evaluate(() => window.OB.ai.openAutoReview());
   await page.waitForSelector('#ob-ai-review .ob-ai-reject', { timeout: 5000 }).catch(() => {});
   if (await page.locator('#ob-ai-review .ob-ai-reject').count()) {
     await page.locator('#ob-ai-review .ob-ai-reject').click();

@@ -2,6 +2,15 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.58.0 - AI 默认仅手动分析与待审浮条 - 2026-10-27（本地候选，未发布）
+
+- 新增独立的「自动分析新内容」开关（默认关闭）：启用 AI 后仅点击「分析本页」才请求 API，页面加载/内容变化不再自动请求；手动分析不再强制填写页面附加规则。
+- 自动模式的候选不再自动弹窗，等在屏幕右侧「AI 待审建议」浮条，点击才进入审核；确认前不写名单。
+- AI 面板新增本机用量计数（请求/条数/字符，仅本地保存）与"本地名单/关键词已先行处理 N 条"提示；关键词/正则与名单命中的内容继续零 API 消耗。
+- `structure regression`：新增 ai-auto-gate 5 项（默认 0 次自动请求、手动免页规则、浮条契约、用量计数，旧行为上失败）；ai-screening 25、content-ai 12、ai-platforms 7、prompt-system 13、run 20、quickblock 38、danmaku 8、product 7 全绿。
+
+详细变更、证据和边界：[v0.58.0 完整条目](docs/changelog/v0.58.0.md)。
+
 ## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（已公开发布）
 
 - **右键交还页面**：删除"命中评论/帖子条目时接管右键、弹出自建「🚫 拉黑此用户」菜单"的整套实现（`contextmenu` 捕获监听、`buildContextMenu`、仅供其使用的 `findItem` 与 `#ob-ctx` 样式）；此前这些位置右键被 `preventDefault`，平台原生菜单与页面上下文操作失效。
@@ -12,12 +21,9 @@
 
 GitHub Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
 
-## v0.57.3 - AI 直连配置连通性测试与瞬态重试 - 2026-09-12（本地候选，未公开发布）
+## v0.57.3 - AI 连接测试与瞬态重试 - 2026-09-12（未单独发布；内容随 v0.57.4 收口）
 
-- AI 设置新增「测试连接」按钮：发送 `max_tokens=1` 最小请求即时验证 API 地址/模型/本机 Key，成功显示延迟，失败给出可理解原因；直连批量请求遇 429/5xx/超时/网络抖动自动重试一次（1.5s 退避），4xx 语义错误与取消不重试。适配任意 OpenAI-compatible provider（官方 DeepSeek API 即填即用）。
-- `structure regression`：ai-screening 25 项全绿（新增 AI-24 429 重试用例，旧行为整轮失败）；userscript product 全绿（新增测试连接用例）。
-
-详细变更、证据和边界：[v0.57.3 完整条目](docs/changelog/v0.57.3.md)。
+- 「测试连接」（`max_tokens=1` 最小请求即时验证地址/模型/Key）与直连 429/5xx/超时自动重试一次（1.5s 退避，取消与 4xx 语义错误不重试）；适配任意 OpenAI-compatible provider。证据与细节见 [v0.57.3 完整条目](docs/changelog/v0.57.3.md)。
 
 ## v0.57.2 - 自动弹幕正则安全边界 - 2026-09-12（已发布）
 
@@ -33,7 +39,7 @@ GitHub Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.
 
 详细变更、证据和边界：[v0.57.1 完整条目](docs/changelog/v0.57.1.md)。
 
-v0.57.1 已推送并创建 [tag/Release](https://github.com/a2787/ub-utils/releases/tag/v0.57.1)；raw 更新地址曾服务 0.57.1，当前 Latest 已由 v0.57.2 接替，v0.57.0 tag/Release 保持不变。
+v0.57.1 已发布（tag/Release 保留）；当前 Latest 已由更高版本接替。
 
 ## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（已发布）
 

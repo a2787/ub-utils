@@ -23,7 +23,7 @@ window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, ap
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
+    aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'coverage-rule', text: '覆盖测试规则', enabled: true }]
   }
 }) };

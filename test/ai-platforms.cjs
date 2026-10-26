@@ -18,7 +18,7 @@ window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, ap
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
+    aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-douyin-repro', text: '不许引战', enabled: true }]
   }
 }) };
@@ -95,12 +95,18 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   await sleep(2600);
 
   const first = await page.evaluate(() => {
+    // 自动候选不再自动弹窗（OB-AI-015）；先确认浮条，再手动打开审核。
+    const autoPopupSuppressed = !document.querySelector('#ob-ai-review');
+    const pillShown = !!document.querySelector('#ob-ai-pending');
+    window.OB.ai.openAutoReview();
     const review = document.querySelector('#ob-ai-review');
     const inputs = review ? Array.from(review.querySelectorAll('input[type="checkbox"]')) : [];
     const records = window.OB.adapters.douyin.collectAIRecords(document);
     return {
       status: window.OB.ai.status(),
       review: !!review,
+      autoPopupSuppressed,
+      pillShown,
       candidates: inputs.length,
       disabledCandidates: inputs.filter((input) => input.disabled).length,
       records: records.map((item) => ({ kind: item.kind, keys: item.keys, text: item.text || item.note })),
@@ -110,10 +116,11 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const firstBody = first.bodies[0] || {};
   const firstItems = firstBody.messages && firstBody.messages[1]
     ? JSON.parse(firstBody.messages[1].content || '{}').items || [] : [];
-  if (first.review && first.candidates === 3 && first.disabledCandidates === 1) {
-    report.pass.push('DY-AI-1 抖音评论/弹幕自动分析弹出三条候选，无法确认身份的弹幕不可执行');
+  if (first.review && first.candidates === 3 && first.disabledCandidates === 1
+    && first.autoPopupSuppressed && first.pillShown) {
+    report.pass.push('DY-AI-1 抖音评论/弹幕自动分析候选等在待审浮条，手动打开后三条候选、无法确认身份的弹幕不可执行');
   } else {
-    report.fail.push('DY-AI-1 候选审核形态异常：' + JSON.stringify({ review: first.review, candidates: first.candidates, disabled: first.disabledCandidates, status: first.status }));
+    report.fail.push('DY-AI-1 候选审核形态异常：' + JSON.stringify({ review: first.review, candidates: first.candidates, disabled: first.disabledCandidates, autoPopupSuppressed: first.autoPopupSuppressed, pillShown: first.pillShown, status: first.status }));
   }
   if (first.records.some((item) => item.kind === 'comment' && item.keys.includes('douyin:secuid:MS4wLjABAAComment'))
     && first.records.some((item) => item.kind === 'danmaku' && item.keys.includes('douyin:uid:7654321'))
@@ -149,6 +156,8 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   });
   await sleep(2100);
   const afterSwitch = await page.evaluate(() => {
+    window.OB.ai.closeReview();
+    window.OB.ai.openAutoReview();
     const review = document.querySelector('#ob-ai-review');
     const rows = review ? Array.from(review.querySelectorAll('.ob-ai-candidate-text')).map((node) => node.textContent) : [];
     const bodies = window.__aiBodies || [];

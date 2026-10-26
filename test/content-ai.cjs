@@ -18,7 +18,7 @@ window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, ap
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
+    aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-content-fixture', text: '命中目标', enabled: true }],
     biliDanmakuRules: [{ id: 'bili-keyword-fixture', kind: 'keyword', pattern: '目标', enabled: true }],
     douyinDanmakuRules: [{ id: 'douyin-keyword-fixture', kind: 'keyword', pattern: '目标', enabled: true }]
@@ -188,6 +188,9 @@ async function openContent(page, adapterId, tab) {
     const weibo = await installPage(browser, 'https://weibo.com/fixture/status/fixture#comment', WEIBO_FIXTURE);
     await sleep(2300);
     const weiboState = await weibo.evaluate(() => {
+      // 自动候选不再自动弹窗（OB-AI-015）；先确认待审浮条，再手动打开审核。
+      const pillShown = !!document.querySelector('#ob-ai-pending');
+      window.OB.ai.openAutoReview();
       const latest = (window.__aiBodies || [])[window.__aiBodies.length - 1] || {};
       let input = {};
       try { input = JSON.parse(latest.messages && latest.messages[1] && latest.messages[1].content || '{}'); } catch (error) {}
@@ -196,9 +199,10 @@ async function openContent(page, adapterId, tab) {
         requestCount: (window.__aiBodies || []).length,
         items: input.items || [],
         review: !!document.querySelector('#ob-ai-review'),
+        pillShown,
       };
     });
-    if (weiboState.records === 2 && weiboState.requestCount >= 1 && weiboState.review
+    if (weiboState.records === 2 && weiboState.requestCount >= 1 && weiboState.review && weiboState.pillShown
       && weiboState.items.length === 2 && weiboState.items.every((item) => !/weibo:uid|keys|uid/i.test(JSON.stringify(item))))
       report.pass.push('CR-5 微博当前可靠评论进入 AI 采集和自动建议审核，出站请求不含身份键');
     else report.fail.push('CR-5 微博评论 AI 提醒异常：' + JSON.stringify(weiboState));
@@ -241,6 +245,9 @@ async function openContent(page, adapterId, tab) {
     const zhihuState = await zhihu.evaluate(() => {
       const adapter = window.OB.adapters.zhihu;
       const records = adapter.collectAIRecords(document);
+      // 自动候选不再自动弹窗（OB-AI-015）；先确认待审浮条，再手动打开审核。
+      const pillShown = !!document.querySelector('#ob-ai-pending');
+      window.OB.ai.openAutoReview();
       const latest = (window.__aiBodies || [])[window.__aiBodies.length - 1] || {};
       let input = {};
       try { input = JSON.parse(latest.messages && latest.messages[1] && latest.messages[1].content || '{}'); } catch (error) {}
@@ -249,10 +256,11 @@ async function openContent(page, adapterId, tab) {
         requestCount: (window.__aiBodies || []).length,
         items: input.items || [],
         review: !!document.querySelector('#ob-ai-review'),
+        pillShown,
       };
     });
     if (zhihuState.records.length === 1 && /目标 知乎评论正文/.test(zhihuState.records[0].text)
-      && zhihuState.requestCount >= 1 && zhihuState.review && zhihuState.items.length === 1
+      && zhihuState.requestCount >= 1 && zhihuState.review && zhihuState.pillShown && zhihuState.items.length === 1
       && !/赞同|回复|举报/.test(zhihuState.items[0].text || ''))
       report.pass.push('CR-7 知乎复用 CommentContent 正文层进入 AI 提醒，操作按钮文字未进入请求');
     else report.fail.push('CR-7 知乎评论 AI 正文/提醒异常：' + JSON.stringify(zhihuState));
@@ -303,6 +311,9 @@ async function openContent(page, adapterId, tab) {
     const tiebaState = await tieba.evaluate(() => {
       const adapter = window.OB.adapters.tieba;
       const records = adapter.collectAIRecords(document);
+      // 自动候选不再自动弹窗（OB-AI-015）；先确认待审浮条，再手动打开审核。
+      const pillShown = !!document.querySelector('#ob-ai-pending');
+      window.OB.ai.openAutoReview();
       const latest = (window.__aiBodies || [])[window.__aiBodies.length - 1] || {};
       let input = {};
       try { input = JSON.parse(latest.messages && latest.messages[1] && latest.messages[1].content || '{}'); } catch (error) {}
@@ -311,12 +322,13 @@ async function openContent(page, adapterId, tab) {
         requestCount: (window.__aiBodies || []).length,
         items: input.items || [],
         review: !!document.querySelector('#ob-ai-review'),
+        pillShown,
       };
     });
     if (tiebaState.records.length === 1 && tiebaState.records[0].keys.includes('tieba:uid:770001')
       && /目标 贴吧评论正文/.test(tiebaState.records[0].text)
       && !/回复|举报|拉黑/.test(tiebaState.records[0].text)
-      && tiebaState.requestCount >= 1 && tiebaState.review && tiebaState.items.length === 1)
+      && tiebaState.requestCount >= 1 && tiebaState.review && tiebaState.pillShown && tiebaState.items.length === 1)
       report.pass.push('CR-10 贴吧现代评论正文进入 AI 提醒，Vue 数字 UID 可执行且操作文字未进入请求');
     else report.fail.push('CR-10 贴吧评论 AI 采集/提醒异常：' + JSON.stringify(tiebaState));
     const tiebaUi = await tieba.evaluate(async () => {

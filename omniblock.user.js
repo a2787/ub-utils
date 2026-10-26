@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.57.4
+// @version       0.58.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.57.4-native-context-menu';
+  const RUNTIME_BUILD = '0.58.0-ai-manual-first';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -467,6 +467,9 @@
   // `@connect *` 是为了允许用户在平板上填写任意兼容 provider；Tampermonkey
   // 仍会在首次访问新域名时显示权限提示，用户可拒绝该域名。
   const AI_DIRECT_CONFIG_KEY = 'omniblock:ai-direct-config:v1';
+  // AI 用量只在本机累计请求数/记录条数/发送字符数，用于让"自动分析花了多少"可见；
+  // 不含正文、身份键或 URL，不进入名单导出、提示词导出或账户同步。
+  const AI_USAGE_STORAGE_KEY = 'omniblock:ai-usage:v1';
   const AI_DIRECT_KEY_MAX_LENGTH = 512;
   const AI_FACT_RETRIEVAL_DEFAULT_URL = 'http://127.0.0.1:4001/v1/fact-check';
   const AI_TRANSPORT_MODES = new Set(['direct']);
@@ -1203,6 +1206,7 @@
     biliDanmakuExemptions: [],   // B站自动规则例外；只跳过规则，不是新的屏蔽身份
     douyinDanmakuExemptions: [], // 抖音自动规则例外；只跳过规则，不是新的屏蔽身份
     aiEnabled: false,            // AI 建议默认关闭；不因设置存在而请求 AI 服务
+    aiAutoAnalyze: false,        // 自动分析独立开关：默认关闭，开启 AI 后也只手动分析
     aiMode: 'direct',            // 保留为协议迁移字段；当前唯一运行方式是 direct
     aiProviderUrl: '',            // 用户配置的 OpenAI-compatible endpoint；不含 API Key
     aiProviderModel: '',          // provider 的模型名
@@ -1246,7 +1250,7 @@
     function sanitizeSettings(input) {
       const source = input && typeof input === 'object' ? input : {};
       const out = { ...DEFAULT_SETTINGS };
-      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled', 'logEnabled']) {
+      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled', 'logEnabled', 'aiAutoAnalyze']) {
         if (typeof source[key] === 'boolean') out[key] = source[key];
       }
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
@@ -3475,6 +3479,9 @@
     #ob-ai-background-status .ob-ai-background-text { min-width: 0; overflow-wrap: anywhere; }
     #ob-ai-background-status .ob-ai-background-undo { flex: 0 0 auto; border: 1px solid #c9cbd2; border-radius: 4px; padding: 2px 6px; background: #fff; color: #555; cursor: pointer; font-size: 10px; }
     #ob-ai-background-status .ob-ai-background-undo:hover { background: #f2f3fa; }
+    #ob-ai-pending { position: fixed; right: 14px; bottom: 158px; z-index: 2147483644; box-sizing: border-box; max-width: min(330px, calc(100vw - 28px)); padding: 9px 10px; border: 1px solid #b9c3f2; border-radius: 7px; background: rgba(244,246,255,.97); color: #2c3f8f; box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 12px; font-weight: 600; cursor: pointer; }
+    #ob-ai-pending:hover { background: #eef1fd; }
+    .ob-ai-usage { margin-top: 6px; font-size: 11px; color: #6b7280; line-height: 1.5; }
     #ob-ai-review { position: fixed; inset: 0; z-index: 2147483645; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: rgba(0,0,0,.45); color: #222; font-size: 13px; }
     #ob-ai-review .ob-ai-review-box { box-sizing: border-box; width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24); }
     #ob-ai-review .ob-ai-review-head, #ob-ai-review .ob-ai-review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -17179,6 +17186,13 @@
     const backgroundJobs = new Map();
     const factCache = new Map();
     const factMetrics = { requested: 0, cacheHits: 0, checked: 0, deferred: 0, errors: 0, lastMode: 'off', lastAt: 0 };
+    // 本机用量计数：只有数字，没有正文。session 在页面会话内累计，day 随本地日期
+    // 翻转并持久化到独立 GM 键，让"自动分析这段时间花了多少"可以直接看到。
+    const usageState = {
+      loaded: false, day: '',
+      sessionRequests: 0, sessionRecords: 0, sessionChars: 0,
+      dayRequests: 0, dayRecords: 0, dayChars: 0,
+    };
     const subscriptions = [];
     let last = {
       state: 'idle', source: '', records: 0, analyzed: 0, batchIndex: 0, batchCount: 0,
@@ -17233,6 +17247,9 @@
       return {
         ...last,
         enabled: Store.getSetting('enabled') !== false && Store.getSetting('aiEnabled') === true,
+        autoAnalyze: Store.getSetting('aiAutoAnalyze') === true,
+        pendingCount: autoCandidates.size,
+        usage: usageSnapshot(),
         mode: transport.mode,
         gatewayConfigured: false,
         providerConfigured: !!transport.url,
@@ -17261,6 +17278,7 @@
       return JSON.stringify({
         enabled: Store.getSetting('enabled') !== false,
         aiEnabled: Store.getSetting('aiEnabled') === true,
+        aiAutoAnalyze: Store.getSetting('aiAutoAnalyze') === true,
         aiMode: transport.mode,
         providerUrl: normalizeAIProviderUrl(Store.getSetting('aiProviderUrl')),
         providerModel: normalizeAIModel(Store.getSetting('aiProviderModel')),
@@ -17309,6 +17327,129 @@
       autoAnalyzedRecordIds.clear();
       autoCandidates.clear();
       autoContentPending = false;
+      renderPendingStatus();
+    }
+
+    function usageDayKey() {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
+        + '-' + String(now.getDate()).padStart(2, '0');
+    }
+
+    function loadUsageState() {
+      if (usageState.loaded) return;
+      usageState.loaded = true;
+      usageState.day = usageDayKey();
+      try {
+        const raw = typeof GM_getValue === 'function' ? GM_getValue(AI_USAGE_STORAGE_KEY, '') : '';
+        const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+        if (parsed && typeof parsed === 'object' && parsed.day === usageState.day) {
+          usageState.dayRequests = Math.max(0, Math.round(Number(parsed.requests) || 0));
+          usageState.dayRecords = Math.max(0, Math.round(Number(parsed.records) || 0));
+          usageState.dayChars = Math.max(0, Math.round(Number(parsed.chars) || 0));
+        }
+      } catch (e) {}
+    }
+
+    function saveUsageState() {
+      try {
+        if (typeof GM_setValue !== 'function') return;
+        GM_setValue(AI_USAGE_STORAGE_KEY, JSON.stringify({
+          version: 1, day: usageState.day,
+          requests: usageState.dayRequests, records: usageState.dayRecords, chars: usageState.dayChars,
+        }));
+      } catch (e) {}
+    }
+
+    // 每次真实发出的 provider 请求（含重试）都计数；取消前的请求同样真实消耗过配额。
+    function recordAIUsage(records, chars) {
+      loadUsageState();
+      const day = usageDayKey();
+      if (day !== usageState.day) {
+        usageState.day = day;
+        usageState.dayRequests = 0; usageState.dayRecords = 0; usageState.dayChars = 0;
+      }
+      const recordCount = Math.max(0, Math.round(Number(records) || 0));
+      const charCount = Math.max(0, Math.round(Number(chars) || 0));
+      usageState.sessionRequests += 1;
+      usageState.sessionRecords += recordCount;
+      usageState.sessionChars += charCount;
+      usageState.dayRequests += 1;
+      usageState.dayRecords += recordCount;
+      usageState.dayChars += charCount;
+      saveUsageState();
+    }
+
+    function usageSnapshot() {
+      loadUsageState();
+      return {
+        day: usageState.day,
+        sessionRequests: usageState.sessionRequests,
+        sessionRecords: usageState.sessionRecords,
+        sessionChars: usageState.sessionChars,
+        dayRequests: usageState.dayRequests,
+        dayRecords: usageState.dayRecords,
+        dayChars: usageState.dayChars,
+      };
+    }
+
+    function payloadChars(payload) {
+      try {
+        return (Array.isArray(payload && payload.messages) ? payload.messages : [])
+          .reduce((sum, message) => sum + String(message && message.content || '').length, 0);
+      } catch (e) { return 0; }
+    }
+
+    // 自动分析的候选不再自动弹窗：数量显示在屏幕右侧的「AI 待审建议」浮条上，
+    // 用户点击后才打开审核弹窗；确认前不写名单，路由变化/关闭 AI 时清空。
+    function renderPendingStatus() {
+      if (!document.body) return;
+      let node = document.getElementById('ob-ai-pending');
+      const count = autoCandidates.size;
+      if (!count || stopped) {
+        if (node) node.remove();
+        return;
+      }
+      if (!node) {
+        node = document.createElement('div');
+        node.id = 'ob-ai-pending';
+        node.setAttribute('role', 'button');
+        node.setAttribute('tabindex', '0');
+        const activate = () => {
+          if (review || stopped) return;
+          const opened = openAutoReview();
+          if (!opened.ok && opened.error) showToast(opened.error);
+        };
+        node.addEventListener('click', activate);
+        node.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(); }
+        });
+        document.body.appendChild(node);
+      }
+      node.textContent = 'AI 待审建议：' + (count > 99 ? '99+' : count) + ' 条，点击查看';
+      node.title = '自动分析发现的候选在这里等待审核；确认前不会写入名单。';
+    }
+
+    function autoReviewOptions(batchCount, deferred) {
+      return {
+        onCommit: (selected) => {
+          for (const candidate of selected) autoCandidates.delete(candidate.id);
+          renderPendingStatus();
+        },
+        onReject: (candidate) => { autoCandidates.delete(candidate.id); renderPendingStatus(); },
+        onRejectUndo: (candidate) => { autoCandidates.set(candidate.id, candidate); renderPendingStatus(); },
+        deferredCount: deferred,
+      };
+    }
+
+    function openAutoReview() {
+      const candidates = Array.from(autoCandidates.values());
+      if (!candidates.length) return { ok: false, error: '当前没有待审核的 AI 建议' };
+      if (review) return { ok: false, error: '审核弹窗已打开' };
+      const batchCount = Number(last.batchCount) || 0;
+      showReview(candidates, 'auto', batchCount, activeRules('').length,
+        autoReviewOptions(batchCount, Number(last.deferred) || 0));
+      return { ok: true, count: candidates.length };
     }
 
     function backgroundSnapshot() {
@@ -18080,6 +18221,7 @@
       catch (error) { throw new Error('当前页面内容采集失败'); }
       const records = [];
       const seen = new Set();
+      const skipped = { blocked: 0, keyword: 0, duplicate: 0 };
       for (const item of Array.isArray(raw) ? raw : []) {
         const label = aiRuleText(item && item.label, 160);
         let text = aiRuleText(item && (item.text != null ? item.text : item.note), AI_TEXT_MAX_LENGTH);
@@ -18094,7 +18236,7 @@
         }
         if (!text) continue;
         const keys = normalizeIdentityKeys(item && item.keys);
-        if (keys.length && Index.isBlocked(keys)) continue;
+        if (keys.length && Index.isBlocked(keys)) { skipped.blocked++; continue; }
         const kind = item && item.kind === 'danmaku' ? 'danmaku'
           : item && item.kind === 'content' ? 'content' : 'comment';
         const contentType = normalizeAIContentType(item && item.contentType,
@@ -18105,13 +18247,13 @@
         const contextScope = context ? AIContext.scopeKey(context) : '';
         const signature = kind + '\x1f' + contentType + '\x1f' + (title || '') + '\x1f' + text + '\x1f' + keys.join('|')
           + '\x1f' + contextScope + '\x1f' + (context && context.work.revision || '');
-        if (seen.has(signature)) continue;
+        if (seen.has(signature)) { skipped.duplicate++; continue; }
         seen.add(signature);
         // ID 必须跨“评论晚到后再次分析”保持稳定；否则增量分析会把同一条
         // 旧内容重新编号，既无法去重，也会让 API 再次收到重复文本。
         const id = 'ai-item-' + ruleHash('ai-record\x1f' + signature);
         const keyword = applyContentKeywordRule(adapter, { ...item, kind, text, keys });
-        if (keyword.blocked) continue;
+        if (keyword.blocked) { skipped.keyword++; continue; }
         records.push({
           id,
           aiSignature: signature,
@@ -18126,7 +18268,10 @@
           source: aiRuleText(item && item.source, 40) || 'dom',
         });
       }
-      return { records, sampled: false, total: records.length };
+      return {
+        records, sampled: false, total: records.length,
+        skippedBlocked: skipped.blocked, skippedKeyword: skipped.keyword, skippedDuplicate: skipped.duplicate,
+      };
     }
 
     function splitAIBatches(records) {
@@ -18543,7 +18688,8 @@
       }
       const rules = activeRules(pageRule);
       if (!rules.length) {
-        setLast({ state: 'idle', source, records: 0, candidates: 0, deferred: 0, lastError: '尚未设置 AI 规则' });
+        setLast({ state: 'idle', source, records: 0, candidates: 0, deferred: 0,
+          lastError: '尚未设置 AI 规则：请先在提示词系统中填写判断目标/边界，或填写本页面附加规则' });
         return { ok: false, error: '尚未设置 AI 规则' };
       }
       const transport = aiTransportConfig();
@@ -18579,6 +18725,8 @@
       }
       timing.collectMs = elapsedMs(collectStartedAt);
       const allRecords = collected.records;
+      // 本地名单/关键词规则先行处理掉的条数：这部分内容不会再消耗任何 AI 配额。
+      const skippedLocal = (Number(collected.skippedBlocked) || 0) + (Number(collected.skippedKeyword) || 0);
       const pendingRecords = source === 'auto'
         ? allRecords.filter((record) => !autoAnalyzedRecordIds.has(record.id))
         : allRecords;
@@ -18592,16 +18740,9 @@
         const state = pendingCandidates.length ? 'review' : (allRecords.length ? 'ready' : 'empty');
         setLast({ state, source, records: allRecords.length, analyzed: allRecords.length, batchIndex: 0, batchCount: 0,
           batched: false, sampled: false, candidates: pendingCandidates.length,
-          deferred: Number(last.deferred) || 0,
+          deferred: Number(last.deferred) || 0, skippedLocal,
           lastError: allRecords.length ? '' : '当前页没有可分析的已观察内容' });
-        if (pendingCandidates.length && !review) {
-          showReview(pendingCandidates, source, 0, rules.length, {
-            onCommit: (selected) => selected.forEach((candidate) => autoCandidates.delete(candidate.id)),
-            onReject: (candidate) => autoCandidates.delete(candidate.id),
-            onRejectUndo: (candidate) => autoCandidates.set(candidate.id, candidate),
-            deferredCount: Number(last.deferred) || 0,
-          });
-        }
+        if (pendingCandidates.length && source === 'auto') renderPendingStatus();
         return { ok: true, empty: !allRecords.length, candidates: pendingCandidates };
       }
       const batches = splitAIBatches(pendingRecords);
@@ -18681,8 +18822,10 @@
             if (/HTTP 4\d\d/.test(message) && !/HTTP 429/.test(message)) return false;
             return /HTTP 429|HTTP 5\d\d|请求超时|服务连接失败|服务请求失败/.test(message);
           };
-          async function requestWithRetry(payload, label) {
+          async function requestWithRetry(payload, label, recordCount) {
             for (let attempt = 0; ; attempt++) {
+              // 每次真实发出的请求（含重试）都计入本机用量；字符数按实际请求体计。
+              recordAIUsage(recordCount || 0, payloadChars(payload));
               const request = requestJSON(transport.url, payload, AI_REQUEST_TIMEOUT_MS, label, 'direct');
               activeRequest = request;
               const startedAt = monotonicNow();
@@ -18706,7 +18849,7 @@
             records: batch,
           });
           const payload = makePayload(batch, prompt);
-          const response = await requestWithRetry(payload, 'AI API');
+          const response = await requestWithRetry(payload, 'AI API', batch.length);
           if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
           const parsedResult = parseCandidates(response, batch, rules,
             factMode === 'off' ? undefined : { collectFacts: true, deferFacts: false });
@@ -18728,7 +18871,7 @@
                 records: factRecords,
                 factEvidence,
               });
-              const verificationResponse = await requestWithRetry(makePayload(factRecords, verificationPrompt), 'AI API');
+              const verificationResponse = await requestWithRetry(makePayload(factRecords, verificationPrompt), 'AI API', factRecords.length);
               if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
               verificationResult = parseCandidates(verificationResponse, factRecords, rules);
               if (factMode === 'canary') incoming = mergeAICandidates(incoming, verificationResult.candidates);
@@ -18757,21 +18900,19 @@
         if (source === 'auto') for (const record of pendingRecords) autoAnalyzedRecordIds.add(record.id);
         setLast({ state: candidates.length ? 'review' : 'ready', source, records: allRecords.length,
           newRecords: pendingRecords.length, analyzed: allRecords.length, batchIndex: batchCount, batchCount, batched: batchCount > 1,
-          sampled: false, candidates: candidates.length, deferred, lastError: '' });
+          sampled: false, candidates: candidates.length, deferred, skippedLocal, lastError: '' });
         EventLog.record('ai.analysis.finish', {
           runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, providerMs: timing.providerMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
           analyzedCount: allRecords.length, newAnalyzedCount: analyzed,
-          batchCount, candidateCount: candidates.length, deferred, sampled: false,
+          batchCount, candidateCount: candidates.length, deferred, skippedLocal, sampled: false,
         }, { immediate: true });
-        if (candidates.length) showReview(candidates, source, batchCount, rules.length, {
-          ...(source === 'auto' ? {
-            onCommit: (selected) => selected.forEach((candidate) => autoCandidates.delete(candidate.id)),
-            onReject: (candidate) => autoCandidates.delete(candidate.id),
-            onRejectUndo: (candidate) => autoCandidates.set(candidate.id, candidate),
-          } : {}),
-          deferredCount: deferred,
-        });
+        if (candidates.length && source === 'auto') {
+          // 自动模式的候选不再自动弹窗：进入右侧「AI 待审建议」浮条，由用户决定何时审核。
+          renderPendingStatus();
+        } else if (candidates.length) {
+          showReview(candidates, source, batchCount, rules.length, { deferredCount: deferred });
+        }
         return { ok: true, candidates };
       } catch (error) {
         if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
@@ -18801,7 +18942,8 @@
     function scheduleAuto(delay = 1200, force = false) {
       cancelAutoTimer();
       if (stopped || !PageLifecycle.isVisible() || Store.getSetting('enabled') === false
-        || Store.getSetting('aiEnabled') !== true || !currentAdapter
+        || Store.getSetting('aiEnabled') !== true || Store.getSetting('aiAutoAnalyze') !== true
+        || !currentAdapter
         || typeof currentAdapter.collectAIRecords !== 'function' || !activeRules('').length) return;
       const key = routeKey();
       if (!force && (autoRouteKey === key || autoPendingKey === key)) return;
@@ -18982,10 +19124,11 @@
     }
 
     function analyzePage(pageRule, options) {
-      if (!String(pageRule || '').trim()) return Promise.resolve({ ok: false, error: '请先填写本页面附加规则' });
+      // 页面附加规则是可选增强：留空时使用提示词系统的边界；两者都为空时
+      // runInternal 会给出明确的"尚未设置 AI 规则"提示。
       cancelAutoTimer();
       const loadDouyin = !!(options && options.loadDouyin);
-      return run(pageRule, loadDouyin ? 'douyin-autoload' : 'page', { loadDouyin });
+      return run(String(pageRule || '').trim(), loadDouyin ? 'douyin-autoload' : 'page', { loadDouyin });
     }
 
     function loadAndAnalyzePage(pageRule) {
@@ -19027,6 +19170,9 @@
     return {
       start, status, onChange, addRule, removeRule, setRuleEnabled, analyzePage, loadAndAnalyzePage, cancel,
       testConnection,
+      openAutoReview: () => openAutoReview(),
+      pendingCount: () => autoCandidates.size,
+      usage: () => usageSnapshot(),
       closeReview: () => closeReview('api'),
       context: AIContext,
       scopedBlocks: ScopedBlocks,
@@ -19230,8 +19376,9 @@
     root.innerHTML = `
       <div data-ob-ai-surface="1">
         <h3 style="margin:0 0 8px;font-size:15px">AI 智能屏蔽</h3>
-        <p class="ob-ai-intro">AI 默认关闭。启用后，当前支持页面会按预设规则分析已观察到的评论/弹幕，并弹出多选审核；抖音点击“分析本页”会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。事实核查与屏蔽决策分开：缺少引用不等于虚假，当前没有外部检索结果时，未核查或语境不足的事实不会单独进入屏蔽候选。AI 只通过你填写的 OpenAI-compatible API 直接请求；API Key 只保存在当前设备的 Tampermonkey GM 存储，不进入页面对象、名单导出、提示词导出或账户同步。首次访问新的 API 域名时，Tampermonkey 可能显示跨源权限提示。</p>
-        <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（按预设规则自动分析当前页）</label>
+        <p class="ob-ai-intro">AI 默认关闭；开启后默认仅手动分析——只有点击"分析本页"才会请求 AI 服务。如需自动模式，请单独勾选"自动分析新内容"：页面加载和内容更新时会自动分析，候选不再自动弹窗，而是等在屏幕右侧的「AI 待审建议」浮条里，点击才进入审核。抖音点击"分析本页"会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。本地名单和关键词/正则规则命中的内容会先行处理，不进入 AI 请求。事实核查与屏蔽决策分开：缺少引用不等于虚假，当前没有外部检索结果时，未核查或语境不足的事实不会单独进入屏蔽候选。AI 只通过你填写的 OpenAI-compatible API 直接请求；API Key 只保存在当前设备的 Tampermonkey GM 存储，不进入页面对象、名单导出、提示词导出或账户同步。首次访问新的 API 域名时，Tampermonkey 可能显示跨源权限提示。</p>
+        <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（默认仅手动分析，不自动请求）</label>
+        <label style="display:block"><input type="checkbox" id="ob-ai-auto"> 自动分析新内容（页面加载、滚动加载和弹幕更新时自动请求 AI；候选等在「AI 待审建议」浮条，不会自动弹窗）</label>
         <div class="ob-ai-provider">
           <label>AI API 地址<input id="ob-ai-provider-url" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1/chat/completions"></label>
           <label>模型名<input id="ob-ai-provider-model" type="text" autocomplete="off" placeholder="填写 provider 的模型名"></label>
@@ -19267,13 +19414,18 @@
             <div class="ob-ai-prompt-section"><div class="ob-ai-prompt-section-title"><span>最近反馈</span><span id="ob-ai-feedback-count" class="ob-ai-prompt-count"></span></div><div id="ob-ai-feedback-list" class="ob-ai-prompt-list"></div></div>
           </div>
         </div>
-        <div class="ob-ai-page"><textarea id="ob-ai-page-rule" maxlength="500" placeholder="本页面附加规则，例如：本页只屏蔽广告和剧透"></textarea><button id="ob-ai-analyze" class="ob-ai-analyze" type="button">分析本页</button><button id="ob-ai-cancel" class="ob-ai-save" type="button" style="display:none">取消当前分析</button></div>
+        <div class="ob-ai-page"><textarea id="ob-ai-page-rule" maxlength="500" placeholder="可选的本页面附加规则，例如：本页只屏蔽广告和剧透；留空时使用提示词系统的边界"></textarea><button id="ob-ai-analyze" class="ob-ai-analyze" type="button">分析本页</button><button id="ob-ai-cancel" class="ob-ai-save" type="button" style="display:none">取消当前分析</button></div>
         <div id="ob-ai-status" class="ob-ai-status" aria-live="polite"></div>
+        <div id="ob-ai-usage" class="ob-ai-usage"></div>
       </div>`;
 
     const query = (selector) => root.querySelector(selector);
     const statusText = (status) => {
       if (!status || !status.enabled) return 'AI 当前关闭；不会自动请求 AI 服务。';
+      const autoHint = status.autoAnalyze ? ''
+        : ' 自动分析已关闭，AI 仅在点击“分析本页”或打开待审建议时请求。';
+      const skippedHint = Number(status.skippedLocal) > 0
+        ? ' 本地名单/关键词已先行处理 ' + Number(status.skippedLocal) + ' 条，未发送 AI。' : '';
       const batchCount = Number(status.batchCount) || 0;
       const newRecordsHint = status.source === 'auto' && status.newRecords != null
         ? '（本轮新增 ' + (Number(status.newRecords) || 0) + ' 条）' : '';
@@ -19293,15 +19445,16 @@
       if (status.state === 'review') return '已分析当前页全部 ' + status.records + ' 条已观察内容，找到 ' + status.candidates + ' 条候选'
         + newRecordsHint + (batchCount > 1 ? '，共 ' + batchCount + ' 批' : '')
         + (Number(status.deferred) > 0 ? '；另有 ' + Number(status.deferred) + ' 条事实/语境内容尚未核查，未列为屏蔽候选' : '')
-        + '，请在审核弹窗中选择后确认。';
+        + skippedHint
+        + (status.source === 'auto' ? '，点击屏幕右侧的「AI 待审建议」浮条查看并确认。' : '，请在审核弹窗中选择后确认。');
       if (status.state === 'ready') return '本轮已分析当前页全部 ' + status.records + ' 条已观察内容，没有待审核候选。'
         + (Number(status.deferred) > 0 ? ' 其中 ' + Number(status.deferred) + ' 条事实/语境内容尚未核查，已保留未屏蔽。' : '')
-        + newRecordsHint + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '');
+        + skippedHint + newRecordsHint + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '') + autoHint;
       if (status.state === 'empty') return status.lastError || '当前页没有可分析的已观察内容。';
       if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || 'AI API 不可用');
       if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求 AI 服务。';
       if (status.lastError) return status.lastError;
-      return '启用后会按预设规则分析当前页，结果必须人工确认。';
+      return '启用后会按预设规则分析当前页，结果必须人工确认。' + autoHint;
     };
     const providerNote = (status) => {
       if (!status || !status.providerConfigured) return '尚未配置有效的 AI API 地址。';
@@ -19334,6 +19487,14 @@
         ? ' 后台 UID：' + (Number(background.completed) || 0) + '/' + (Number(background.total) || 0)
           + ((Number(background.paused) || 0) > 0 ? '（页面不可见，已暂停）' : '（进行中）') : '';
       statusEl.textContent = statusText(status) + backgroundText + ' ' + providerNote(status);
+      const usageEl = query('#ob-ai-usage');
+      if (usageEl) {
+        const usage = status.usage || {};
+        usageEl.textContent = 'AI 用量（仅本机计数，不含正文与身份）：本次页面 ' + (Number(usage.sessionRequests) || 0)
+          + ' 次请求 / ' + (Number(usage.sessionRecords) || 0) + ' 条 / ' + (Number(usage.sessionChars) || 0)
+          + ' 字符；当日累计 ' + (Number(usage.dayRequests) || 0) + ' 次请求 / ' + (Number(usage.dayRecords) || 0)
+          + ' 条 / ' + (Number(usage.dayChars) || 0) + ' 字符。';
+      }
       const factStatus = query('#ob-ai-fact-status');
       if (factStatus) {
         const fact = status.factRetrieval || {};
@@ -19534,6 +19695,15 @@
     const profileAllow = query('#ob-ai-profile-allow');
     const settings = Store.settings();
     enabled.checked = settings.aiEnabled === true;
+    const autoInput = query('#ob-ai-auto');
+    const syncAutoInput = () => {
+      if (!autoInput) return;
+      autoInput.checked = Store.getSetting('aiAutoAnalyze') === true;
+      const unlocked = Store.getSetting('aiEnabled') === true;
+      autoInput.disabled = !unlocked;
+      autoInput.title = unlocked ? '' : '先启用 AI 智能屏蔽，才能开启自动分析';
+    };
+    syncAutoInput();
     if (providerUrlInput) providerUrlInput.value = settings.aiProviderUrl || '';
     if (providerModelInput) providerModelInput.value = settings.aiProviderModel || '';
     const refreshKeyStatus = () => {
@@ -19555,6 +19725,13 @@
       const value = !!event.target.checked;
       Store.setSetting('aiEnabled', value);
       EventLog.record('settings.ai-enabled.toggle', { enabled: value }, { immediate: true });
+      syncAutoInput();
+      refreshStatus();
+    };
+    if (autoInput) autoInput.onchange = (event) => {
+      const value = !!event.target.checked;
+      Store.setSetting('aiAutoAnalyze', value);
+      EventLog.record('settings.ai-auto.toggle', { enabled: value }, { immediate: true });
       refreshStatus();
     };
     query('#ob-ai-save').onclick = () => {

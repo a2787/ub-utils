@@ -21,7 +21,7 @@ window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, ap
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: false,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: true,
-    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
+    aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default',
     aiRules: [{ id: 'ai-rule-repro', text: '不许引战', enabled: true }]
   }
 }) };
@@ -207,17 +207,23 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-ai-screening.cjs' });
   await page.goto('https://www.bilibili.com/video/ai-screening-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai && document.querySelector('#ob-gear')), null, { timeout: 8000 }).catch(() => {});
-  // 自动分析含一次 429 重试延迟；等审核浮层出现而不是固定 sleep。
-  await page.waitForFunction(() => !!document.querySelector('#ob-ai-review'), null, { timeout: 15000 }).catch(() => {});
+  // 自动分析含一次 429 重试延迟；自动候选不再自动弹窗（OB-AI-015），改为等
+  // 「AI 待审建议」浮条出现，再由测试手动打开审核浮层。
+  await page.waitForFunction(() => !!(window.OB && window.OB.ai && window.OB.ai.pendingCount() > 0), null, { timeout: 15000 }).catch(() => {});
   await sleep(3000);
 
   const initial = await page.evaluate(() => {
+    const autoPopupSuppressed = !document.querySelector('#ob-ai-review');
+    const pillShown = !!document.querySelector('#ob-ai-pending');
+    window.OB.ai.openAutoReview();
     const review = document.querySelector('#ob-ai-review');
     const inputs = review ? Array.from(review.querySelectorAll('input[type="checkbox"]')) : [];
     return {
       hasAI: !!(window.OB && window.OB.ai),
       status: window.OB && window.OB.ai ? window.OB.ai.status() : null,
       review: !!review,
+      autoPopupSuppressed,
+      pillShown,
       candidates: inputs.length,
       disabledCandidates: inputs.filter((input) => input.disabled).length,
       bodies: window.__aiBodies || [],
@@ -232,8 +238,9 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     && initial.status.gatewayConfigured === false) {
     report.pass.push('AI-1A userscript 默认使用 API 直连且已读取本机 Key，不再依赖历史网关');
   } else report.fail.push('AI-1A 非正式扩展错误开放设备直连 API：' + JSON.stringify(initial.status));
-  if (initial.review && initial.candidates === 3 && initial.disabledCandidates === 1) report.pass.push('AI-2 自动分析弹出候选审核，可靠身份可选、无身份候选禁用');
-  else report.fail.push('AI-2 自动候选审核形态不符合预期：' + JSON.stringify({ review: initial.review, candidates: initial.candidates, disabled: initial.disabledCandidates, status: initial.status }));
+  if (initial.review && initial.candidates === 3 && initial.disabledCandidates === 1
+    && initial.autoPopupSuppressed && initial.pillShown) report.pass.push('AI-2 自动候选不再自动弹窗，等在待审浮条；手动打开后可靠身份可选、无身份候选禁用');
+  else report.fail.push('AI-2 自动候选审核形态不符合预期：' + JSON.stringify({ review: initial.review, candidates: initial.candidates, disabled: initial.disabledCandidates, autoPopupSuppressed: initial.autoPopupSuppressed, pillShown: initial.pillShown, status: initial.status }));
   const serializedBodies = JSON.stringify(initial.bodies);
   if (initial.bodies.length >= 1 && !/(bili:uid|bili:dmhash|space\.bilibili|"keys"|"uid"|"mid"|"hash")/i.test(serializedBodies)) report.pass.push('AI-3 发往 API 的请求只包含规则/临时项目/文本，不含身份键');
   else report.fail.push('AI-3 AI 请求疑似携带身份字段：' + serializedBodies.slice(0, 1000));

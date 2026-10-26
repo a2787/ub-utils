@@ -20,6 +20,7 @@
 | [plans/2026-09-11-plan-closure.md](plans/2026-09-11-plan-closure.md) | 2026-09-11 收尾轮关闭的 11 个计划项终态、证据与恢复动作 | 只在追溯已关闭项的交付范围与残留去向时读取；当前事实仍以 CURRENT 为准 |
 | [plans/2026-09-12-tablet-track-sealed.md](plans/2026-09-12-tablet-track-sealed.md) | 2026-09-12 平板线封存记录：已发布状态、重启待办与恢复动作 | 只在重启平板线（OB-TM-001/OB-SYNC-001）时读取；当前事实仍以 CURRENT 为准 |
 | [plans/2026-09-13-current-dated-archive.md](plans/2026-09-13-current-dated-archive.md) | 2026-09-13 为守住 CURRENT 的 24 KiB 预算移出的 OB-AI-001/002/003、OB-AI-003~007、OB-BILI-001、OB-RULE-002 原文 | 只在追溯 2026-09-06 至 09-08 的范围、证据、限制与当时发布状态时读取；不追加当前状态 |
+| [plans/2026-10-27-plan-closure.md](plans/2026-10-27-plan-closure.md) | 2026-10-27 移出活动计划的 4 个已 verified 项（OB-RULE-001、OB-REL-001、OB-CTX-001、OB-MAINT-002）终态原文 | 只在追溯各项验收证据与残留边界时读取；当前事实仍以 CURRENT 为准 |
 | [LEGACY-HISTORY.md](LEGACY-HISTORY.md) | 文档重组前的完整维护与交接记录，保持原顺序和原文字 | 只读历史；不追加当前状态，不作为当前规则来源 |
 
 本次重组没有删除历史内容，只把它移出每轮必读路径。归档文件约 229 KB，故明确标为不可编辑历史资产，

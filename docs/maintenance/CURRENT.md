@@ -1,6 +1,6 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-09-13
+更新时间：2026-10-27
 状态来源：v0.57.4（撤销右键接管）为当前公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 的对象库与 `refs/` 于当日丢失（`objects/pack` 只剩孤立 `.idx`、
@@ -12,13 +12,47 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.57.4`（当前公开版本）
-- 构建：`0.57.4-native-context-menu`
+- 当前 userscript：`0.58.0`（本地候选，未发布；最新公开版本仍为 `0.57.4`）
+- 构建：`0.58.0-ai-manual-first`
 - 当前公开版本/功能提交：`0.57.4` / `b83003a56b901796cacf25da369dc6642bca4428`
 - 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
-- 当前候选源码 SHA-256：`caacf22786c3722e6a8939338993ee26e1b9d2fdcdeb5feeaf44a33ac784223d`
-- 发布状态：v0.57.4 功能提交 `b83003a` 已推送到 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.57.4`；`v0.57.2`/`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
+- 当前候选源码 SHA-256：`3627b7022f31538b9e9a3e2403193a68bbee76a6abb755c1ca191838b6e7c79b`
+- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
+
+## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0 本地候选未发布）
+
+- 范围/文件：`omniblock.user.js` 新增 `aiAutoAnalyze` 设置（默认 `false`，随设置快照同步）；`scheduleAuto`
+  统一拦截自动分析（页面加载/路由/内容信号/页面可见全部自动触发点）；`analyzePage` 取消页规则强制；
+  自动候选改「AI 待审建议」浮条（`#ob-ai-pending`，不再自动弹窗，点击进同一套多选审核）；AI 面板新增自动开关、
+  本机用量计数（`omniblock:ai-usage:v1`，仅请求/条数/字符，不入同步/导出）与"本地名单/关键词已先行处理 N 条"
+  提示；状态文案同步。`@version` 0.57.4→0.58.0，构建 `0.58.0-ai-manual-first`。
+- `structure regression`：新增 `test/ai-auto-gate.cjs` 5 项全绿（默认 0 次自动请求、手动免页规则、浮条契约、
+  用量计数与持久化）；ai-screening 25/25、content-ai 12/12、ai-platforms 7/7、ai-prompt-system 13/13、
+  ai-prompt-eval 5/5、ai-fact-integration 4/4、content-coverage 6/6、ai-batch 2/2、ai-autoload 3/3、
+  ai-bridge、ai-watchdog、ai-context、run 20/20、quickblock 38/38、danmaku-auto 8/8、userscript-product 7/7；
+  页面/控制台错误 0。旧行为失败对照未实跑（写入保护钩子拒绝以 shell 换入旧源码），按源码路径推理记录：
+  旧 `start()` 固定 `scheduleAuto(1400)`、`analyzePage('')` 直接报"请先填写本页面附加规则"、自动候选直接
+  `showReview`，见 [v0.58.0 条目](../changelog/v0.58.0.md)。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停，本轮未请求授权）；v0.58.0 未发布。
+- 依赖自动分析路径的既有测试 shim 已显式 `aiAutoAnalyze: true`；用户决策同步进计划：采纳"自动候选不打断"
+  （并入本项）、名单搜索/筛选（并入 OB-UI-001）、深色模式（新 OB-UI-003）；否决平台主开关、全局快捷键、
+  新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004（proposed）。
+
+## 2026-10-27 接手调查与 AI 成本治理规划（无代码改动）
+
+- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理。本轮仅源码调查与计划，
+  未改 `omniblock.user.js`，未运行平台探针，无新增 `real-site verified` 证据。
+- 调查结论（源码审计，非行为断言）：AI 默认关闭（`aiEnabled:false`），但启用后即全自动——`start()` 末尾
+  `scheduleAuto(1400)` 起批，路由变化、DOM 新评论/弹幕、seg.so 内容信号、页面重新可见都会再次触发；每批最多
+  80 条 / 48,000 字符、串行请求；已分析记录集合 `autoAnalyzedRecordIds` 仅存活于当前页面会话，重访同页重新计费；
+  事实核查开启时每批追加第二次 AI 请求；手动「分析本页」要求先填写页面附加规则，无"仅手动"模式。关键词/正则
+  规则仅 B站/抖音，支持增删与启停，不可编辑、无每条命中计数、无规则级导入导出；设置面板残留已失去挂载点的
+  自动规则死代码与指向失效的文案；面板单列长滚动、无分组导航，「反馈与日志」置于最前。
+- 计划更新：新增 OB-AI-015（AI 自动分析独立开关与成本计数，P1）、OB-RULE-003（关键词/正则规则管理升级，P1）、
+  OB-AI-016（已分析持久缓存与自动批量上限，P2）、OB-UI-001（设置面板信息架构与操作一致性，P2），均 proposed；
+  OB-RULE-001、OB-REL-001、OB-CTX-001、OB-MAINT-002 四个 verified 项移入
+  [2026-10-27 计划收尾归档](plans/2026-10-27-plan-closure.md)。实施顺序待用户确认，默认按两个 P1 先行。
 
 ## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
@@ -162,4 +196,7 @@ v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v
 
 ## 下一项最有价值的验证
 
-`OB-MAINT-002` 的本地门禁、交接提交与 v0.57.4 发布已完成（维护提交 `bd7ec3b`，发布后文档回写随后提交）；探针只有在命中真实条目、当前版本/build 且事件状态可读时才给出 verified。贴吧真实右键证据仍为 `blocked`，若用户后续明确授权登录态验证，再使用专用 Chrome 手动/只读探针补齐；专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
+v0.58.0（OB-AI-015）已完成本地回归、未发布；下一步按确认的优先级实施 OB-RULE-003（关键词/正则规则管理升级）
+与 OB-UI-001（设置信息架构），随后 OB-AI-016、OB-RULE-004、OB-UI-003。实页验证（新默认值页面加载 0 次自动
+AI 请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据仍为
+`blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。

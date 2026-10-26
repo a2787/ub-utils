@@ -27,7 +27,7 @@ const EXPAND_REPLIES = process.argv.includes('--expand-replies') || VERIFY_SUB_C
 const VERIFY_BULK_SCOPE = process.argv.includes('--verify-bulk-scope') || VERIFY_LOCAL_BUTTON;
 const AI_PROBE_PROVIDER_URL = 'http://127.0.0.1:4000/v1/chat/completions';
 const AI_PROBE_SETTINGS = VERIFY_AI_BACKGROUND
-  ? ", aiEnabled: true, aiProviderUrl: '" + AI_PROBE_PROVIDER_URL
+  ? ", aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '" + AI_PROBE_PROVIDER_URL
     + "', aiProviderModel: 'omni-default', aiRules: [{ id: 'real-ai-probe', text: '探针选定的弹幕内容', enabled: true }]"
   : '';
 const userscript = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');

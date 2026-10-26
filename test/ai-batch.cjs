@@ -25,7 +25,7 @@ window.__gm = { 'omniblock:ai-direct-config:v1': JSON.stringify({ version: 1, ap
   version: 1, persons: {}, settings: {
     enabled: true, hideMode: 'collapse', showHoverButton: true, showQuickBlock: true,
     showBulkBlock: true, localBackupEnabled: false, logEnabled: false,
-    aiEnabled: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default', aiRules: []
+    aiEnabled: true, aiAutoAnalyze: true, aiProviderUrl: '${PROVIDER_URL}', aiProviderModel: 'omni-default', aiRules: []
   }
 }) };
 window.GM_getValue = (k, d) => (k in window.__gm ? window.__gm[k] : d);
