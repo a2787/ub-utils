@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "threatModel": {
+    "inherit": true,
+    "assets": [
+      "本机名单与关键词规则（Tampermonkey GM 存储 omniblock:data:v1）",
+      "设备级 AI API Key（独立 GM 键 omniblock:ai-direct-config:v1，只进 Authorization 头）",
+      "账户同步令牌与客户端密文（omniblock:auth / omniblock:sync-envelope）",
+      "用户浏览隐私（日志脱敏，不含正文/身份键/完整 URL）"
+    ],
+    "attackerControlledInputs": [
+      "页面 DOM：评论/弹幕/作者数据/帖子正文（身份键与正文采集来源）",
+      "平台 API 响应：B站 seg.so 弹幕段、回复 JSON、用户卡片",
+      "用户在脚本 UI 输入：关键词/正则规则、提示词、AI provider 地址、同步服务地址"
+    ],
+    "trustBoundaries": [
+      "页面主世界 ↔ Tampermonkey 沙箱与 GM 存储（window.OB 仅对 __OB_TEST_HOOKS__ 测试注入环境暴露；生产页面只有只读 __OB_RUNTIME_INFO__，commit b0f0f7a）",
+      "本机 ↔ 用户显式配置的 HTTPS AI provider / HTTPS 同步服务器（GM_xmlhttpRequest，Key 只在 Authorization 头）",
+      "本机 ↔ 固定域名出站：api.bilibili.com（按需 UID 卡片校验）、raw.githubusercontent.com（更新检查）",
+      "test/_dev-extension 开发桥 ↔ 页面（历史兼容/探针专用，非用户安装路径）"
+    ],
+    "securityInvariants": [
+      "身份键必须经平台适配器规范化；身份不可靠时不提供可执行拉黑入口",
+      "绝不点击平台官方举报/拉黑/关注/发帖控件；AI 候选必须人工确认",
+      "AI provider 与同步 endpoint 经 normalizeAIProviderUrl/normalizeEndpoint 校验：HTTPS-only（loopback HTTP 例外）、禁凭证/查询参数/片段",
+      "AI 结果 claimType/verificationStatus 与 ruleMatched 分离；未核查事实不生成屏蔽候选",
+      "页面脚本没有任何可写路径触碰 Store、AI 配置、同步或名单规则"
+    ],
+    "exclusions": [
+      "test/_dev-extension/**：开发扩展构建产物（gitignored，历史实验/探针专用），其 service worker 的 fetch 前已有 normalizeBiliCardUrl/normalizeLoopbackUrl 校验",
+      "test/_initscript.js、test/_initqb.js：运行时由 run.cjs/quickblock.cjs 生成的测试夹具",
+      "GM_xmlhttpRequest/fetch 包装器的跨域请求告警：浏览器 userscript 无服务端 SSRF 语义，出站目标仅限用户显式配置的地址或固定域名（2026-10-27 sealed 扫描 125 项逐条分诊，见 docs/changelog/v0.58.0.md）",
+      "mongo-sort-injection 类告警：本地内存 Array.sort 比较器（反馈账本/同步文档排序），无 MongoDB、无服务端"
+    ]
+  },
+  "network": {
+    "allowedProtocols": ["https:", "http:"],
+    "allowedHosts": [],
+    "blockPrivateNetworks": false,
+    "maxRedirects": 0
+  },
+  "command": {
+    "forbidShell": true,
+    "allowedBinaries": []
+  },
+  "path": {
+    "allowedWriteRoots": [],
+    "requireBasename": true
+  },
+  "data": {
+    "allowedSortFields": [],
+    "requireOwnerScope": true
+  }
+}
