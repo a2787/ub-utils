@@ -54,19 +54,19 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-RULE-003 — 关键词/正则规则管理升级
 
-- status: proposed
+- status: verified
 - priority: P1
 - scope: `DanmakuRules` 与关键词面板（`mountKeywordControls`）升级：规则就地编辑（新增 update 路径，不靠删除重建）；每条规则可选备注；每条规则持久命中计数（本地保存、随规则删除清理、可清零）；规则独立导入/导出（JSON，去重、上限与 `assessDanmakuRegexRisk` 安全校验复用）；规则可选跨平台作用域（同一条规则同时作用于 B站与抖音，旧数据按原平台继续生效）；删除设置面板中已失去挂载点的死代码（`refreshAutoRules`、`.ob-auto-platform` 处理器）；修正弹幕管理器中"请在设置中停用或删除规则""可在设置中恢复规则作用"等指向失效的文案；在设置面板提供关键词管理可达入口，非统一内容弹窗平台也能打开。
 - non-goals: 不扩大关键词匹配的平台范围（仍 B站/抖音；其他平台需先真站捕获结构）；不引入本地"允许关键词"负向规则；不改身份键规范与"身份可靠才写入名单"前提；不改关键词命中自动写入本地名单的语义。
 - dependencies: none
 - acceptance: required
-  - [ ] 编辑规则不需删除重建，编辑后匹配即时生效（回归断言在旧行为上失败）。
-  - [ ] 命中计数跨会话持久，删除规则时一并清理。
-  - [ ] 规则导入/导出往返一致；超限、重复、危险正则被拒并给可理解原因。
-  - [ ] 跨平台规则在两平台各自生效；无作用域字段的旧规则按原平台生效。
-  - [ ] 源码与文案中无失效的"请在设置中…"规则指引；`test/danmaku-auto.cjs`、`test/quickblock.cjs`、`test/adapters.cjs`、`test/run.cjs`、docs-check 通过。
-- evidence: 尚未实施（2026-10-27 立项）；本轮仅源码调查与计划，无行为断言与真实站点证据。
-- next: 用户确认优先级后实施；改动入口注入或隐藏行为时按验证矩阵运行真实站点探针。
+  - [x] 编辑规则不需删除重建，编辑后匹配即时生效（`test/rule-manager.cjs` RULE-EDIT；旧源码无 update API，断言失败）。
+  - [x] 命中计数跨会话持久，删除规则时一并清理（RULE-HITS；独立 GM 键 `omniblock:rule-hits:v1`，延迟落盘不经 Store 级联）。
+  - [x] 规则导入/导出往返一致；超限、重复、危险正则被拒并给可理解原因（RULE-IO；`assessDanmakuRegexRisk` 复用）。
+  - [x] 跨平台规则在两平台各自生效；无作用域字段的旧规则按原平台生效（RULE-SCOPE）。
+  - [x] 源码与文案中无失效的"请在设置中…"规则指引；`refreshAutoRules`/`autoStatusText`/旧处理器已删除（源码断言）；`test/danmaku-auto.cjs` 8/8、`test/quickblock.cjs` 38/38、`test/adapters.cjs` 28/28、`test/run.cjs` 20/20、docs-check 通过。
+- evidence: `structure regression`：新增 `test/rule-manager.cjs` 5/5 全绿；danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7、content-ai 12/12、adapters 28/28、ai-screening 25/25 等全量矩阵通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。随 v0.59.0 本地候选交付（未 push/tag/Release）。`blocked`：真实站点验证未执行（实页验证暂停中）。
+- next: 已实现并随 v0.59.0 候选交付；真实站点验证待用户恢复授权后补齐。命中计数为匹配事件次数（不去重），已知限制记录在版本条目。
 - updated: 2026-10-27
 - supersedes: none
 

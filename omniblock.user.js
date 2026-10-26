@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.58.0
+// @version       0.59.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.58.0-ai-manual-first';
+  const RUNTIME_BUILD = '0.59.0-rule-manager';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -449,10 +449,15 @@
   const DANMAKU_RULE_LIMIT = 64;
   const DANMAKU_RULE_MAX_LENGTH = 240;
   const DANMAKU_RULE_KINDS = new Set(['keyword', 'regex']);
+  const DANMAKU_RULE_NOTE_MAX_LENGTH = 200;
   const DANMAKU_RULE_SETTING_KEYS = {
     bili: 'biliDanmakuRules',
     douyin: 'douyinDanmakuRules',
   };
+  // 规则命中计数独立于 Store：热路径每次匹配只递增内存计数并延迟落盘，
+  // 不经过 Store.setSetting（否则每次命中都会触发 Store.onChange、清空编译
+  // 缓存并唤醒备份/AI 调度）。键为 `平台:规则id`，不进同步、导出或日志。
+  const RULE_HITS_STORAGE_KEY = 'omniblock:rule-hits:v1';
   const DANMAKU_EXEMPTION_SETTING_KEYS = {
     bili: 'biliDanmakuExemptions',
     douyin: 'douyinDanmakuExemptions',
@@ -1102,11 +1107,17 @@
     if (!raw || typeof raw !== 'object' || !DANMAKU_RULE_KINDS.has(raw.kind)) return null;
     const pattern = ruleText(raw.pattern);
     if (!pattern) return null;
+    const note = String(raw.note == null ? '' : raw.note)
+      .replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, DANMAKU_RULE_NOTE_MAX_LENGTH);
     const rule = {
       id: 'r_' + ruleHash(raw.kind + '\x1f' + pattern),
       kind: raw.kind,
       pattern,
       enabled: raw.enabled !== false,
+      note,
+      // 旧数据没有 scope 字段：默认只在自己保存的平台生效（platform）；
+      // 'both' 表示这条规则同时参与另一个平台的关键词匹配。
+      scope: raw.scope === 'both' ? 'both' : 'platform',
     };
     if (rule.kind === 'regex' && !compileDanmakuRule(rule)) return null;
     return rule;
@@ -2526,6 +2537,11 @@
     // 规则数组只有在 Store 变更时才会被替换；弹幕热路径不再为每条消息
     // JSON.stringify 一次完整设置，也不再重复编译相同正则。
     Store.onChange(() => compiledCache.clear());
+    // 命中计数只走本模块的内存 Map + 延迟落盘；不触碰 Store。
+    const hitCounts = new Map();
+    let hitCountsLoaded = false;
+    let hitsFlushTimer = null;
+    function otherPlatform(platform) { return platform === 'bili' ? 'douyin' : 'bili'; }
     function settingKey(platform) { return DANMAKU_RULE_SETTING_KEYS[platform] || ''; }
     function rulesFor(platform) {
       const key = settingKey(platform);
@@ -2540,10 +2556,75 @@
       const previous = compiledCache.get(platform);
       if (previous) return previous;
       const rules = rulesFor(platform);
-      const next = rules.map((rule) => ({ rule, regex: compileDanmakuRule(rule) }));
+      // scope === 'both' 的规则同时参与另一个平台的匹配；旧规则没有该字段，
+      // 默认只在自己保存的平台生效。
+      const otherKey = settingKey(otherPlatform(platform));
+      const shared = otherKey
+        ? (Store.getSetting(otherKey) || []).filter((rule) => rule.enabled && rule.scope === 'both')
+        : [];
+      const next = rules.map((rule) => ({ rule, regex: compileDanmakuRule(rule) }))
+        .concat(shared.map((rule) => ({ rule, regex: compileDanmakuRule(rule), shared: true })));
       compiledCache.set(platform, next);
       compileRuns++;
       return next;
+    }
+    function loadHits() {
+      if (hitCountsLoaded) return;
+      hitCountsLoaded = true;
+      try {
+        const raw = typeof GM_getValue === 'function' ? GM_getValue(RULE_HITS_STORAGE_KEY, '') : '';
+        const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+        if (parsed && typeof parsed === 'object') {
+          for (const entryKey of Object.keys(parsed)) {
+            const value = Number(parsed[entryKey]);
+            if (Number.isFinite(value) && value > 0) hitCounts.set(entryKey, Math.min(Math.round(value), 1e9));
+          }
+        }
+      } catch (e) {}
+    }
+    function flushHits() {
+      if (hitsFlushTimer) { clearTimeout(hitsFlushTimer); hitsFlushTimer = null; }
+      try {
+        if (typeof GM_setValue === 'function') {
+          const out = {};
+          for (const [entryKey, value] of hitCounts) out[entryKey] = value;
+          GM_setValue(RULE_HITS_STORAGE_KEY, JSON.stringify(out));
+        }
+      } catch (e) {}
+    }
+    function recordHit(platform, ruleId) {
+      loadHits();
+      const entryKey = platform + ':' + ruleId;
+      hitCounts.set(entryKey, (hitCounts.get(entryKey) || 0) + 1);
+      if (!hitsFlushTimer && typeof setTimeout === 'function') {
+        hitsFlushTimer = setTimeout(flushHits, 2000);
+      }
+    }
+    function hitCount(platform, ruleId) {
+      loadHits();
+      return hitCounts.get(platform + ':' + ruleId) || 0;
+    }
+    function totalHits(platform) {
+      loadHits();
+      let total = 0;
+      const prefix = platform + ':';
+      for (const [entryKey, value] of hitCounts) {
+        if (entryKey.startsWith(prefix)) total += value;
+      }
+      return total;
+    }
+    function clearHits(platform) {
+      loadHits();
+      const prefix = platform + ':';
+      for (const entryKey of Array.from(hitCounts.keys())) {
+        if (entryKey.startsWith(prefix)) hitCounts.delete(entryKey);
+      }
+      flushHits();
+    }
+    function dropHits(platform, ruleId) {
+      loadHits();
+      const entryKey = platform + ':' + ruleId;
+      if (hitCounts.delete(entryKey)) flushHits();
     }
     function status() { return { compileRuns }; }
     function match(platform, value) {
@@ -2561,7 +2642,9 @@
         item.regex.lastIndex = 0;
         if (item.regex.test(text)) hits.push(item.rule);
       }
-      return hits.length ? { text, rules: hits } : null;
+      if (!hits.length) return null;
+      for (const rule of hits) recordHit(platform, rule.id);
+      return { text, rules: hits };
     }
     function hasEnabled(platform) { return compiled(platform).some((item) => item.rule.enabled); }
     function add(platform, kind, pattern) {
@@ -2579,6 +2662,43 @@
       Store.setSetting(key, rules.concat(rule));
       return { ok: true, rule };
     }
+    function update(platform, id, patch) {
+      const key = settingKey(platform);
+      if (!key) return { ok: false, error: '该平台不支持关键词规则' };
+      const patchInput = patch && typeof patch === 'object' ? patch : {};
+      const rules = rulesFor(platform);
+      const rule = rules.find((item) => item.id === id);
+      if (!rule) return { ok: false, error: '规则不存在或已被删除' };
+      const kind = DANMAKU_RULE_KINDS.has(patchInput.kind) ? patchInput.kind : rule.kind;
+      const pattern = patchInput.pattern !== undefined ? ruleText(patchInput.pattern) : rule.pattern;
+      if (!pattern) return { ok: false, error: kind === 'regex' ? '正则表达式无效或为空' : '关键词不能为空' };
+      const note = patchInput.note !== undefined
+        ? String(patchInput.note == null ? '' : patchInput.note)
+          .replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, DANMAKU_RULE_NOTE_MAX_LENGTH)
+        : rule.note || '';
+      const scope = patchInput.scope === 'both' ? 'both' : 'platform';
+      const candidate = normalizeDanmakuRule({ kind, pattern, enabled: rule.enabled, note, scope });
+      if (!candidate) return { ok: false, error: kind === 'regex' ? '正则表达式无效' : '规则无效' };
+      if (kind === 'regex') {
+        const risk = assessDanmakuRegexRisk(candidate.pattern);
+        if (risk) return { ok: false, error: risk.reason };
+      }
+      if (candidate.id !== id && rules.some((item) => item.id === candidate.id)) {
+        return { ok: false, error: '这条规则已经存在' };
+      }
+      Store.setSetting(key, rules.map((item) => item.id === id ? candidate : item));
+      if (candidate.id !== id) {
+        // 规则 id 由内容派生：编辑 pattern/kind 后把命中计数迁到新 id。
+        loadHits();
+        const oldKey = platform + ':' + id;
+        if (hitCounts.has(oldKey)) {
+          hitCounts.set(platform + ':' + candidate.id, hitCounts.get(oldKey));
+          hitCounts.delete(oldKey);
+          flushHits();
+        }
+      }
+      return { ok: true, rule: candidate };
+    }
     function remove(platform, id) {
       const key = settingKey(platform);
       if (!key) return false;
@@ -2586,6 +2706,7 @@
       const next = rules.filter((rule) => rule.id !== id);
       if (next.length === rules.length) return false;
       Store.setSetting(key, next);
+      dropHits(platform, id);
       return true;
     }
     function setEnabled(platform, id, enabled) {
@@ -2597,7 +2718,50 @@
       Store.setSetting(key, next);
       return true;
     }
-    return { settingKey, rulesFor, signature, match, hasEnabled, status, add, remove, setEnabled };
+    function exportRules() {
+      return {
+        format: 'omniblock.danmaku-rules',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        rules: {
+          bili: sanitizeDanmakuRules(rulesFor('bili')),
+          douyin: sanitizeDanmakuRules(rulesFor('douyin')),
+        },
+      };
+    }
+    function importRules(payload) {
+      const source = payload && typeof payload === 'object' ? payload : null;
+      if (!source || source.format !== 'omniblock.danmaku-rules' || !source.rules || typeof source.rules !== 'object') {
+        return { ok: false, error: '文件格式不符合 OmniBlock 规则包（omniblock.danmaku-rules）' };
+      }
+      const summary = { ok: true, added: { bili: 0, douyin: 0 }, duplicates: 0, invalid: 0, risky: 0, kept: { bili: 0, douyin: 0 } };
+      for (const platform of Object.keys(DANMAKU_RULE_SETTING_KEYS)) {
+        const incoming = Array.isArray(source.rules[platform]) ? source.rules[platform] : [];
+        const existing = rulesFor(platform);
+        const seen = new Set(existing.map((rule) => rule.id));
+        const merged = existing.slice();
+        for (const raw of incoming) {
+          if (merged.length >= DANMAKU_RULE_LIMIT) break;
+          const rule = normalizeDanmakuRule(raw);
+          if (!rule) { summary.invalid++; continue; }
+          if (seen.has(rule.id)) { summary.duplicates++; continue; }
+          if (rule.kind === 'regex') {
+            const risk = assessDanmakuRegexRisk(rule.pattern);
+            if (risk) { summary.risky++; continue; }
+          }
+          seen.add(rule.id);
+          merged.push(rule);
+          summary.added[platform]++;
+        }
+        summary.kept[platform] = merged.length;
+        if (summary.added[platform]) Store.setSetting(DANMAKU_RULE_SETTING_KEYS[platform], merged);
+      }
+      return summary;
+    }
+    return {
+      settingKey, rulesFor, signature, match, hasEnabled, status, add, update, remove, setEnabled,
+      exportRules, importRules, hitCount, totalHits, clearHits, flushHits,
+    };
   })();
 
   // 自动规则例外是独立于屏蔽名单的本地 allowlist：恢复一个误命中的发送者时，
@@ -3380,6 +3544,23 @@
     #ob-panel .ob-auto-intro, #ob-content-manager .ob-auto-intro { color: #777; font-size: 12px; line-height: 1.55; margin: 0 0 8px; }
     #ob-panel .ob-auto-platform, #ob-content-manager .ob-auto-platform { border: 1px solid #eee; border-radius: 8px; padding: 9px 10px; margin-top: 8px; }
     #ob-panel .ob-auto-platform h4, #ob-content-manager .ob-auto-platform h4 { margin: 0 0 7px; font-size: 13px; color: #444; }
+    .ob-auto-tools { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+    .ob-auto-tools button, .ob-auto-tools .ob-auto-import-label { border: 1px solid #c9cbd2; border-radius: 5px; padding: 3px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; }
+    .ob-auto-tools .ob-auto-import-label:hover, .ob-auto-tools button:hover { background: #f2f3fa; }
+    .ob-auto-import-label input { display: none; }
+    .ob-auto-rule-hits { flex: 0 0 auto; font-size: 10px; color: #7a86b8; border: 1px solid #dbe2f5; border-radius: 8px; padding: 1px 6px; background: #f6f8ff; white-space: nowrap; }
+    .ob-auto-rule-scope { flex: 0 0 auto; font-size: 10px; color: #3f6e51; border: 1px solid #cfe6d8; border-radius: 8px; padding: 1px 6px; background: #f2faf5; white-space: nowrap; }
+    .ob-auto-rule-note { flex: 0 0 auto; font-size: 11px; cursor: help; }
+    .ob-auto-rule-editing { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .ob-auto-rule-editing input[type="text"] { flex: 1 1 140px; min-width: 120px; }
+    .ob-auto-rule-editing select { max-width: 130px; }
+    .ob-auto-rule-editing button { border: 1px solid #c9cbd2; border-radius: 5px; padding: 2px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; }
+    .ob-auto-rule-editing .ob-auto-rule-save { background: #f2f6ff; color: #3e4d94; border-color: #b9c3f2; }
+    #ob-keyword-manager { position: fixed; inset: 0; z-index: 2147483645; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,18,30,.45); }
+    #ob-keyword-manager .ob-keyword-box { position: relative; width: min(680px, 94vw); max-height: 86vh; overflow: auto; margin: 0; }
+    .ob-keyword-entry { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    .ob-keyword-entry button { border: 1px solid #b9c3f2; border-radius: 6px; padding: 5px 10px; background: #f2f6ff; color: #3e4d94; cursor: pointer; font-size: 12px; }
+    .ob-keyword-entry button:hover { background: #e7edfd; }
     #ob-panel .ob-auto-add, #ob-content-manager .ob-auto-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     #ob-panel .ob-auto-add select, #ob-content-manager .ob-auto-add select { width: 82px; flex: 0 0 82px; }
     #ob-panel .ob-auto-add input, #ob-content-manager .ob-auto-add input { flex: 1 1 220px; min-width: 160px; }
@@ -13882,14 +14063,14 @@
               }
               // 运行时自动隐藏节点可能尚未经过下一轮定时扫描；恢复动作必须即时可见。
               try { adapter.scanAutoDanmaku(); } catch (e) {}
-              showToast('已恢复该发送者，并加入抖音自动规则例外；可在设置中恢复规则作用');
+              showToast('已恢复该发送者，并加入抖音自动规则例外；可在「关键词屏蔽」标签的例外列表中恢复规则作用');
               refresh();
               render();
               return;
             }
             try { adapter.scanAutoDanmaku(); } catch (e) {}
             showToast(isAutoBlocked
-              ? '已恢复该发送者，并加入抖音自动规则例外；可在设置中恢复规则作用'
+              ? '已恢复该发送者，并加入抖音自动规则例外；可在「关键词屏蔽」标签的例外列表中恢复规则作用'
               : '已取消屏蔽：' + (info.label || '抖音弹幕发送者'));
             refresh();
             render();
@@ -15864,7 +16045,7 @@
       const result = unblockIdentityGroup(keys);
       if (!result.removed) {
         showToast(group && group.autoBlockedHashes && group.autoBlockedHashes.length
-          ? '该条仍受启用中的自动弹幕规则控制，请在设置中停用或删除规则'
+          ? '该条仍受启用中的自动弹幕规则控制，可在「关键词屏蔽」标签中停用或删除规则'
           : group && group.unblockAmbiguous
             ? '该条关联多个可能的 UID，请在设置中逐个取消屏蔽'
           : '未找到可取消的本地屏蔽身份');
@@ -15889,7 +16070,7 @@
         showToast('该发送者已经是自动规则例外');
         return false;
       }
-      showToast('已恢复该发送者，并加入 B站自动规则例外；可在设置中恢复规则作用');
+      showToast('已恢复该发送者，并加入 B站自动规则例外；可在「关键词屏蔽」标签的例外列表中恢复规则作用');
       refreshDmTool();
       scanDmPanels();
       if (currentScanner) currentScanner.schedule();
@@ -19282,10 +19463,11 @@
     root.innerHTML = `
       <div data-ob-keyword-surface="1">
         <h3 style="margin:0 0 8px;font-size:15px">关键词屏蔽</h3>
-        <p class="ob-auto-intro">规则只在本机匹配当前已观察到的评论和弹幕正文。新规则默认启用；命中后优先于 AI，可靠身份会直接写入本地名单并隐藏，不弹确认、不消耗 token。无可靠身份时不会伪造 UID；“恢复并例外”会让该身份跳过自动规则。</p>
+        <p class="ob-auto-intro">规则只在本机匹配当前已观察到的评论和弹幕正文。新规则默认启用；命中后优先于 AI，可靠身份会直接写入本地名单并隐藏，不弹确认、不消耗 token。规则可以就地编辑（双击“编辑”修改类型/内容/备注），可选“两个平台通用”让同一条规则同时作用于 B站和抖音；旧规则不受影响，仍只在自己保存的平台生效。无可靠身份时不会伪造 UID；“恢复并例外”会让该身份跳过自动规则。</p>
         <div class="ob-auto-platform" data-ob-auto-platform="${platform}">
           <h4>${label}关键词/正则规则</h4>
           <div class="ob-auto-add"><select class="ob-auto-kind" aria-label="${label}规则类型"><option value="keyword">关键词</option><option value="regex">正则</option></select><input class="ob-auto-pattern" type="text" maxlength="240" placeholder="输入关键词或正则表达式"><button class="ob-auto-add-button" type="button">添加规则</button></div>
+          <div class="ob-auto-tools"><button class="ob-auto-export" type="button">导出规则</button><label class="ob-auto-import-label">导入规则<input class="ob-auto-import" type="file" accept="application/json" aria-label="导入规则"></label><button class="ob-auto-clear-hits" type="button">命中清零</button></div>
           <div class="ob-auto-rule-list"></div>
           <div class="ob-auto-exemption-title">自动规则例外（恢复的发送者）</div>
           <div class="ob-auto-exemption-list"></div>
@@ -19299,6 +19481,47 @@
     const refreshScan = () => {
       if (currentScanner) currentScanner.schedule();
       try { if (adapter && typeof adapter.scanAutoDanmaku === 'function') adapter.scanAutoDanmaku(); } catch (e) {}
+    };
+    const beginEdit = (rule, row) => {
+      row.textContent = '';
+      row.classList.add('ob-auto-rule-editing');
+      const kindSelect = document.createElement('select');
+      kindSelect.setAttribute('aria-label', label + '规则类型');
+      for (const [value, text] of [['keyword', '关键词'], ['regex', '正则']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = text;
+        kindSelect.appendChild(option);
+      }
+      kindSelect.value = rule.kind;
+      const patternInput = document.createElement('input');
+      patternInput.type = 'text'; patternInput.maxLength = 240; patternInput.value = rule.pattern;
+      patternInput.setAttribute('aria-label', label + '规则内容');
+      const noteInput = document.createElement('input');
+      noteInput.type = 'text'; noteInput.maxLength = DANMAKU_RULE_NOTE_MAX_LENGTH;
+      noteInput.value = rule.note || ''; noteInput.placeholder = '备注（可选，仅本机）';
+      noteInput.setAttribute('aria-label', label + '规则备注');
+      const scopeSelect = document.createElement('select');
+      scopeSelect.setAttribute('aria-label', label + '规则作用范围');
+      for (const [value, text] of [['platform', '仅' + label], ['both', '两个平台通用']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = text;
+        scopeSelect.appendChild(option);
+      }
+      scopeSelect.value = rule.scope === 'both' ? 'both' : 'platform';
+      const save = document.createElement('button'); save.type = 'button'; save.className = 'ob-auto-rule-save'; save.textContent = '保存';
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'ob-auto-rule-cancel'; cancel.textContent = '取消';
+      const submit = () => {
+        const result = DanmakuRules.update(platform, rule.id, {
+          kind: kindSelect.value, pattern: patternInput.value, note: noteInput.value, scope: scopeSelect.value,
+        });
+        EventLog.record('ui.content-rule.update', { platform, ok: !!result.ok }, { immediate: true });
+        if (!result.ok) { showToast(result.error); return; }
+        showToast('规则已更新');
+        refresh(); refreshScan();
+      };
+      save.addEventListener('click', submit);
+      cancel.addEventListener('click', () => refresh());
+      patternInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
+      row.append(kindSelect, patternInput, noteInput, scopeSelect, save, cancel);
+      patternInput.focus();
     };
     const refresh = () => {
       if (!section || !list || !exemptionList || !status) return;
@@ -19318,13 +19541,31 @@
         });
         const kind = document.createElement('span'); kind.className = 'ob-auto-rule-kind'; kind.textContent = rule.kind === 'regex' ? '正则' : '关键词';
         const pattern = document.createElement('span'); pattern.className = 'ob-auto-rule-pattern'; pattern.textContent = rule.pattern; pattern.title = rule.pattern;
+        const hits = document.createElement('span'); hits.className = 'ob-auto-rule-hits';
+        const hitTotal = DanmakuRules.hitCount(platform, rule.id);
+        hits.textContent = '命中 ' + (hitTotal > 9999 ? '9999+' : hitTotal);
+        hits.title = '本机累计命中次数（命中清零可重置；跨会话保留）';
+        const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'ob-auto-rule-edit'; edit.textContent = '编辑';
+        edit.addEventListener('click', () => beginEdit(rule, row));
         const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'ob-auto-rule-remove'; remove.textContent = '删除';
         remove.addEventListener('click', () => {
           DanmakuRules.remove(platform, rule.id);
           EventLog.record('ui.content-rule.remove', { platform, kind: rule.kind }, { immediate: true });
           refresh(); refreshScan();
         });
-        row.append(toggle, kind, pattern, remove); list.appendChild(row);
+        const marks = [];
+        if (rule.scope === 'both') {
+          const shared = document.createElement('span'); shared.className = 'ob-auto-rule-scope'; shared.textContent = '双平台';
+          shared.title = '这条规则同时作用于 B站和抖音';
+          marks.push(shared);
+        }
+        if (rule.note) {
+          const note = document.createElement('span'); note.className = 'ob-auto-rule-note'; note.textContent = '📝';
+          note.title = rule.note;
+          marks.push(note);
+        }
+        row.append(toggle, kind, pattern, hits, ...marks, edit, remove);
+        list.appendChild(row);
       }
       exemptionList.textContent = '';
       const exemptions = DanmakuExemptions.keysFor(platform);
@@ -19345,6 +19586,7 @@
         row.append(key, remove); exemptionList.appendChild(row);
       }
       let message = rules.filter((rule) => rule.enabled).length + ' 条规则启用；命中评论/弹幕后自动写入本地名单（例外身份跳过）。';
+      message += ' 本机累计命中 ' + DanmakuRules.totalHits(platform) + ' 次。';
       try {
         if (adapter === currentAdapter && typeof adapter.getAutoDanmakuStatus === 'function') {
           const current = adapter.getAutoDanmakuStatus();
@@ -19366,6 +19608,48 @@
     };
     if (add) add.onclick = submit;
     if (pattern) pattern.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
+    const exportButton = section && section.querySelector('.ob-auto-export');
+    if (exportButton) exportButton.onclick = () => {
+      try {
+        const payload = JSON.stringify(DanmakuRules.exportRules(), null, 2);
+        const blob = new Blob([payload], { type: 'application/json' });
+        const link = document.createElement('a');
+        const href = URL.createObjectURL(blob);
+        link.href = href; link.download = 'omniblock-danmaku-rules-' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 5000);
+        EventLog.record('ui.content-rule.export', {}, { immediate: true });
+        showToast('规则包已导出');
+      } catch (error) { EventLog.recordError('ui.content-rule.export', error); showToast('规则包导出失败'); }
+    };
+    const importInput = section && section.querySelector('.ob-auto-import');
+    if (importInput) importInput.addEventListener('change', () => {
+      const file = importInput.files && importInput.files[0];
+      if (!file || typeof FileReader !== 'function') return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let result = null;
+        try { result = DanmakuRules.importRules(JSON.parse(String(reader.result || ''))); }
+        catch (error) { showToast('规则包导入失败：文件不是有效 JSON'); importInput.value = ''; return; }
+        importInput.value = '';
+        if (!result.ok) { showToast(result.error); return; }
+        EventLog.record('ui.content-rule.import', {
+          addedBili: result.added.bili, addedDouyin: result.added.douyin,
+          duplicates: result.duplicates, invalid: result.invalid, risky: result.risky,
+        }, { immediate: true });
+        showToast('导入完成：新增 B站 ' + result.added.bili + ' 条、抖音 ' + result.added.douyin
+          + ' 条；跳过重复 ' + result.duplicates + '、无效 ' + result.invalid + '、危险正则 ' + result.risky + '。');
+        refresh(); refreshScan();
+      };
+      reader.readAsText(file);
+    });
+    const clearHitsButton = section && section.querySelector('.ob-auto-clear-hits');
+    if (clearHitsButton) clearHitsButton.onclick = () => {
+      DanmakuRules.clearHits(platform);
+      EventLog.record('ui.content-rule.clear-hits', { platform }, { immediate: true });
+      showToast(label + '命中计数已清零');
+      refresh();
+    };
     refresh();
     return () => {};
   }
@@ -19936,7 +20220,8 @@
         </div>
 
         <h3>平台专用屏蔽入口</h3>
-        <p class="ob-settings-ai-note">B站和抖音的关键词/正则屏蔽已移到各自「内容屏蔽」弹窗的「关键词屏蔽」标签；新规则默认启用，命中可靠身份后直接写入本地名单，不消耗 AI token，也不需要逐条确认。AI 智能屏蔽同样在内容屏蔽弹窗中配置。打开对应平台的视频评论区即可看到入口；原有规则数据会继续兼容保留。</p>
+        <p class="ob-settings-ai-note">B站和抖音的关键词/正则规则在「内容屏蔽」弹窗的「关键词屏蔽」标签；新规则默认启用，命中可靠身份后直接写入本地名单，不消耗 AI token，也不需要逐条确认。AI 智能屏蔽同样在内容屏蔽弹窗中配置。下面两个按钮可在任意页面打开同一个规则管理界面（就地编辑、备注、命中计数、导入导出、跨平台规则）。</p>
+        <div class="ob-keyword-entry"><button id="ob-open-rules-bili" type="button">B站规则管理</button><button id="ob-open-rules-douyin" type="button">抖音规则管理</button></div>
 
         <h3>名单（点击删除）</h3>
         <div class="ob-list" id="ob-list"></div>
@@ -20004,120 +20289,42 @@
     panel.onclick = (e) => { if (e.target === panel) closePanel(); };
     EventLog.record('ui.settings.open', { source: 'gear-or-menu' }, { immediate: true });
 
-    function autoStatusText(platform, rules) {
-      const enabledCount = rules.filter((rule) => rule.enabled).length;
-      let text = enabledCount + ' 条规则启用；命中后自动写入本地名单（例外身份跳过）。';
-      try {
-        const adapter = currentAdapter;
-        if (adapter && adapter.id === platform && typeof adapter.getAutoDanmakuStatus === 'function') {
-          const status = adapter.getAutoDanmakuStatus();
-          if (platform === 'bili') {
-            text += ' 当前视频已观察 ' + status.observedSenders + ' 位发送者，已命中 ' + status.matchedMessages
-              + ' 条；hash ' + status.matchedHashes + ' 个，UID 正向关联 ' + status.linkedUids + ' 个。';
-            if (status.hashOnly || status.unidentifiable || status.uidLimit) {
-              text += ' hash-only ' + status.hashOnly + '，无可靠 hash ' + status.unidentifiable
-                + '，达到 UID 查询上限 ' + status.uidLimit + '。';
-            }
-          } else {
-            text += ' 当前视频已命中 ' + status.matchedMessages + ' 条，排队发送者 ' + status.queuedSenders
-              + ' 位，已提交 ' + status.persistedSenders + ' 位。';
-            if (status.noIdentity) text += ' 另有 ' + status.noIdentity + ' 条没有可靠发送者身份，未写入名单。';
-          }
-        }
-      } catch (e) {}
-      return text;
-    }
-
-    function refreshAutoRules() {
-      for (const platform of ['bili', 'douyin']) {
-        const rules = DanmakuRules.rulesFor(platform);
-        const list = panel.querySelector('#ob-auto-' + platform + '-rules');
-        const exemptionList = panel.querySelector('#ob-auto-' + platform + '-exemptions');
-        const status = panel.querySelector('#ob-auto-' + platform + '-status');
-        if (!list || !status) continue;
-        list.textContent = '';
-        if (!rules.length) {
-          const empty = document.createElement('div');
-          empty.className = 'ob-auto-empty';
-          empty.textContent = '尚未设置规则';
-          list.appendChild(empty);
-        }
-        for (const rule of rules) {
-          const row = document.createElement('div');
-          row.className = 'ob-auto-rule';
-          const toggle = document.createElement('input');
-          toggle.type = 'checkbox'; toggle.checked = rule.enabled;
-          toggle.title = rule.enabled ? '停用规则' : '启用规则';
-          toggle.addEventListener('change', () => {
-            DanmakuRules.setEnabled(platform, rule.id, toggle.checked);
-            EventLog.record('settings.danmaku-rule.toggle', { platform, kind: rule.kind, enabled: toggle.checked }, { immediate: true });
-            refreshAutoRules();
-            if (currentScanner) currentScanner.schedule();
-          });
-          const kind = document.createElement('span');
-          kind.className = 'ob-auto-rule-kind'; kind.textContent = rule.kind === 'regex' ? '正则' : '关键词';
-          const pattern = document.createElement('span');
-          pattern.className = 'ob-auto-rule-pattern'; pattern.textContent = rule.pattern;
-          pattern.title = rule.pattern;
-          const remove = document.createElement('button');
-          remove.type = 'button'; remove.className = 'ob-auto-rule-remove'; remove.textContent = '删除';
-          remove.addEventListener('click', () => {
-            DanmakuRules.remove(platform, rule.id);
-            EventLog.record('settings.danmaku-rule.remove', { platform, kind: rule.kind }, { immediate: true });
-            refreshAutoRules();
-            if (currentScanner) currentScanner.schedule();
-          });
-          row.append(toggle, kind, pattern, remove);
-          list.appendChild(row);
-        }
-        if (exemptionList) {
-          exemptionList.textContent = '';
-          const exemptions = DanmakuExemptions.keysFor(platform);
-          if (!exemptions.length) {
-            const empty = document.createElement('div');
-            empty.className = 'ob-auto-empty'; empty.textContent = '暂无例外；管理器中的“恢复并例外”会在这里出现';
-            exemptionList.appendChild(empty);
-          }
-          for (const identity of exemptions) {
-            const row = document.createElement('div'); row.className = 'ob-auto-exemption';
-            const key = document.createElement('span'); key.className = 'ob-auto-exemption-key';
-            key.textContent = formatDanmakuExemptionForDisplay(identity); key.title = identity;
-            const remove = document.createElement('button');
-            remove.type = 'button'; remove.className = 'ob-auto-exemption-remove'; remove.textContent = '恢复规则';
-            remove.title = '删除该例外；自动规则下次扫描时可重新作用于此身份';
-            remove.addEventListener('click', () => {
-              DanmakuExemptions.remove(platform, [identity]);
-              EventLog.record('settings.danmaku-exemption.remove', { platform }, { immediate: true });
-              refreshAutoRules();
-              if (currentScanner) currentScanner.schedule();
-              try { currentAdapter && currentAdapter.scanAutoDanmaku && currentAdapter.scanAutoDanmaku(); } catch (e) {}
-            });
-            row.append(key, remove); exemptionList.appendChild(row);
-          }
-        }
-        const exemptionCount = DanmakuExemptions.keysFor(platform).length;
-        status.textContent = autoStatusText(platform, rules)
-          + (exemptionCount ? ' 当前有 ' + exemptionCount + ' 条自动规则例外。' : '');
-      }
-    }
-
-    panel.querySelectorAll('.ob-auto-platform').forEach((section) => {
-      const platform = section.getAttribute('data-ob-auto-platform');
-      const kind = section.querySelector('.ob-auto-kind');
-      const pattern = section.querySelector('.ob-auto-pattern');
-      const add = section.querySelector('.ob-auto-add-button');
-      const submit = () => {
-        const result = DanmakuRules.add(platform, kind.value, pattern.value);
-        EventLog.record('settings.danmaku-rule.add', { platform, kind: kind.value, ok: !!result.ok }, { immediate: true });
-        if (!result.ok) { showToast(result.error); return; }
-        pattern.value = '';
-        refreshAutoRules();
-        if (currentScanner) currentScanner.schedule();
-        try { currentAdapter && currentAdapter.scanAutoDanmaku && currentAdapter.scanAutoDanmaku(); } catch (e) {}
+    function openKeywordManager(platformId) {
+      const platform = platformId === 'douyin' ? 'douyin' : 'bili';
+      let overlay = document.getElementById('ob-keyword-manager');
+      if (overlay) overlay.remove();
+      overlay = document.createElement('div');
+      overlay.id = 'ob-keyword-manager';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', (platform === 'bili' ? 'B站' : '抖音') + '关键词规则管理');
+      const box = document.createElement('div');
+      box.className = 'ob-box ob-keyword-box';
+      const close = document.createElement('button');
+      close.type = 'button'; close.className = 'ob-close'; close.textContent = '×';
+      close.setAttribute('aria-label', '关闭关键词规则管理');
+      box.appendChild(close);
+      const body = document.createElement('div');
+      box.appendChild(body);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      FloatingDock.hold('keyword-manager');
+      const stopMount = mountKeywordControls(body, { id: platform === 'bili' ? 'bilibili' : 'douyin' });
+      const closeOverlay = () => {
+        try { stopMount(); } catch (e) {}
+        overlay.remove();
+        FloatingDock.release('keyword-manager');
+        document.removeEventListener('keydown', onKey);
       };
-      add.onclick = submit;
-      pattern.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submit(); } });
-    });
+      const onKey = (event) => { if (event.key === 'Escape') { event.preventDefault(); closeOverlay(); } };
+      close.onclick = closeOverlay;
+      overlay.onclick = (event) => { if (event.target === overlay) closeOverlay(); };
+      document.addEventListener('keydown', onKey);
+    }
+    const rulesBiliButton = panel.querySelector('#ob-open-rules-bili');
+    const rulesDouyinButton = panel.querySelector('#ob-open-rules-douyin');
+    if (rulesBiliButton) rulesBiliButton.onclick = () => openKeywordManager('bili');
+    if (rulesDouyinButton) rulesDouyinButton.onclick = () => openKeywordManager('douyin');
 
     function renderLogMap(map) {
       return Object.keys(map || {}).sort().map((key) => key + '=' + map[key]).join('，') || '无';
@@ -20423,7 +20630,6 @@
           : (storage.level === 'warning' ? ' 名单体积较大，建议定期导出并检查重复身份。' : ' 当前体积正常。'))));
       const mode = panel.querySelector(`input[name="ob-mode"][value="${s.hideMode}"]`);
       if (mode) mode.checked = true;
-      refreshAutoRules();
       refreshLogs();
       refreshSync();
     }

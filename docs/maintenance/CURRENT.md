@@ -12,15 +12,33 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.58.0`（当前公开版本）
-- 构建：`0.58.0-ai-manual-first`
-- 当前公开版本/功能提交：`0.58.0` / `b0f0f7a`
-- 最近验证的源码快照：`b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`（AI 手动优先 `ceadc77` + 页面句柄安全门禁；策略与文档提交在其后）
-- 当前候选源码 SHA-256：`fdf5928742caee1556ad3aec412b6c3e52a3f3529fafe0f9e52935fe85a99b29`
-- 发布状态：v0.58.0 功能提交已推送到 `origin/master`（头 `8306017`，含安全策略），`v0.58.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.58.0` / `0.58.0-ai-manual-first`；`v0.57.4`/`v0.57.2`/`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
+- 当前 userscript：`0.59.0`（本地候选，未发布；最新公开版本为 `0.58.0`）
+- 构建：`0.59.0-rule-manager`
+- 当前公开版本/功能提交：`0.58.0` / `b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`
+- 最近验证的源码快照：`b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`
+- 当前候选源码 SHA-256：`4ca96cbe3a82880483a4f0efb9159d1ee9d36e5151c7166e335a916d21b36bd6`
+- 发布状态：v0.58.0 功能提交已推送到 `origin/master`，`v0.58.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.58.0` / `0.58.0-ai-manual-first`；v0.59.0 候选（OB-RULE-003）完成实现与本地回归，未 push/未 tag/未 Release；未执行平台写入。
 - 当前公开 tag/Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
 
-## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0 本地候选未发布）
+## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0 本地候选未发布）
+
+- 范围/文件：`omniblock.user.js` 规则引擎扩展（`normalizeDanmakuRule` 增加备注/作用域字段，旧数据默认原平台）；
+  `DanmakuRules` 新增 `update`（就地编辑，内容派生 id 并迁移命中计数）、`exportRules`/`importRules`（规则包 JSON，
+  规范化/去重/上限/危险正则校验）、`hitCount`/`totalHits`/`clearHits`（独立 GM 键 `omniblock:rule-hits:v1`，
+  延迟落盘，不经 Store 级联）；`compiled()` 合并另一平台 `scope==='both'` 的启用规则；`mountKeywordControls`
+  行内编辑 + 命中徽标 + 导出/导入/清零工具栏；设置面板「平台专用屏蔽入口」新增规则管理按钮（任意页面打开同一
+  浮层）；删除设置面板死代码（`autoStatusText`/`refreshAutoRules`/旧添加处理器）；修正 4 处"请在设置中…"
+  失效文案。`@version` 0.58.0→0.59.0，构建 `0.59.0-rule-manager`。
+- `structure regression`：新增 `test/rule-manager.cjs` 5/5（就地编辑、跨平台作用域、命中计数持久化/迁移/清理、
+  规则包往返与拒绝、设置面板入口与行内编辑 UI；旧源码上 update/计数/导入导出 API 不存在而失败）；全量矩阵通过：
+  danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7、content-ai 12/12、adapters 28/28、
+  state、performance、weibo-replay、douyin、work-block、comment-manager、ai-screening 25/25、ai-auto-gate 5/5、
+  ai-autoload 3/3、ai-batch、ai-bridge、ai-context、ai-fact-integration 4/4、ai-platforms 7/7、ai-prompt-eval 5/5、
+  ai-prompt-system 13/13、ai-watchdog、content-coverage 6/6、sync、sync-server；页面/控制台错误 0；
+  `node --check`、docs-check、隐私门禁通过。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；v0.59.0 未发布。
+
+## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0，已发布）
 
 - 范围/文件：`omniblock.user.js` 新增 `aiAutoAnalyze` 设置（默认 `false`，随设置快照同步）；`scheduleAuto`
   统一拦截自动分析（页面加载/路由/内容信号/页面可见全部自动触发点）；`analyzePage` 取消页规则强制；
