@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.58.0 - AI 默认仅手动分析与待审浮条 - 2026-10-27（本地候选，未发布）
+## v0.58.0 - AI 默认仅手动分析与待审浮条 - 2026-10-27（已公开发布）
 
 - 新增独立的「自动分析新内容」开关（默认关闭）：启用 AI 后仅点击「分析本页」才请求 API，页面加载/内容变化不再自动请求；手动分析不再强制填写页面附加规则。
 - 自动模式的候选不再自动弹窗，等在屏幕右侧「AI 待审建议」浮条，点击才进入审核；确认前不写名单。
@@ -10,6 +10,8 @@
 - `structure regression`：新增 ai-auto-gate 5 项（默认 0 次自动请求、手动免页规则、浮条契约、用量计数，旧行为上失败）；ai-screening 25、content-ai 12、ai-platforms 7、prompt-system 13、run 20、quickblock 38、danmaku 8、product 7 全绿。
 
 详细变更、证据和边界：[v0.58.0 完整条目](docs/changelog/v0.58.0.md)。
+
+GitHub Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
 
 ## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（已公开发布）
 

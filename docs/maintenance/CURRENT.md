@@ -12,13 +12,13 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.58.0`（本地候选，未发布；最新公开版本仍为 `0.57.4`）
+- 当前 userscript：`0.58.0`（当前公开版本）
 - 构建：`0.58.0-ai-manual-first`
-- 当前公开版本/功能提交：`0.57.4` / `b83003a56b901796cacf25da369dc6642bca4428`
-- 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
+- 当前公开版本/功能提交：`0.58.0` / `b0f0f7a`
+- 最近验证的源码快照：`b0f0f7a`（AI 手动优先 `ceadc77` + 页面句柄安全门禁 `b0f0f7a`；策略与文档提交在其后）
 - 当前候选源码 SHA-256：`fdf5928742caee1556ad3aec412b6c3e52a3f3529fafe0f9e52935fe85a99b29`
-- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015 + 安全加固），候选头 `b0f0f7a`（AI 手动优先 `ceadc77`、页面句柄门禁与扫描分诊 `b0f0f7a`）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
-- 当前公开 tag/Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
+- 发布状态：v0.58.0 功能提交已推送到 `origin/master`（头 `8306017`，含安全策略），`v0.58.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.58.0` / `0.58.0-ai-manual-first`；`v0.57.4`/`v0.57.2`/`v0.57.1`/`v0.57.0` tag/Release 保持不变；未执行平台写入。
+- 当前公开 tag/Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
 
 ## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0 本地候选未发布）
 
@@ -185,7 +185,7 @@ v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v
 
 ## 下一项最有价值的验证
 
-v0.58.0（OB-AI-015）已完成本地回归、未发布；下一步按确认的优先级实施 OB-RULE-003（关键词/正则规则管理升级）
-与 OB-UI-001（设置信息架构），随后 OB-AI-016、OB-RULE-004、OB-UI-003。实页验证（新默认值页面加载 0 次自动
-AI 请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据仍为
-`blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
+v0.58.0 已公开发布（含 OB-AI-015 与页面句柄安全门禁）；维护重心按已确认顺序推进 **OB-RULE-003（关键词/正则
+规则管理升级）**，随后 OB-UI-001 → OB-AI-016 → OB-RULE-004 → OB-UI-003 → OB-MAINT-003。实页验证（新默认值
+页面加载 0 次自动 AI 请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：
+贴吧右键证据仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
