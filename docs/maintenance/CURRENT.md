@@ -17,7 +17,7 @@
 - 当前公开版本/功能提交：`0.57.4` / `b83003a56b901796cacf25da369dc6642bca4428`
 - 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
 - 当前候选源码 SHA-256：`fdf5928742caee1556ad3aec412b6c3e52a3f3529fafe0f9e52935fe85a99b29`
-- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015），功能提交 `ceadc77`（含本轮文档回写前的全部代码/测试/文档改动）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
+- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015 + 安全加固），候选头 `b0f0f7a`（AI 手动优先 `ceadc77`、页面句柄门禁与扫描分诊 `b0f0f7a`）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
 
 ## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0 本地候选未发布）
