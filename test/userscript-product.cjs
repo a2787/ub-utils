@@ -134,7 +134,7 @@ function corsHeaders() {
       await route.fulfill({ status: 200, body: '' });
     });
     await page.addInitScript({ content: SHIM + '\n//# sourceURL=omniblock-userscript-product-shim.cjs' });
-    await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-userscript-product.cjs' });
+    await page.addInitScript({ content: '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-userscript-product.cjs' });
     await page.goto('https://www.bilibili.com/video/userscript-product-fixture', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!(window.OB && window.OB.ai && window.OB.sync && document.querySelector('#ob-gear')), null, { timeout: 8000 });
     await page.waitForFunction(() => !!document.querySelector('.ob-bulk[data-ob-kind="page"]'), null, { timeout: 5000 }).catch(() => {});

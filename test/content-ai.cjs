@@ -105,7 +105,7 @@ async function installPage(browser, url, fixture) {
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture });
   });
   await page.addInitScript({ content: SHIM + '\n//# sourceURL=omniblock-content-ai-shim.cjs' });
-  await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-content-ai.cjs' });
+  await page.addInitScript({ content: '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-content-ai.cjs' });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && document.querySelector('#ob-gear')), null, { timeout: 8000 });
   return page;

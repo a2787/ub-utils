@@ -85,7 +85,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
     await bili.route('https://www.bilibili.com/video/BVfixture-manager', (route) => route.fulfill({
       status:200, contentType:'text/html; charset=utf-8', body:biliFixture,
     }));
-    await bili.addInitScript({ content: shim + '\n' + source });
+    await bili.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + source });
     await bili.goto('https://www.bilibili.com/video/BVfixture-manager', { waitUntil:'domcontentloaded' });
     await bili.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(bili, 1800);
@@ -205,7 +205,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
 
     const douyin = await browser.newPage();
     await douyin.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:douyinFixture }));
-    await douyin.addInitScript({ content: shim + '\n' + source });
+    await douyin.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + source });
     await douyin.goto('https://www.douyin.com/video/fixture-manager', { waitUntil:'domcontentloaded' });
     await douyin.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(douyin, 1100);
@@ -253,7 +253,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
 
     const weibo = await browser.newPage();
     await weibo.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:weiboFixture }));
-    await weibo.addInitScript({ content: shim + '\n' + source });
+    await weibo.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + source });
     await weibo.goto('https://weibo.com/fixture-post#comment', { waitUntil:'domcontentloaded' });
     await weibo.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(weibo, 1800);

@@ -54,7 +54,7 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
     contentType: 'text/html; charset=utf-8',
     body: fixture,
   }));
-  await page.addInitScript({ content: shim + '\n' + userscript + '\n//# sourceURL=omniblock-ai-watchdog.cjs' });
+  await page.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript + '\n//# sourceURL=omniblock-ai-watchdog.cjs' });
   await page.goto('https://www.douyin.com/video/ai-watchdog-fixture', { waitUntil: 'domcontentloaded' });
   try {
     await page.waitForFunction(() => !!(window.OB && window.OB.ai), null, { timeout: 5000 });

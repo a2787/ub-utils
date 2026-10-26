@@ -16,8 +16,8 @@
 - 构建：`0.58.0-ai-manual-first`
 - 当前公开版本/功能提交：`0.57.4` / `b83003a56b901796cacf25da369dc6642bca4428`
 - 最近验证的源码快照：`b83003a56b901796cacf25da369dc6642bca4428`
-- 当前候选源码 SHA-256：`3627b7022f31538b9e9a3e2403193a68bbee76a6abb755c1ca191838b6e7c79b`
-- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
+- 当前候选源码 SHA-256：`fdf5928742caee1556ad3aec412b6c3e52a3f3529fafe0f9e52935fe85a99b29`
+- 发布状态：v0.58.0 本地候选已完成实现与本地回归（OB-AI-015），功能提交 `ceadc77`（含本轮文档回写前的全部代码/测试/文档改动）；未 push、未 tag、未 Release，等待用户授权；v0.57.4 功能提交 `b83003a` 在 `origin/master`，`v0.57.4` tag 与 GitHub Release（Latest）保持不变；未执行平台写入。
 - 当前公开 tag/Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
 
 ## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0 本地候选未发布）
@@ -35,6 +35,15 @@
   旧 `start()` 固定 `scheduleAuto(1400)`、`analyzePage('')` 直接报"请先填写本页面附加规则"、自动候选直接
   `showReview`，见 [v0.58.0 条目](../changelog/v0.58.0.md)。
 - `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停，本轮未请求授权）；v0.58.0 未发布。
+- 安全加固（同候选内，2026-10-27）：`window.OB` 调试句柄不再无条件暴露给页面脚本——此前恶意页面可改写
+  AI provider 地址把本机 Key 发往第三方、篡改名单或外传页面内容；现在只有显式 `__OB_TEST_HOOKS__` 的
+  测试/探针注入环境（document-start 时设置）才挂载，生产页面只有只读 `__OB_RUNTIME_INFO__`。全部测试
+  夹具/探针/开发扩展构建器已同步声明钩子。Mimosa 深度扫描 125 项逐条分诊：20 个 high 为按设计跨域能力的
+  静态污点告警（真实攻击面即上述句柄暴露，已修复）；~55 条 mongo-sort-injection 与 ~35 条 xss 链核实为
+  误报（15 处 innerHTML 全为静态模板、动态内容全走 textContent；server.py 为参数化 SQL）；6 条跨文件
+  疑似污点指向参数化 SQL 与 mock transport，不成立。分诊细节见 [v0.58.0 条目](../changelog/v0.58.0.md)。
+- 既有损坏（非本轮引入）：`test/dev-extension.cjs` 的 loopback AI 桥接用例写入的 `aiGatewayUrl` 在
+  v0.57.1 直连切换后已从源码移除，该用例结构性过时；修复另立 OB-MAINT-003。
 - 依赖自动分析路径的既有测试 shim 已显式 `aiAutoAnalyze: true`；用户决策同步进计划：采纳"自动候选不打断"
   （并入本项）、名单搜索/筛选（并入 OB-UI-001）、深色模式（新 OB-UI-003）；否决平台主开关、全局快捷键、
   新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004（proposed）。
@@ -56,27 +65,7 @@
 
 ## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
-- 范围/文件：删除"命中评论/帖子条目时接管右键并弹出自建菜单「🚫 拉黑此用户」"的整套实现——`document` 级 `contextmenu`
-  捕获监听、`buildContextMenu`、仅供该监听使用的 `findItem`、`#ob-ctx` 样式与引导"试右键"的提示文案（`omniblock.user.js`）。
-  平台原生右键菜单、页面上下文操作与此前被 `preventDefault` 掉的功能全部交还页面。
-- `structure regression`：`node test/run.cjs` 20/20（C 用例改为断言右键不再被接管且身份仍可解析，旧源码上以
-  `{"defaultPrevented":true,"ctxShown":true}` 失败后转通过）；`node test/adapters.cjs` 28/28（贴吧嵌套正文目标与 B站
-  Shadow DOM 两处右键用例同样在旧源码上失败后转通过，六平台其余 26 项保持通过）；`quickblock` 38/38、
-  `userscript-product` 7/7；页面/控制台错误 0。`run.cjs` D 用例仍覆盖完整拉黑链路：点开"更多"挂载评论菜单 →
-  原生菜单旁快捷入口 → 确认气泡 → `bili:uid:333` 进名单且评论隐藏。
-- `structure regression`：与 CI 同一组本地矩阵 21/22 脚本退出 0（state、comment-manager、danmaku-auto、work-block、
-  performance、weibo-replay、douyin、sync、sync-server、ai-platforms、content-ai、content-coverage、ai-autoload、
-  ai-watchdog、probe-hygiene、ai-prompt-system、ai-prompt-eval 等）。
-- `real-site verified`：2026-09-13 用户授权恢复实页验证。隔离匿名只读探针 `--verify-local`：脱敏页面形式 `bilibili.com/video/...` 实际命中 2 个评论 renderer、派发 2 次 `contextmenu`，`prevented=0`、`menu=0`；`weibo.com/...` 实际派发 7 次，`prevented=0`、`menu=0`。登录态专用 Chrome（开发扩展 `0.57.4-native-context-menu`，源码 SHA-256 `caacf227…`）：知乎/抖音/X 在扩展活跃（`ob=true`、`#ob-gear`=1、`runtime=0.57.4`）下 `ctxShown=false`、`ctxDefaultPrevented=false`，右键保持原生。新增 `test/dedicated-rightclick-probe.cjs` 用浏览器级 WS + 单次 `Target.attachToTarget` 绕开 Chrome 148 浏览器级 `Target.getTargets` 偶发卡死（页面级 WS 在本机构建上整体不可响应）。
-- `blocked`：贴吧在 CDP 驱动下渲染进程卡死（反爬/重资源使 `Runtime.evaluate` 与 `Page.captureScreenshot` 均超时并连带卡死后续会话），无法读取右键状态；属环境限制而非产品回归，需用户在真实登录浏览器手动确认。右键接管本是覆盖全部平台的单一 `document` 级监听，已在 B站/微博/知乎/抖音/X 五平台（扩展均确认活跃）验证移除。
-- `structure regression`：`node test/ai-screening.cjs` 25/25 断言通过并退出 0；AI-24 预期 mock HTTP 429 被单独归档为 expected console event，未知 console/page error 仍会使测试失败。
-- `blocked`：`node test/dev-browser.cjs sync` 已读到当前 `0.57.4-native-context-menu` 与右键目标，但专用扩展 bridge 在刷新前后均为 `degraded/ready-timeout`，因此不能把专用浏览器完整 AI/存储链路写成 ready；这不是右键证据失败。
-- 提交与门禁：产品行为提交为 `b83003a56b901796cacf25da369dc6642bca4428`；本轮接手审计未修改
-  `omniblock.user.js`，验证脚本/文档差异与工作区状态须以 `git status --short` 实时核对；`git fsck` 无错误。
-  `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。v0.57.4 已推送到
-  `origin/master`，`v0.57.4` tag 与 GitHub Release 已创建；本仓库没有登记的插件生产部署链，未执行平台写入。
-- 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
-  [移出存档](plans/2026-09-13-current-dated-archive.md)。
+- 完整日期条目（范围/改动/证据/发布状态）已移入 [2026-09-13 移出存档](plans/2026-09-13-current-dated-archive.md)；当前公开版本与发布状态以本页"当前版本"区为准。
 
 ## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
 

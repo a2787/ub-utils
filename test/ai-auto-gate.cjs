@@ -76,7 +76,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>AI è‡ªå
     }
     await route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'not found' });
   });
-  await page.addInitScript({ content: SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-auto-gate.cjs' });
+  await page.addInitScript({ content: SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-auto-gate.cjs' });
   await page.goto('https://www.douyin.com/video/ai-auto-gate-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai), null, { timeout: 8000 });
 

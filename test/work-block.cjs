@@ -153,7 +153,7 @@ async function runCase(browser, item, report) {
   });
   page.on('pageerror', (error) => report.pageErrors.push('[' + item.id + '] ' + String(error)));
   await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: item.body }));
-  await page.addInitScript({ content: shim(item.init || '') + '\n' + userscript });
+  await page.addInitScript({ content: shim(item.init || '') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
   await page.goto(item.url, { waitUntil: 'domcontentloaded' });
   try {
     await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });

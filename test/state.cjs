@@ -65,7 +65,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     const bili = await browser.newPage();
     await bili.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: biliFixture }));
-    await bili.addInitScript({ content: shim({ p_bob:{ label:'Bob', note:'', createdAt:0, hits:0, identities:['bili:uid:222'] }, p_late:{ label:'Late', note:'', createdAt:0, hits:0, identities:['bili:uid:333'] }, p_sub:{ label:'Sub', note:'', createdAt:0, hits:0, identities:['bili:uid:555'] } }) + '\n' + userscript });
+    await bili.addInitScript({ content: shim({ p_bob:{ label:'Bob', note:'', createdAt:0, hits:0, identities:['bili:uid:222'] }, p_late:{ label:'Late', note:'', createdAt:0, hits:0, identities:['bili:uid:333'] }, p_sub:{ label:'Sub', note:'', createdAt:0, hits:0, identities:['bili:uid:555'] } }) + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await bili.goto('https://www.bilibili.com/test', { waitUntil: 'domcontentloaded' });
     await bili.waitForFunction(() => !!window.OB && !!document.getElementById('ob-gear'), null, { timeout: 8000 });
     await wait(1300);
@@ -134,7 +134,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const toggles = await browser.newPage();
     await toggles.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: biliFixture }));
-    await toggles.addInitScript({ content: shim({}, { showQuickBlock:false, showBulkBlock:false }) + '\n' + userscript });
+    await toggles.addInitScript({ content: shim({}, { showQuickBlock:false, showBulkBlock:false }) + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await toggles.goto('https://www.bilibili.com/test-toggles', { waitUntil:'domcontentloaded' });
     await toggles.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(1200);
@@ -161,7 +161,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const x = await browser.newPage();
     await x.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: xFixture }));
-    await x.addInitScript({ content: shim({ p_x:{ label:'Mixed', note:'', createdAt:0, hits:0, identities:['x:handle:mixedcase'] } }, { hideMode:'collapse' }) + '\n' + userscript });
+    await x.addInitScript({ content: shim({ p_x:{ label:'Mixed', note:'', createdAt:0, hits:0, identities:['x:handle:mixedcase'] } }, { hideMode:'collapse' }) + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await x.goto('https://x.com/home', { waitUntil: 'domcontentloaded' });
     await x.waitForFunction(() => !!window.OB && !!document.getElementById('ob-gear'), null, { timeout: 8000 });
     await wait(1300);

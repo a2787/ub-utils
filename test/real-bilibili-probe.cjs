@@ -338,7 +338,7 @@ async function pickLocalCommentTarget(candidates) {
         });
       });
     }
-    await page.addInitScript({ content: shim + '\n' + userscript + '\n' + xhrProbe });
+    await page.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript + '\n' + xhrProbe });
     const response = await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await waitForStableDocument(page);
     result.pageLoaded = !!response && response.ok()

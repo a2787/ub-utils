@@ -52,7 +52,7 @@ window.GM_xmlhttpRequest = (o) => {
 };
 window.GM_openInTab = () => {};
 `;
-fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-qb.js');
+fs.writeFileSync(path.join(ROOT, 'test', '_initqb.js'), SHIM + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-qb.js');
 
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站真实结构回归页</title></head><body>
 <div id="related"></div>
@@ -1531,7 +1531,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       }
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
     });
-    await pakkuBeforePage.addInitScript({ content: SHIM + '\n' + PAKKU_BEFORE + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-pakku-before.js' });
+    await pakkuBeforePage.addInitScript({ content: SHIM + '\n' + PAKKU_BEFORE + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-pakku-before.js' });
     await pakkuBeforePage.goto('https://www.bilibili.com/video/BV1test', { waitUntil: 'domcontentloaded' });
     await pakkuBeforePage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const pakkuBefore = await pakkuBeforePage.evaluate(async () => {

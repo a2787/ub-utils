@@ -99,7 +99,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
   for (const candidate of candidates) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     try {
-      await page.addInitScript({ content: shim + '\n' + userscript });
+      await page.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
       await loadWeiboDetail(page, candidate);
       const counts = await countWeiboRows(page);
       // 独立隐藏的断言必须选到作者不同于根评论的回复；同作者回复被一起隐藏是
@@ -136,7 +136,7 @@ async function pickWeiboDetailTarget(browser, candidates) {
       const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
       const result = { id: target.id, target: redactTarget(url), discovered, localTarget: url, loaded: false, errors: [] };
       page.on('pageerror', (error) => result.errors.push('pageerror: ' + error.message));
-      await page.addInitScript({ content: shim + '\n' + userscript });
+      await page.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
       try {
         const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
         result.loaded = !!response && response.ok();

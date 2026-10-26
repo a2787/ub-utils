@@ -43,7 +43,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     const recycle = await browser.newPage();
     await recycle.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:recycleFixture }));
-    await recycle.addInitScript({ content:shim() + '\n' + userscript });
+    await recycle.addInitScript({ content:shim() + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await recycle.goto('https://www.douyin.com/test', { waitUntil:'domcontentloaded' });
     await recycle.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(2600);
@@ -54,7 +54,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const cancel = await browser.newPage();
     await cancel.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:cancelFixture }));
-    await cancel.addInitScript({ content:shim() + '\n' + userscript });
+    await cancel.addInitScript({ content:shim() + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await cancel.goto('https://www.douyin.com/test-cancel', { waitUntil:'domcontentloaded' });
     await cancel.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     await wait(900);

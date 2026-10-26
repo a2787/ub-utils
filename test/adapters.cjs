@@ -239,7 +239,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const page = await browser.newPage();
       const fixture = '<!doctype html><html><body>' + test.body + '</body></html>';
       await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture }));
-      await page.addInitScript({ content: shim(test.expectVanished ? test.expected : '') + '\n' + userscript });
+      await page.addInitScript({ content: shim(test.expectVanished ? test.expected : '') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
       await page.goto(test.url, { waitUntil: 'domcontentloaded' });
       await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
       await new Promise((resolve) => setTimeout(resolve, 120));
@@ -286,7 +286,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       </div>
     </body></html>`;
     await zhihuMenuPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: zhihuMenuFixture }));
-    await zhihuMenuPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await zhihuMenuPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await zhihuMenuPage.goto('https://www.zhihu.com/question/1', { waitUntil: 'domcontentloaded' });
     await zhihuMenuPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const zhihuMenu = await zhihuMenuPage.evaluate(async () => {
@@ -332,7 +332,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       <div class="pb-comment-item" id="tieba-comment"><div class="comment-content"><span id="tieba-comment-text">正文</span></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654399, name: 'nested-user', name_show: '嵌套作者' } };</script></div>
     </body></html>`;
     await tiebaNestedContextPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: tiebaNestedFixture }));
-    await tiebaNestedContextPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await tiebaNestedContextPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await tiebaNestedContextPage.goto('https://tieba.baidu.com/p/1', { waitUntil: 'domcontentloaded' });
     await tiebaNestedContextPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const tiebaNested = await tiebaNestedContextPage.evaluate(async () => {
@@ -362,7 +362,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       <div class="pb-comment-item" id="tieba-reply-host"><div class="pb-lzl-item" id="tieba-reply-comment"><div class="comment-content"><span>楼中楼回复</span></div><div class="comment-actions"><button class="ellipsis_comment" id="tieba-reply-more" aria-label="更多"></button></div><script>document.currentScript.parentElement.__vue__ = { userInfo: { id: 987654401, name: 'reply-user', name_show: '回复作者' } };</script></div></div>
     </body></html>`;
     await tiebaMenuPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: tiebaMenuFixture }));
-    await tiebaMenuPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await tiebaMenuPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await tiebaMenuPage.goto('https://tieba.baidu.com/p/1', { waitUntil: 'domcontentloaded' });
     await tiebaMenuPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const tiebaMenu = await tiebaMenuPage.evaluate(async () => {
@@ -457,7 +457,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       document.body.appendChild(host);
     </script></body></html>`;
     await biliShadowContextPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: biliShadowFixture }));
-    await biliShadowContextPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await biliShadowContextPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await biliShadowContextPage.goto('https://www.bilibili.com/video/test', { waitUntil: 'domcontentloaded' });
     await biliShadowContextPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     const biliShadow = await biliShadowContextPage.evaluate(async () => {
@@ -494,7 +494,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       </div>
     </body></html>`;
     await dyDmPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyDmFixture }));
-    await dyDmPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await dyDmPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await dyDmPage.goto('https://www.douyin.com/test', { waitUntil: 'domcontentloaded' });
     await dyDmPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -625,7 +625,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       </div>
     </body></html>`;
     await dyCommentPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dyCommentFixture }));
-    await dyCommentPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await dyCommentPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await dyCommentPage.goto('https://www.douyin.com/video/fixture', { waitUntil: 'domcontentloaded' });
     await dyCommentPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -803,7 +803,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const weiboPage = await browser.newPage();
     const weiboFixture = '<!doctype html><html><body>' + WEIBO_DETAIL_FIXTURE + WEIBO_LEGACY_REPLY_FIXTURE + '</body></html>';
     await weiboPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: weiboFixture }));
-    await weiboPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await weiboPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     // 人工合成详情页 URL，仅用于本地夹具路由。
     await weiboPage.goto('https://weibo.com/fixture-user/fixture-detail#comment', { waitUntil: 'domcontentloaded' });
     await weiboPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
@@ -970,7 +970,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       </div>
     </body></html>`;
     await wbCardPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: wbCardFixture }));
-    await wbCardPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await wbCardPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await wbCardPage.goto('https://weibo.com/fixture-feed', { waitUntil: 'domcontentloaded' });
     await wbCardPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1300));
@@ -1005,7 +1005,7 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
     const modalPage = await browser.newPage();
     const modalFixture = '<!doctype html><html><body>' + WEIBO_REPLY_MODAL_FIXTURE + '</body></html>';
     await modalPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: modalFixture }));
-    await modalPage.addInitScript({ content: shim('') + '\n' + userscript });
+    await modalPage.addInitScript({ content: shim('') + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await modalPage.goto('https://weibo.com/fixture-user/fixture-detail', { waitUntil: 'domcontentloaded' });
     await modalPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await new Promise((resolve) => setTimeout(resolve, 1400));

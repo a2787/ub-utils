@@ -83,7 +83,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
   await page.addInitScript({ content: SHIM + '\n//# sourceURL=omniblock-ai-fact-shim.cjs' });
-  await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-ai-fact-integration.cjs' });
+  await page.addInitScript({ content: '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-fact-integration.cjs' });
   await page.goto('https://www.bilibili.com/video/ai-fact-integration-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai), null, { timeout: 8000 });
   const defaultState = await page.evaluate(() => window.OB.ai.status().factRetrieval);

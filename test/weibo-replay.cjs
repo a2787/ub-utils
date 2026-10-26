@@ -213,7 +213,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture }));
-    await page.addInitScript({ content: shim + '\n' + userscript });
+    await page.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await page.goto('https://weibo.com/replay', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(500);
@@ -315,7 +315,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const idlePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await idlePage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: idleFixture }));
-    await idlePage.addInitScript({ content: layoutProbe + shim + '\n' + userscript });
+    await idlePage.addInitScript({ content: layoutProbe + shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await idlePage.goto('https://weibo.com/idle-replay', { waitUntil: 'domcontentloaded' });
     await idlePage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(900);
@@ -335,7 +335,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const churnPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await churnPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: churnFixture }));
-    await churnPage.addInitScript({ content: layoutProbe + churnShim + '\n' + userscript });
+    await churnPage.addInitScript({ content: layoutProbe + churnShim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await churnPage.goto('https://weibo.com/blocked-churn-replay', { waitUntil: 'domcontentloaded' });
     await churnPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(900);
@@ -421,7 +421,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const topPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await topPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: topFixture }));
-    await topPage.addInitScript({ content: shim + '\n' + userscript });
+    await topPage.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await topPage.goto('https://weibo.com/top-level-replay', { waitUntil: 'domcontentloaded' });
     await topPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(500);
@@ -489,7 +489,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const detailPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await detailPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: detailFixture }));
-    await detailPage.addInitScript({ content: shim + '\n' + userscript });
+    await detailPage.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await detailPage.goto('https://weibo.com/detail-comment-replay', { waitUntil: 'domcontentloaded' });
     await detailPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(600);
@@ -616,7 +616,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const detailOrderPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await detailOrderPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: detailOrderFixture }));
-    await detailOrderPage.addInitScript({ content: shim + '\n' + userscript });
+    await detailOrderPage.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await detailOrderPage.goto('https://weibo.com/detail-comment-order-replay', { waitUntil: 'domcontentloaded' });
     await detailOrderPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(600);
@@ -706,7 +706,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const feedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await feedPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: feedFixture }));
-    await feedPage.addInitScript({ content: feedShim + '\n' + userscript });
+    await feedPage.addInitScript({ content: feedShim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await feedPage.goto('https://weibo.com/feed-replay', { waitUntil: 'domcontentloaded' });
     await feedPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(700);
@@ -783,7 +783,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const hotFeedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await hotFeedPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotFeedFixture }));
-    await hotFeedPage.addInitScript({ content: hotFeedShim + '\n' + userscript });
+    await hotFeedPage.addInitScript({ content: hotFeedShim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await hotFeedPage.goto('https://weibo.com/hot-feed-replay', { waitUntil: 'domcontentloaded' });
     await hotFeedPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(700);
@@ -834,7 +834,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const hotPostPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await hotPostPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotFeedFixture }));
-    await hotPostPage.addInitScript({ content: hotPostShim + '\n' + userscript });
+    await hotPostPage.addInitScript({ content: hotPostShim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await hotPostPage.goto('https://weibo.com/hot-feed-post-block-replay', { waitUntil: 'domcontentloaded' });
     await hotPostPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(700);
@@ -913,7 +913,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const hotStressPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await hotStressPage.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: hotStressFixture }));
-    await hotStressPage.addInitScript({ content: hotStressShim + '\n' + userscript });
+    await hotStressPage.addInitScript({ content: hotStressShim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + userscript });
     await hotStressPage.goto('https://weibo.com/hot-feed-stress-replay', { waitUntil: 'domcontentloaded' });
     await hotStressPage.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await sleep(700);

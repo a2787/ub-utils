@@ -67,7 +67,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     }
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
-  await page.addInitScript({ content: SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-batch.cjs' });
+  await page.addInitScript({ content: SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-batch.cjs' });
   await page.goto('https://www.douyin.com/video/ai-batch-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai), null, { timeout: 8000 });
   await page.evaluate(() => window.OB.ai.analyzePage('批量回归规则'));

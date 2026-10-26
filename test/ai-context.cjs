@@ -95,7 +95,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     }
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
-  await page.addInitScript({ content: SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-context.cjs' });
+  await page.addInitScript({ content: SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-context.cjs' });
   await page.goto('https://www.bilibili.com/video/av1?p=1', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.adapters && window.OB.adapters.bilibili), null, { timeout: 8000 }).catch(async (error) => {
     const diagnostics = await page.evaluate(() => ({ ob: !!window.OB, errors: window.__contextErrors || [] })).catch(() => ({}));

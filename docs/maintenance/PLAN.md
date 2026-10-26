@@ -176,6 +176,22 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 - updated: 2026-09-12
 - supersedes: none
 
+### OB-MAINT-003 — dev-extension 遗留用例重构与扫描噪声治理
+
+- status: proposed
+- priority: P3
+- scope: `test/dev-extension.cjs` 的"loopback AI 桥接"用例自 v0.57.1 直连切换后写入已不存在的 `aiGatewayUrl`（结构性过时，当前必然失败）；按当前持久扩展直连架构重写该用例（loopback mock provider + direct handler + 设备 Key 语义），或将其明确降级为历史兼容夹具并从默认矩阵移出。同时为 Mimosa 静态扫描建立已审阅基线的治理方式：20 个 high 的"SSRF"告警属 userscript 按设计跨域能力（provider/同步 endpoint 均经 HTTPS 规范化校验，B站 API/更新地址固定），与维护者确认后的接受方式需要在工具配置或文档中固化，避免每轮误报阻断提交。
+- non-goals: 不改变 AI 直连/桥接运行时行为；不删除历史实验文件；不降低身份、隐私或平台写入红线。
+- dependencies: none
+- acceptance: required
+  - [ ] dev-extension 用例在当前架构下可运行并通过，或已从默认矩阵明确移出并在文档记录原因。
+  - [ ] 扫描 high 告警的处置方式（基线/忽略/文档）落地后，常规提交不再被已知误报阻断。
+  - [ ] docs-check 与相关回归通过。
+- evidence: 2026-10-27 安全轮确认：当前源码 0 处 `aiGatewayUrl`（v0.56.0 时代 8 处）；dev-extension 失败与安全门禁无关。
+- next: 排在 OB-RULE-003 之后的维护轮处理；处理前每轮如实记录该用例为既有失败。
+- updated: 2026-10-27
+- supersedes: none
+
 ## 关闭规则
 
 计划项只有在实现、验证、文档同步和交接事实全部完成后才可标记 `verified`。如果平台、登录、验证码、

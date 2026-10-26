@@ -89,7 +89,7 @@ function resetDiagnostics(page) {
   try {
     const page = await browser.newPage();
     await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE }));
-    await page.addInitScript({ content: SHIM + '\n' + USERSCRIPT });
+    await page.addInitScript({ content: SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT });
     await page.goto('https://www.douyin.com/video/performance-fixture', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.OB, null, { timeout: 8000 });
     await wait(1400);

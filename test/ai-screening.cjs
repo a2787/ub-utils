@@ -204,7 +204,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE });
   });
   await page.addInitScript({ content: SHIM + '\n//# sourceURL=omniblock-ai-shim.cjs' });
-  await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-ai-screening.cjs' });
+  await page.addInitScript({ content: '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-ai-screening.cjs' });
   await page.goto('https://www.bilibili.com/video/ai-screening-fixture', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.ai && document.querySelector('#ob-gear')), null, { timeout: 8000 }).catch(() => {});
   // 自动分析含一次 429 重试延迟；自动候选不再自动弹窗（OB-AI-015），改为等

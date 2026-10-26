@@ -20560,24 +20560,39 @@
     else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountGear, { once: true });
   }
 
-  // 暴露调试接口
-  window.OB = {
-    Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
-    setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
-    refreshWork: refreshWorkBlock, openWorkBlock,
-    openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,
-    ai: AI,
-    promptSystem: PromptSystem,
-    sync: AccountSync,
-    logs: EventLog,
-    danmakuRules: DanmakuRules,
-    danmakuExemptions: DanmakuExemptions,
-    runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
-    lifecycle: {
-      pageStatus: () => PageLifecycle.status(),
-      resourceStatus: () => RuntimeResources.status(),
-      scannerStatus: () => currentScanner && currentScanner.status ? currentScanner.status() : null,
-    },
-    diagnostics: runtimeDiagnostics,
-  };
+  // 调试句柄不再无条件挂到 window。本脚本在 document-start 运行，此时页面
+  // 自身脚本尚未执行，只有测试/探针注入器能预先设置 __OB_TEST_HOOKS__；
+  // 线上页面因此拿不到 Store/AI/同步等可写句柄，无法改写 AI provider 地址
+  // 把本机 Key 发往第三方、篡改本地名单或借分析请求外传页面内容。
+  // 生产环境只暴露一份只读的运行信息，供诊断和探针核对版本使用。
+  if (window.__OB_TEST_HOOKS__ === 'omniblock-test-only') {
+    window.OB = {
+      Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
+      setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
+      refreshWork: refreshWorkBlock, openWorkBlock,
+      openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,
+      ai: AI,
+      promptSystem: PromptSystem,
+      sync: AccountSync,
+      logs: EventLog,
+      danmakuRules: DanmakuRules,
+      danmakuExemptions: DanmakuExemptions,
+      runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
+      lifecycle: {
+        pageStatus: () => PageLifecycle.status(),
+        resourceStatus: () => RuntimeResources.status(),
+        scannerStatus: () => currentScanner && currentScanner.status ? currentScanner.status() : null,
+      },
+      diagnostics: runtimeDiagnostics,
+    };
+  } else {
+    try {
+      Object.defineProperty(window, '__OB_RUNTIME_INFO__', {
+        value: Object.freeze({ version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER }),
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      });
+    } catch (e) {}
+  }
 })();

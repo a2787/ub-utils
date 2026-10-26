@@ -215,7 +215,7 @@ async function installPage(browser, testCase) {
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: testCase.fixture });
   });
   await page.addInitScript({ content: SHIM + '\n//# sourceURL=omniblock-content-coverage-shim.cjs' });
-  await page.addInitScript({ content: USERSCRIPT + '\n//# sourceURL=omniblock-content-coverage.cjs' });
+  await page.addInitScript({ content: '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-content-coverage.cjs' });
   await page.goto(testCase.url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window.OB && window.OB.adapters && document.querySelector('#ob-gear')), null, { timeout: 8000 });
   // 等待首轮扫描注册 adapter，同时给异步 __vue__/Shadow DOM 夹具留出一帧。

@@ -49,7 +49,7 @@ window.GM_xmlhttpRequest = (opts) => {
 };
 window.GM_openInTab = (url) => { window.__openInTab = window.__openInTab || []; window.__openInTab.push(url); };
 `;
-fs.writeFileSync(path.join(ROOT, 'test', '_initscript.js'), SHIM + '\n' + USERSCRIPT + '\n//# sourceURL=omniblock-injected.js');
+fs.writeFileSync(path.join(ROOT, 'test', '_initscript.js'), SHIM + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT + '\n//# sourceURL=omniblock-injected.js');
 
 // 2) 测试页：模拟 B站 评论区（评论在 Shadow DOM 内），并额外加一个"双层嵌套影子"的 Frank(666)
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>B站测试页</title></head>
@@ -209,7 +209,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   }));
   const delayedInit = SHIM + `
 window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolve, 180));
-` + '\n' + USERSCRIPT;
+` + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT;
   await delayedGuardPage.addInitScript({ content: delayedInit });
   await delayedGuardPage.goto('https://www.bilibili.com/delayed-guard', { waitUntil: 'domcontentloaded' });
   await sleep(30);

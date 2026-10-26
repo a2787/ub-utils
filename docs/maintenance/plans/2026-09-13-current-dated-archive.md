@@ -2,6 +2,7 @@
 
 本文件是 `docs/maintenance/CURRENT.md` 在 v0.57.4 一轮中为守住 24 KiB 活动文档预算而移出的
 2026-09-06 至 2026-09-08 条目原文，内容按当时的记录逐字保留，不追加新的当前状态。
+2026-10-27 又为同一预算原因把 v0.57.4 的 OB-CTX-001 日期条目原样移入文末。
 当前事实、最近证据与限制仍以 [CURRENT.md](../CURRENT.md) 为准；本节日期段的入口见
 [HISTORY_INDEX.md](../HISTORY_INDEX.md)。
 
@@ -50,3 +51,34 @@
 - `structure regression`：watchdog 1/1、探针清理 1/1、抖音 AI 6/6、全量分批 2/2、开发扩展 5/5、桥接降级失败 1/1；userscript 与 service worker 60 秒预算断言通过，页面/控制台错误为 0。
 - `real-site verified`：2026-09-07 用户授权专用 Chrome 抖音登录态刷新候选扩展后，当前页观察到 245 条内容；“分析本页”进入 4 批并完成 245/245，审核态 8 条候选，桥接为 `ready`，网关收到 4 次 POST 且均为 HTTP 200，`lastError` 为空，控件尾缀命中 0；未点平台写入控件。
 - `blocked`：抖音验证码；换片新行不足；商汤未联调。2026-09-07 Docker engine 已恢复（Model Runner 关闭）；health/models 200、compose healthy；目录保留，数据卷未动。
+
+
+## 2026-10-27 追加：2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4）原样移入
+
+为守住 CURRENT 的 24 KiB 预算，以下为该日期条目移出时的原文，只读归档，不追加当前状态。
+
+---
+
+## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
+
+- 范围/文件：删除"命中评论/帖子条目时接管右键并弹出自建菜单「🚫 拉黑此用户」"的整套实现——`document` 级 `contextmenu`
+  捕获监听、`buildContextMenu`、仅供该监听使用的 `findItem`、`#ob-ctx` 样式与引导"试右键"的提示文案（`omniblock.user.js`）。
+  平台原生右键菜单、页面上下文操作与此前被 `preventDefault` 掉的功能全部交还页面。
+- `structure regression`：`node test/run.cjs` 20/20（C 用例改为断言右键不再被接管且身份仍可解析，旧源码上以
+  `{"defaultPrevented":true,"ctxShown":true}` 失败后转通过）；`node test/adapters.cjs` 28/28（贴吧嵌套正文目标与 B站
+  Shadow DOM 两处右键用例同样在旧源码上失败后转通过，六平台其余 26 项保持通过）；`quickblock` 38/38、
+  `userscript-product` 7/7；页面/控制台错误 0。`run.cjs` D 用例仍覆盖完整拉黑链路：点开"更多"挂载评论菜单 →
+  原生菜单旁快捷入口 → 确认气泡 → `bili:uid:333` 进名单且评论隐藏。
+- `structure regression`：与 CI 同一组本地矩阵 21/22 脚本退出 0（state、comment-manager、danmaku-auto、work-block、
+  performance、weibo-replay、douyin、sync、sync-server、ai-platforms、content-ai、content-coverage、ai-autoload、
+  ai-watchdog、probe-hygiene、ai-prompt-system、ai-prompt-eval 等）。
+- `real-site verified`：2026-09-13 用户授权恢复实页验证。隔离匿名只读探针 `--verify-local`：脱敏页面形式 `bilibili.com/video/...` 实际命中 2 个评论 renderer、派发 2 次 `contextmenu`，`prevented=0`、`menu=0`；`weibo.com/...` 实际派发 7 次，`prevented=0`、`menu=0`。登录态专用 Chrome（开发扩展 `0.57.4-native-context-menu`，源码 SHA-256 `caacf227…`）：知乎/抖音/X 在扩展活跃（`ob=true`、`#ob-gear`=1、`runtime=0.57.4`）下 `ctxShown=false`、`ctxDefaultPrevented=false`，右键保持原生。新增 `test/dedicated-rightclick-probe.cjs` 用浏览器级 WS + 单次 `Target.attachToTarget` 绕开 Chrome 148 浏览器级 `Target.getTargets` 偶发卡死（页面级 WS 在本机构建上整体不可响应）。
+- `blocked`：贴吧在 CDP 驱动下渲染进程卡死（反爬/重资源使 `Runtime.evaluate` 与 `Page.captureScreenshot` 均超时并连带卡死后续会话），无法读取右键状态；属环境限制而非产品回归，需用户在真实登录浏览器手动确认。右键接管本是覆盖全部平台的单一 `document` 级监听，已在 B站/微博/知乎/抖音/X 五平台（扩展均确认活跃）验证移除。
+- `structure regression`：`node test/ai-screening.cjs` 25/25 断言通过并退出 0；AI-24 预期 mock HTTP 429 被单独归档为 expected console event，未知 console/page error 仍会使测试失败。
+- `blocked`：`node test/dev-browser.cjs sync` 已读到当前 `0.57.4-native-context-menu` 与右键目标，但专用扩展 bridge 在刷新前后均为 `degraded/ready-timeout`，因此不能把专用浏览器完整 AI/存储链路写成 ready；这不是右键证据失败。
+- 提交与门禁：产品行为提交为 `b83003a56b901796cacf25da369dc6642bca4428`；本轮接手审计未修改
+  `omniblock.user.js`，验证脚本/文档差异与工作区状态须以 `git status --short` 实时核对；`git fsck` 无错误。
+  `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。v0.57.4 已推送到
+  `origin/master`，`v0.57.4` tag 与 GitHub Release 已创建；本仓库没有登记的插件生产部署链，未执行平台写入。
+- 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
+  [移出存档](plans/2026-09-13-current-dated-archive.md)。

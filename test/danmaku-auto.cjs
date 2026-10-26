@@ -95,7 +95,7 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       }
       return route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:BILI_FIXTURE });
     });
-    await bili.addInitScript({ content:BILI_SHIM + '\n' + USERSCRIPT });
+    await bili.addInitScript({ content:BILI_SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT });
     await bili.goto('https://www.bilibili.com/video/BVauto', { waitUntil:'domcontentloaded' });
     await bili.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     const biliResult = await bili.evaluate(async () => {
@@ -234,7 +234,7 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
 
     const douyin = await browser.newPage();
     await douyin.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:DOUYIN_FIXTURE }));
-    await douyin.addInitScript({ content:DOUYIN_SHIM + '\n' + USERSCRIPT });
+    await douyin.addInitScript({ content:DOUYIN_SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT });
     await douyin.goto('https://www.douyin.com/video/auto', { waitUntil:'domcontentloaded' });
     await douyin.waitForFunction(() => !!window.OB, null, { timeout:8000 });
     const douyinResult = await douyin.evaluate(async () => {

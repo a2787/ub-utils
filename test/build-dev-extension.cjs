@@ -1184,7 +1184,7 @@ const runtimeMain = mainBridge
   .replaceAll('__OB_VERSION__', version)
   .replaceAll('__OB_BUILD__', build)
   .replaceAll('__OB_RUNTIME_MODE__', PRODUCT_MODE ? 'persistent-extension' : 'persistent-dev-extension')
-  + '\n' + source + '\n})();\n';
+  + '\nwindow.__OB_TEST_HOOKS__ = "omniblock-test-only";\n' + source + '\n})();\n';
 fs.writeFileSync(path.join(OUTPUT_DIR, 'runtime-main.js'), runtimeMain, 'utf8');
 
 if (PRODUCT_MODE) {
