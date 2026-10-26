@@ -65,7 +65,7 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
   - [x] 规则导入/导出往返一致；超限、重复、危险正则被拒并给可理解原因（RULE-IO；`assessDanmakuRegexRisk` 复用）。
   - [x] 跨平台规则在两平台各自生效；无作用域字段的旧规则按原平台生效（RULE-SCOPE）。
   - [x] 源码与文案中无失效的"请在设置中…"规则指引；`refreshAutoRules`/`autoStatusText`/旧处理器已删除（源码断言）；`test/danmaku-auto.cjs` 8/8、`test/quickblock.cjs` 38/38、`test/adapters.cjs` 28/28、`test/run.cjs` 20/20、docs-check 通过。
-- evidence: `structure regression`：新增 `test/rule-manager.cjs` 5/5 全绿；danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7、content-ai 12/12、adapters 28/28、ai-screening 25/25 等全量矩阵通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。随 v0.59.0 本地候选交付（未 push/tag/Release）。`blocked`：真实站点验证未执行（实页验证暂停中）。
+- evidence: `structure regression`：新增 `test/rule-manager.cjs` 5/5 全绿；danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7、content-ai 12/12、adapters 28/28、ai-screening 25/25 等全量矩阵通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。已随 v0.59.0 公开发布（tag/Release/raw 已核对）。`blocked`：真实站点验证未执行（实页验证暂停中）。
 - next: 已实现并随 v0.59.0 候选交付；真实站点验证待用户恢复授权后补齐。命中计数为匹配事件次数（不去重），已知限制记录在版本条目。
 - updated: 2026-10-27
 - supersedes: none

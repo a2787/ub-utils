@@ -12,15 +12,15 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.59.0`（本地候选，未发布；最新公开版本为 `0.58.0`）
+- 当前 userscript：`0.59.0`（当前公开版本）
 - 构建：`0.59.0-rule-manager`
-- 当前公开版本/功能提交：`0.58.0` / `b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`
-- 最近验证的源码快照：`b0f0f7aaaa6240f42052d0212fcf0756fcd087f8`
+- 当前公开版本/功能提交：`0.59.0` / `0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
+- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
 - 当前候选源码 SHA-256：`4ca96cbe3a82880483a4f0efb9159d1ee9d36e5151c7166e335a916d21b36bd6`
-- 发布状态：v0.58.0 功能提交已推送到 `origin/master`，`v0.58.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.58.0` / `0.58.0-ai-manual-first`；v0.59.0 候选（OB-RULE-003）完成实现与本地回归，未 push/未 tag/未 Release；未执行平台写入。
-- 当前公开 tag/Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
+- 发布状态：v0.59.0 功能提交 `0e3e89d` 已推送到 `origin/master`，`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0` / `0.59.0-rule-manager`；`v0.58.0`/`v0.57.4` 等历史 tag/Release 保持不变；未执行平台写入。
+- 当前公开 tag/Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
 
-## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0 本地候选未发布）
+## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0，已发布）
 
 - 范围/文件：`omniblock.user.js` 规则引擎扩展（`normalizeDanmakuRule` 增加备注/作用域字段，旧数据默认原平台）；
   `DanmakuRules` 新增 `update`（就地编辑，内容派生 id 并迁移命中计数）、`exportRules`/`importRules`（规则包 JSON，
@@ -36,7 +36,7 @@
   ai-autoload 3/3、ai-batch、ai-bridge、ai-context、ai-fact-integration 4/4、ai-platforms 7/7、ai-prompt-eval 5/5、
   ai-prompt-system 13/13、ai-watchdog、content-coverage 6/6、sync、sync-server；页面/控制台错误 0；
   `node --check`、docs-check、隐私门禁通过。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；v0.59.0 未发布。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
 
 ## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0，已发布）
 

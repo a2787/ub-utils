@@ -2,7 +2,7 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.59.0 - 关键词/正则规则管理升级 - 2026-10-27（本地候选，未发布）
+## v0.59.0 - 关键词/正则规则管理升级 - 2026-10-27（已公开发布）
 
 - 规则可就地编辑（类型/内容/备注/作用域），不再删除重建；每条规则可选备注与"两个平台通用"跨平台作用域（旧规则按原平台继续生效）。
 - 每条规则本机持久命中计数（编辑迁移、可清零、随删除清理）；关键词面板新增规则包导出/导入；设置面板新增任意页面可达的规则管理入口。
@@ -10,6 +10,8 @@
 - `structure regression`：新增 rule-manager 5 项（旧行为上失败）；danmaku-auto 8、quickblock 38、run 20、adapters 28、product 7、content-ai 12、ai-screening 25 等全量矩阵全绿。
 
 详细变更、证据和边界：[v0.59.0 完整条目](docs/changelog/v0.59.0.md)。
+
+GitHub Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
 
 ## v0.58.0 - AI 默认仅手动分析与待审浮条 - 2026-10-27（已公开发布）
 
