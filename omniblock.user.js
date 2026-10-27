@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.61.0
+// @version       0.62.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.61.0-ai-analysis-cache';
+  const RUNTIME_BUILD = '0.62.0-rule-samples';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -458,6 +458,10 @@
   // 不经过 Store.setSetting（否则每次命中都会触发 Store.onChange、清空编译
   // 缓存并唤醒备份/AI 调度）。键为 `平台:规则id`，不进同步、导出或日志。
   const RULE_HITS_STORAGE_KEY = 'omniblock:rule-hits:v1';
+  // 已屏蔽内容样本库（OB-RULE-004）同样独立于 Store：样本正文只存在于这个
+  // 独立 GM 键里，绝不进入 Store 快照、账户同步、备份、名单导出或事件日志；
+  // 任何导出/同步/诊断路径都不得读取或引用该键。
+  const RULE_SAMPLES_STORAGE_KEY = 'omniblock:rule-samples:v1';
   const DANMAKU_EXEMPTION_SETTING_KEYS = {
     bili: 'biliDanmakuExemptions',
     douyin: 'douyinDanmakuExemptions',
@@ -2907,6 +2911,121 @@
     };
   })();
 
+  // ====================================================================
+  // 已屏蔽内容样本库（OB-RULE-004）：用户确认拉黑时把该条内容文本（截断
+  // 240 字）写入本机样本库，作为「样本转关键词 / AI 归纳提炼规则」的原料。
+  // 隐私与语义边界：
+  // - 只在用户明确确认的本地拉黑提交点记录（确认气泡/批量确认/作品确认/
+  //   AI 审核确认/弹幕确认）；关键词自动规则写入、后台 UID 增强等没有
+  //   逐条人工确认的路径一律不记录。
+  // - 独立 GM 键 RULE_SAMPLES_STORAGE_KEY，仅本机；不进 Store 快照、账户
+  //   同步、备份、名单导出或事件日志；AI 归纳请求只携带样本正文本身。
+  // - 每平台 LRU 上限 200 条：重复文本移到队首并刷新时间，超限淘汰最旧。
+  // ====================================================================
+  const RuleSamples = (function () {
+    const PLATFORMS = new Set(['bili', 'douyin']);
+    const SAMPLE_MAX_CHARS = 240;
+    const PLATFORM_SAMPLE_LIMIT = 200;
+    const SAMPLE_ID_PATTERN = /^s_[A-Za-z0-9_-]+$/;
+    let cache = null;
+    function genId() {
+      return 's_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+    function normalizeText(value) {
+      return String(value == null ? '' : value)
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, SAMPLE_MAX_CHARS);
+    }
+    function load() {
+      if (cache) return cache;
+      cache = { version: 1, samples: { bili: [], douyin: [] } };
+      try {
+        const raw = typeof GM_getValue === 'function' ? GM_getValue(RULE_SAMPLES_STORAGE_KEY, '') : '';
+        const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+        if (parsed && typeof parsed === 'object') {
+          for (const platform of PLATFORMS) {
+            const incoming = parsed.samples && Array.isArray(parsed.samples[platform])
+              ? parsed.samples[platform] : [];
+            const seen = new Set();
+            for (const item of incoming) {
+              if (cache.samples[platform].length >= PLATFORM_SAMPLE_LIMIT) break;
+              if (!item || typeof item !== 'object') continue;
+              const text = normalizeText(item.text);
+              if (!text || seen.has(text)) continue;
+              seen.add(text);
+              cache.samples[platform].push({
+                id: SAMPLE_ID_PATTERN.test(String(item.id || '')) ? String(item.id) : genId(),
+                text,
+                at: Number.isFinite(Number(item.at)) && Number(item.at) > 0 ? Math.round(Number(item.at)) : Date.now(),
+              });
+            }
+          }
+        }
+      } catch (e) { cache = { version: 1, samples: { bili: [], douyin: [] } }; }
+      return cache;
+    }
+    function persist() {
+      try {
+        if (typeof GM_setValue === 'function') GM_setValue(RULE_SAMPLES_STORAGE_KEY, JSON.stringify(cache));
+      } catch (e) {}
+    }
+    // 采样绝不抛错、绝不影响拉黑：任何异常都吞掉并返回 null。
+    function record(platform, rawText) {
+      try {
+        if (!PLATFORMS.has(platform)) return null;
+        const text = normalizeText(rawText);
+        if (!text) return null;
+        const store = load();
+        const list = store.samples[platform];
+        const existingIndex = list.findIndex((item) => item.text === text);
+        let entry;
+        if (existingIndex >= 0) entry = list.splice(existingIndex, 1)[0];
+        else entry = { id: genId(), text, at: Date.now() };
+        entry.at = Date.now();
+        list.unshift(entry);
+        if (list.length > PLATFORM_SAMPLE_LIMIT) list.length = PLATFORM_SAMPLE_LIMIT;
+        persist();
+        return entry;
+      } catch (e) { return null; }
+    }
+    function list(platform) {
+      if (!PLATFORMS.has(platform)) return [];
+      return load().samples[platform].slice();
+    }
+    function remove(platform, id) {
+      if (!PLATFORMS.has(platform)) return false;
+      const store = load();
+      const list = store.samples[platform];
+      const next = list.filter((item) => item.id !== id);
+      if (next.length === list.length) return false;
+      store.samples[platform] = next;
+      persist();
+      return true;
+    }
+    function clear(platform) {
+      if (!PLATFORMS.has(platform)) return false;
+      load();
+      cache.samples[platform] = [];
+      persist();
+      return true;
+    }
+    // 仅供诊断/测试读取完整样本；任何同步/导出/备份路径都不得调用它。
+    function exportAll() {
+      const store = load();
+      return {
+        format: 'omniblock.rule-samples',
+        version: 1,
+        samples: {
+          bili: store.samples.bili.map((item) => ({ ...item })),
+          douyin: store.samples.douyin.map((item) => ({ ...item })),
+        },
+      };
+    }
+    return { record, list, remove, clear, exportAll, maxPerPlatform: PLATFORM_SAMPLE_LIMIT, maxChars: SAMPLE_MAX_CHARS };
+  })();
+
   // 自动规则例外是独立于屏蔽名单的本地 allowlist：恢复一个误命中的发送者时，
   // 规则仍可继续处理其他人，但不会在下一轮扫描中把这个身份重新写回名单。
   // 例外只接受当前平台的规范化身份键，不接受文案或不可逆的猜测身份。
@@ -3733,6 +3852,31 @@
     .ob-auto-rule-editing select { max-width: 130px; }
     .ob-auto-rule-editing button { border: 1px solid #c9cbd2; border-radius: 5px; padding: 2px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; }
     .ob-auto-rule-editing .ob-auto-rule-save { background: #f2f6ff; color: #3e4d94; border-color: #b9c3f2; }
+    /* 已屏蔽内容样本（OB-RULE-004）：可折叠样本区与 AI 归纳候选列表。 */
+    #ob-panel .ob-rule-samples, #ob-content-manager .ob-rule-samples, #ob-keyword-manager .ob-rule-samples { margin-top: 10px; padding-top: 8px; border-top: 1px solid #eee; }
+    #ob-panel .ob-rule-samples > summary, #ob-content-manager .ob-rule-samples > summary, #ob-keyword-manager .ob-rule-samples > summary { cursor: pointer; color: #555; font-size: 12px; font-weight: 600; user-select: none; }
+    #ob-panel .ob-rule-sample-note, #ob-content-manager .ob-rule-sample-note, #ob-keyword-manager .ob-rule-sample-note { margin: 6px 0; color: #777; font-size: 11px; line-height: 1.5; }
+    #ob-panel .ob-rule-sample-tools, #ob-content-manager .ob-rule-sample-tools, #ob-keyword-manager .ob-rule-sample-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    #ob-panel .ob-rule-sample-tools button, #ob-content-manager .ob-rule-sample-tools button, #ob-keyword-manager .ob-rule-sample-tools button { border: 1px solid #c9cbd2; border-radius: 5px; padding: 3px 8px; background: #fff; color: #555; cursor: pointer; font-size: 11px; min-height: 26px; }
+    #ob-panel .ob-rule-sample-tools button:hover:not(:disabled), #ob-content-manager .ob-rule-sample-tools button:hover:not(:disabled), #ob-keyword-manager .ob-rule-sample-tools button:hover:not(:disabled) { background: #f2f3fa; }
+    #ob-panel .ob-rule-sample-tools button:disabled, #ob-content-manager .ob-rule-sample-tools button:disabled, #ob-keyword-manager .ob-rule-sample-tools button:disabled { opacity: .5; cursor: not-allowed; }
+    #ob-panel .ob-rule-sample-list, #ob-content-manager .ob-rule-sample-list, #ob-keyword-manager .ob-rule-sample-list { display: grid; gap: 4px; }
+    #ob-panel .ob-rule-sample, #ob-content-manager .ob-rule-sample, #ob-keyword-manager .ob-rule-sample { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; background: #f8f8f9; border-radius: 5px; }
+    #ob-panel .ob-rule-sample input[type="checkbox"], #ob-content-manager .ob-rule-sample input[type="checkbox"], #ob-keyword-manager .ob-rule-sample input[type="checkbox"] { flex: 0 0 auto; }
+    #ob-panel .ob-rule-sample-text, #ob-content-manager .ob-rule-sample-text, #ob-keyword-manager .ob-rule-sample-text { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #333; font-size: 11px; }
+    #ob-panel .ob-rule-sample-time, #ob-content-manager .ob-rule-sample-time, #ob-keyword-manager .ob-rule-sample-time { flex: 0 0 auto; color: #999; font-size: 10px; white-space: nowrap; }
+    #ob-panel .ob-rule-sample-convert-one, #ob-content-manager .ob-rule-sample-convert-one, #ob-keyword-manager .ob-rule-sample-convert-one { flex: 0 0 auto; border: 1px solid #c9cbd2; border-radius: 5px; padding: 2px 8px; background: #fff; color: #3e4d94; cursor: pointer; font-size: 11px; white-space: nowrap; }
+    #ob-panel .ob-rule-sample-empty, #ob-content-manager .ob-rule-sample-empty, #ob-keyword-manager .ob-rule-sample-empty { padding: 4px 0; color: #999; font-size: 11px; }
+    #ob-panel .ob-rule-sample-candidate-box, #ob-content-manager .ob-rule-sample-candidate-box, #ob-keyword-manager .ob-rule-sample-candidate-box { margin-top: 8px; padding: 8px 9px; border: 1px solid #e5e7ef; border-radius: 8px; background: #fbfbfd; }
+    #ob-panel .ob-rule-sample-candidate-title, #ob-content-manager .ob-rule-sample-candidate-title, #ob-keyword-manager .ob-rule-sample-candidate-title { margin-bottom: 6px; color: #444; font-size: 12px; font-weight: 600; }
+    #ob-panel .ob-rule-sample-candidate-list, #ob-content-manager .ob-rule-sample-candidate-list, #ob-keyword-manager .ob-rule-sample-candidate-list { display: grid; gap: 4px; }
+    #ob-panel .ob-rule-sample-candidate, #ob-content-manager .ob-rule-sample-candidate, #ob-keyword-manager .ob-rule-sample-candidate { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; background: #f6f7fb; border-radius: 5px; }
+    #ob-panel .ob-rule-sample-candidate-kind, #ob-content-manager .ob-rule-sample-candidate-kind, #ob-keyword-manager .ob-rule-sample-candidate-kind { flex: 0 0 auto; color: #777; font-size: 11px; }
+    #ob-panel .ob-rule-sample-candidate-pattern, #ob-content-manager .ob-rule-sample-candidate-pattern, #ob-keyword-manager .ob-rule-sample-candidate-pattern { min-width: 0; flex: 0 1 auto; overflow-wrap: anywhere; color: #333; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+    #ob-panel .ob-rule-sample-candidate-reason, #ob-content-manager .ob-rule-sample-candidate-reason, #ob-keyword-manager .ob-rule-sample-candidate-reason { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; color: #777; font-size: 11px; }
+    #ob-panel .ob-rule-sample-candidate-tools, #ob-content-manager .ob-rule-sample-candidate-tools, #ob-keyword-manager .ob-rule-sample-candidate-tools { margin-top: 6px; }
+    #ob-panel .ob-rule-sample-candidate-tools button, #ob-content-manager .ob-rule-sample-candidate-tools button, #ob-keyword-manager .ob-rule-sample-candidate-tools button { border: 0; border-radius: 6px; padding: 5px 10px; background: #5b6db1; color: #fff; cursor: pointer; font-size: 11px; min-height: 28px; }
+    #ob-panel .ob-rule-sample-status, #ob-content-manager .ob-rule-sample-status, #ob-keyword-manager .ob-rule-sample-status { margin-top: 6px; color: #999; font-size: 11px; line-height: 1.5; }
     #ob-keyword-manager { position: fixed; inset: 0; z-index: 2147483645; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15,18,30,.45); }
     #ob-keyword-manager .ob-keyword-box { position: relative; width: min(680px, 94vw); max-height: 86vh; overflow: auto; margin: 0; }
     .ob-keyword-entry { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
@@ -5106,6 +5250,12 @@
       reasonOptions,
       askReason,
       recordManualBlockFromAnchor,
+      // 已屏蔽内容样本（OB-RULE-004）用的窄出口：只回传从入口锚点提取到的
+      // 正文文本，不暴露反馈账本内部状态。
+      textFromAnchor: (anchor) => {
+        const record = recordForAnchor(anchor);
+        return record ? record.text : '';
+      },
       render,
       exportJSON,
       importJSON,
@@ -7796,6 +7946,40 @@
 
   // actionType（OB-UI-001）：本次确认对应的操作类别（quick/bulk/danmaku），
   // 用于“最近本地屏蔽操作”列表；默认 quick（平台原生菜单旁的快捷本地拉黑）。
+  // 已屏蔽内容样本（OB-RULE-004）：从确认提交点的记录里尽力提取正文文本。
+  // 优先用记录自带的 text；弹幕类记录常把代表正文写进 note 前缀，只剥离当前
+  // 源码里已确认的几种前缀形态，不猜其余格式。拿不到可靠正文时返回空串跳过，
+  // 绝不把昵称、身份键或整页文本伪装成样本。
+  function sampleTextFromRecord(info) {
+    if (!info || typeof info !== 'object') return '';
+    const direct = typeof info.text === 'string' ? info.text : '';
+    if (direct.trim()) return direct;
+    const note = typeof info.note === 'string' ? info.note : '';
+    if (!note) return '';
+    const prefixed = note.match(/^(?:抖音评论|抖音弹幕|微博评论|微博帖子|知乎评论|B站评论)：([\s\S]+)$/);
+    if (prefixed) return prefixed[1];
+    const representative = note.match(/代表弹幕：([\s\S]+)$/);
+    return representative ? representative[1] : '';
+  }
+
+  // 批量提交点的样本记账：每次确认动作最多记录 20 条正文。整个采样过程
+  // 包在 try/catch 里，任何失败只记一条无正文的错误事件，绝不影响拉黑本身。
+  function recordRuleSamples(platform, records, limit = 20) {
+    try {
+      if (platform !== 'bili' && platform !== 'douyin') return;
+      if (!Array.isArray(records) || !records.length) return;
+      let recorded = 0;
+      for (const info of records) {
+        if (recorded >= limit) break;
+        const text = sampleTextFromRecord(info);
+        if (!text) continue;
+        if (RuleSamples.record(platform, text)) recorded++;
+      }
+    } catch (e) {
+      try { EventLog.recordError('action.samples.record', e); } catch (e2) {}
+    }
+  }
+
   function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel, actionType) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { EventLog.record('ui.confirm.rejected', { reasonCode: 'no-reliable-identity' }, { immediate: true }); showToast('无法识别可靠身份'); return; }
@@ -7861,6 +8045,16 @@
             addedKeys: committedKeys,
           });
         } catch (e) { EventLog.recordError('action.recent.record', e); }
+        // 已屏蔽内容样本（OB-RULE-004）：快捷确认按入口锚点回溯正文，只对
+        // B站/抖音记录；批量/作品提交点的样本由各自提交点按列表记录，避免
+        // 把整页或不确定内容伪装成样本。采样失败绝不影响拉黑结果。
+        try {
+          const samplePlatform = RecentActions.platformForKeys(committedKeys);
+          const sampleText = PromptSystem.textFromAnchor(anchorEl);
+          if (sampleText && (samplePlatform === 'bili' || samplePlatform === 'douyin')) {
+            RuleSamples.record(samplePlatform, sampleText);
+          }
+        } catch (e) { EventLog.recordError('action.samples.record', e); }
       }
       showToast(persisted
         ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
@@ -12820,6 +13014,9 @@
       for (const result of results) {
         for (const key of result.addedKeys) if (!addedKeys.includes(key)) addedKeys.push(key);
       }
+      // 已屏蔽内容样本（OB-RULE-004）：批量确认后按列表正文记录样本（最多
+      // 20 条，取列表最前的确认项）；平台按写入键推断，混平台时安全跳过。
+      recordRuleSamples(RecentActions.platformForKeys(addedKeys.length ? addedKeys : keys), list);
       return {
         result: {
           added: addedKeys.length,
@@ -13055,6 +13252,9 @@
             });
           } catch (error) { EventLog.recordError('action.recent.record', error); }
         }
+        // 已屏蔽内容样本（OB-RULE-004）：作品确认后按已识别用户的正文记录
+        // 样本（最多 20 条）；记录失败只记事件，不影响屏蔽结果。
+        recordRuleSamples(RecentActions.platformForKeys(addedKeys.length ? addedKeys : allKeys), result.users);
         showToast((persisted ? '已屏蔽当前作品的 ' : '已在本页屏蔽但未确认落盘：') + result.users.length + ' 位已识别用户'
           + (result.partial ? '（结果可能不完整）' : '') + (persisted ? '' : '，请重试或导出备份'),
           addedKeys.length ? () => {
@@ -16662,6 +16862,8 @@
           });
         } catch (e) { EventLog.recordError('action.recent.record', e); }
       }
+      // 已屏蔽内容样本（OB-RULE-004）：唯一候选确认有明确弹幕正文，直接记录。
+      try { RuleSamples.record('bili', content); } catch (e) { EventLog.recordError('action.samples.record', e); }
       expandedDmUidGroups.delete(content);
       refreshDmTool();
       scanDmPanels();
@@ -19026,6 +19228,13 @@
           });
         } catch (error) { EventLog.recordError('action.recent.record', error); }
       }
+      // 已屏蔽内容样本（OB-RULE-004）：AI 审核确认的候选自带正文文本，按
+      // 当前平台记录（最多 20 条）；这仍是用户逐条勾选确认的本地动作。
+      recordRuleSamples(
+        currentAdapter && currentAdapter.id === 'bilibili' ? 'bili'
+          : currentAdapter && currentAdapter.id === 'douyin' ? 'douyin' : '',
+        selected.map((candidate) => ({ text: candidate && candidate.record && candidate.record.text })),
+      );
       const undo = () => {
         const removedScoped = ScopedBlocks.remove(localTokens);
         const removedGlobal = undoIdentityKeys(addedKeys);
@@ -19788,9 +19997,32 @@
       }
     }
 
+    // 已屏蔽内容样本的 AI 归纳（OB-RULE-004）走独立的一次性直连请求：与
+    // AI 分析共用 requestJSON 直连通道和瞬态重试语义（429/5xx/超时/网络
+    // 抖动重试一次，取消与 4xx 不重试），但不进入分析管线——不触碰分析
+    // 状态、候选、缓存或 generation，只按真实发出的请求计入本机用量。
+    async function requestDirectJSON(url, payload, timeoutMs, label) {
+      const requestLabel = String(label || 'AI 归纳');
+      const attempt = async () => {
+        recordAIUsage(0, payloadChars(payload));
+        const request = requestJSON(url, payload, timeoutMs, requestLabel, 'direct');
+        return await request.promise;
+      };
+      try {
+        return await attempt();
+      } catch (error) {
+        const message = String(error && error.message || error);
+        if (/HTTP 429|HTTP 5\d\d|请求超时|服务连接失败|服务请求失败/.test(message)) {
+          await new Promise((resolve) => setTimeout(resolve, AI_DIRECT_RETRY_DELAY_MS));
+          return await attempt();
+        }
+        throw error;
+      }
+    }
+
     return {
       start, status, onChange, addRule, removeRule, setRuleEnabled, analyzePage, loadAndAnalyzePage, cancel,
-      testConnection,
+      testConnection, requestDirectJSON,
       openAutoReview: () => openAutoReview(),
       pendingCount: () => autoCandidates.size,
       usage: () => usageSnapshot(),
@@ -19896,6 +20128,19 @@
     return PLATFORM_LABELS[group] || group;
   }
 
+  // AI 归纳候选（OB-RULE-004）只缓存在内存里，绝不持久化：每次归纳覆盖
+  // 同平台的上一批候选；确认写入走 DanmakuRules.add 的人工勾选路径。
+  const ruleSampleCandidateCache = { bili: [], douyin: [] };
+  // 归纳请求的固定系统提示词：只输出受约束的 JSON，明确要求可泛化模式、
+  // 数量/长度上限和安全的 JavaScript 正则；样本正文只作为 user 消息发送。
+  const AI_SAMPLE_MINING_SYSTEM_PROMPT = [
+    '你是评论/弹幕过滤规则助手。用户会提供一个 JSON 数组，内容是该用户已经手动拉黑的内容文本样本。',
+    '请从中归纳出可泛化的屏蔽模式：概括共性，而不是照抄任何一条样本原文的整句。',
+    '只返回一个 JSON 对象，不要输出任何其他解释：{"keywords":[{"pattern":"...","reason":"..."}],"regexes":[{"pattern":"...","reason":"..."}]}。',
+    '约束：keywords 最多 10 条，regexes 最多 6 条；每条 pattern 不超过 80 个字符；reason 用一句话说明该模式为什么值得屏蔽。',
+    '关键词必须是会出现在恶意评论/弹幕中的短语或词；正则必须是 JavaScript 兼容、没有灾难性回溯风险的安全表达式，只用于匹配明确的垃圾内容模式；拿不准时宁缺毋滥。',
+  ].join('\n');
+
   function mountKeywordControls(root, adapter) {
     const platform = adapter && (adapter.id === 'bilibili' ? 'bili' : (adapter.id === 'douyin' ? 'douyin' : ''));
     if (!root || !platform) return () => {};
@@ -19912,6 +20157,23 @@
           <div class="ob-auto-exemption-title">自动规则例外（恢复的发送者）</div>
           <div class="ob-auto-exemption-list"></div>
           <div class="ob-auto-status" aria-live="polite"></div>
+          <details class="ob-rule-samples" data-ob-rule-samples="${platform}">
+            <summary>已屏蔽内容样本（<span class="ob-rule-sample-count">0</span>）</summary>
+            <p class="ob-rule-sample-note">样本来自你确认过的本地拉黑内容（每条截断 240 字，按平台最多 200 条，仅本机保存，不进同步/导出/日志）。关键词自动规则写入与后台 UID 增强不产生样本。勾选样本或 AI 候选后必须再点确认按钮才会写入规则表；转换不会删除样本。</p>
+            <div class="ob-rule-sample-tools">
+              <button class="ob-rule-sample-convert" type="button">把选中转为关键词</button>
+              <button class="ob-rule-sample-refresh" type="button">刷新</button>
+              <button class="ob-rule-sample-clear" type="button">清空样本</button>
+              <button class="ob-rule-sample-ai" type="button">AI 归纳提炼规则</button>
+            </div>
+            <div class="ob-rule-sample-list"></div>
+            <div class="ob-rule-sample-candidate-box" hidden>
+              <div class="ob-rule-sample-candidate-title">AI 归纳候选（勾选后才写入规则表，正则默认不勾选）</div>
+              <div class="ob-rule-sample-candidate-list"></div>
+              <div class="ob-rule-sample-candidate-tools"><button class="ob-rule-sample-candidate-add" type="button">把选中加入规则</button></div>
+            </div>
+            <div class="ob-rule-sample-status" aria-live="polite"></div>
+          </details>
         </div>
       </div>`;
     const section = root.querySelector('.ob-auto-platform');
@@ -20035,6 +20297,7 @@
       } catch (e) {}
       if (exemptions.length) message += ' 当前有 ' + exemptions.length + ' 条自动规则例外。';
       status.textContent = message;
+      refreshSamples();
     };
     const kind = section && section.querySelector('.ob-auto-kind');
     const pattern = section && section.querySelector('.ob-auto-pattern');
@@ -20089,6 +20352,244 @@
       EventLog.record('ui.content-rule.clear-hits', { platform }, { immediate: true });
       showToast(label + '命中计数已清零');
       refresh();
+    };
+
+    // ---- 已屏蔽内容样本（OB-RULE-004）----
+    // 样本只来自用户确认过的本地拉黑；转规则/AI 归纳候选都必须经人工勾选
+    // 并点击确认按钮才写入 DanmakuRules，绝不自动写入、绝不执行平台写入。
+    const sampleSection = section.querySelector('.ob-rule-samples');
+    const sampleCount = section.querySelector('.ob-rule-sample-count');
+    const sampleList = section.querySelector('.ob-rule-sample-list');
+    const sampleStatus = section.querySelector('.ob-rule-sample-status');
+    const candidateBox = section.querySelector('.ob-rule-sample-candidate-box');
+    const candidateList = section.querySelector('.ob-rule-sample-candidate-list');
+    const convertButton = section.querySelector('.ob-rule-sample-convert');
+    const sampleRefreshButton = section.querySelector('.ob-rule-sample-refresh');
+    const sampleClearButton = section.querySelector('.ob-rule-sample-clear');
+    const sampleAiButton = section.querySelector('.ob-rule-sample-ai');
+    const candidateAddButton = section.querySelector('.ob-rule-sample-candidate-add');
+    const sampleRelativeTime = (at) => {
+      const diff = Date.now() - Number(at);
+      if (!(diff >= 0) || diff < 60000) return '刚刚';
+      if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+      return Math.floor(diff / 86400000) + ' 天前';
+    };
+    // 与手动分析的入口检查保持一致：AI 开关 + 有效 HTTPS provider + 本机 Key。
+    const sampleMiningGate = () => {
+      if (Store.getSetting('aiEnabled') !== true) {
+        return { ok: false, reason: '未启用 AI 智能屏蔽：请先在 AI 面板开启后使用' };
+      }
+      const transport = aiTransportConfig();
+      if (!transport.url) return { ok: false, reason: '尚未配置有效的 AI API 地址（HTTPS）' };
+      if (!isFormalExtensionRuntime() && readAIDirectKey().length < 8) {
+        return { ok: false, reason: '当前设备尚未设置 AI API Key' };
+      }
+      return { ok: true, transport };
+    };
+    const syncAiButtonState = () => {
+      if (!sampleAiButton) return;
+      const gate = sampleMiningGate();
+      sampleAiButton.disabled = !gate.ok;
+      sampleAiButton.title = gate.ok
+        ? '把该平台最近 100 条样本发给已配置的 AI 归纳为候选关键词/正则；结果只进入下方候选列表，勾选确认后才写入'
+        : '当前不可用：' + gate.reason;
+    };
+    const convertSampleText = (text, expectLabel) => {
+      const result = DanmakuRules.add(platform, 'keyword', text);
+      EventLog.record('ui.content-rule.sample-convert', { platform, added: result.ok ? 1 : 0, skipped: result.ok ? 0 : 1 }, { immediate: true });
+      showToast(result.ok ? expectLabel : ('未添加：' + result.error));
+      if (result.ok) { refresh(); refreshScan(); }
+      return result;
+    };
+    const renderSampleCandidates = () => {
+      if (!candidateBox || !candidateList) return;
+      const candidates = Array.isArray(ruleSampleCandidateCache[platform]) ? ruleSampleCandidateCache[platform] : [];
+      candidateList.textContent = '';
+      if (!candidates.length) { candidateBox.hidden = true; return; }
+      candidateBox.hidden = false;
+      for (const candidate of candidates) {
+        const row = document.createElement('div');
+        row.className = 'ob-rule-sample-candidate';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = candidate.kind === 'keyword';
+        checkbox.dataset.candidateKind = candidate.kind;
+        checkbox.dataset.candidatePattern = candidate.pattern;
+        checkbox.title = candidate.kind === 'regex' ? '正则默认不勾选；确认安全后再手动勾选' : '默认勾选；取消勾选则不加入';
+        const kind = document.createElement('span');
+        kind.className = 'ob-rule-sample-candidate-kind';
+        kind.textContent = candidate.kind === 'regex' ? '正则' : '关键词';
+        const pattern = document.createElement('span');
+        pattern.className = 'ob-rule-sample-candidate-pattern';
+        pattern.textContent = candidate.pattern;
+        pattern.title = candidate.pattern;
+        const reason = document.createElement('span');
+        reason.className = 'ob-rule-sample-candidate-reason';
+        reason.textContent = candidate.reason;
+        reason.title = candidate.reason;
+        row.append(checkbox, kind, pattern, reason);
+        candidateList.appendChild(row);
+      }
+    };
+    const refreshSamples = () => {
+      if (!sampleSection || !sampleList || !sampleCount) return;
+      const samples = RuleSamples.list(platform);
+      sampleCount.textContent = String(samples.length);
+      syncAiButtonState();
+      sampleList.textContent = '';
+      if (!samples.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ob-rule-sample-empty';
+        empty.textContent = '暂无样本；在评论/弹幕上确认拉黑后，对应正文会自动进入这里';
+        sampleList.appendChild(empty);
+      }
+      for (const sample of samples.slice(0, 50)) {
+        const row = document.createElement('div');
+        row.className = 'ob-rule-sample';
+        row.dataset.sampleText = sample.text;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.setAttribute('aria-label', '选择样本');
+        const text = document.createElement('span');
+        text.className = 'ob-rule-sample-text';
+        text.textContent = sample.text.length > 80 ? sample.text.slice(0, 80) + '…' : sample.text;
+        text.title = sample.text;
+        const time = document.createElement('span');
+        time.className = 'ob-rule-sample-time';
+        time.textContent = sampleRelativeTime(sample.at);
+        time.title = new Date(sample.at).toLocaleString();
+        const convert = document.createElement('button');
+        convert.type = 'button';
+        convert.className = 'ob-rule-sample-convert-one';
+        convert.textContent = '转为关键词';
+        convert.title = '把这条样本原文作为关键词规则加入（样本保留不删除）';
+        convert.addEventListener('click', () => convertSampleText(sample.text, '已新增 1 条规则'));
+        row.append(checkbox, text, time, convert);
+        sampleList.appendChild(row);
+      }
+      renderSampleCandidates();
+    };
+    if (convertButton) convertButton.onclick = () => {
+      if (!sampleList) return;
+      const checked = Array.from(sampleList.querySelectorAll('.ob-rule-sample'))
+        .filter((row) => row.querySelector('input[type="checkbox"]').checked)
+        .map((row) => row.dataset.sampleText || '');
+      if (!checked.length) { showToast('请先勾选要转换的样本'); return; }
+      let added = 0;
+      let skipped = 0;
+      for (const text of checked) {
+        const result = DanmakuRules.add(platform, 'keyword', text);
+        if (result.ok) added++; else skipped++;
+      }
+      EventLog.record('ui.content-rule.sample-convert', { platform, added, skipped }, { immediate: true });
+      showToast('已新增 ' + added + ' 条规则；' + skipped + ' 条重复/无效被跳过');
+      if (added) { refresh(); refreshScan(); }
+    };
+    if (sampleRefreshButton) sampleRefreshButton.onclick = () => {
+      refreshSamples();
+      if (sampleStatus) sampleStatus.textContent = '样本已刷新';
+    };
+    if (sampleClearButton) sampleClearButton.onclick = () => {
+      RuleSamples.clear(platform);
+      EventLog.record('ui.content-rule.sample-clear', { platform }, { immediate: true });
+      if (sampleStatus) sampleStatus.textContent = label + '样本已清空';
+      refreshSamples();
+    };
+    if (sampleAiButton) sampleAiButton.onclick = async () => {
+      if (!sampleStatus) return;
+      const gate = sampleMiningGate();
+      if (!gate.ok) { showToast(gate.reason); return; }
+      const samples = RuleSamples.list(platform).slice(0, 100);
+      if (!samples.length) { showToast('暂无样本可归纳'); return; }
+      sampleAiButton.disabled = true;
+      sampleStatus.textContent = '正在归纳 ' + samples.length + ' 条样本（单次请求）…';
+      try {
+        const payload = {
+          model: gate.transport.model || 'omni-default',
+          temperature: 0,
+          messages: [
+            { role: 'system', content: AI_SAMPLE_MINING_SYSTEM_PROMPT },
+            { role: 'user', content: JSON.stringify(samples.map((sample) => sample.text)) },
+          ],
+        };
+        const response = await AI.requestDirectJSON(gate.transport.url, payload, 60000, 'AI 归纳');
+        const content = response && Array.isArray(response.choices) && response.choices[0]
+          && response.choices[0].message ? response.choices[0].message.content : '';
+        const raw = String(content || '');
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+        const body = fenced ? fenced[1] : raw;
+        const start = body.indexOf('{');
+        const end = body.lastIndexOf('}');
+        if (start < 0 || end <= start) throw new Error('AI 返回中没有 JSON 对象');
+        const parsed = JSON.parse(body.slice(start, end + 1));
+        if (!parsed || typeof parsed !== 'object') throw new Error('AI 返回的 JSON 不是对象');
+        // 候选只做形状校验（非空、长度上限、正则可编译）；重复/超限/危险
+        // 正则的实际拒绝统一发生在「把选中加入规则」调用 DanmakuRules.add 时，
+        // 让用户始终能看到模型返回了什么、又被拒绝了什么。
+        const seen = new Set();
+        const candidates = [];
+        const pushCandidate = (kind, rawPattern, rawReason, cap) => {
+          if (candidates.filter((item) => item.kind === kind).length >= cap) return;
+          const pattern = String(rawPattern == null ? '' : rawPattern).trim();
+          if (!pattern || pattern.length > DANMAKU_RULE_MAX_LENGTH) return;
+          if (kind === 'regex') { try { new RegExp(pattern); } catch (e) { return; } }
+          const key = kind + '\x1f' + ruleText(pattern);
+          if (seen.has(key)) return;
+          seen.add(key);
+          candidates.push({
+            kind,
+            pattern: ruleText(pattern),
+            reason: String(rawReason == null ? '' : rawReason).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 160),
+          });
+        };
+        const keywordItems = Array.isArray(parsed.keywords) ? parsed.keywords : [];
+        const regexItems = Array.isArray(parsed.regexes) ? parsed.regexes : [];
+        for (const item of keywordItems.slice(0, 10)) pushCandidate('keyword', item && item.pattern, item && item.reason, 10);
+        for (const item of regexItems.slice(0, 6)) pushCandidate('regex', item && item.pattern, item && item.reason, 6);
+        ruleSampleCandidateCache[platform] = candidates;
+        renderSampleCandidates();
+        EventLog.record('ai.sample-mining.finish', {
+          platform, keywordCount: candidates.filter((item) => item.kind === 'keyword').length,
+          regexCount: candidates.filter((item) => item.kind === 'regex').length,
+          sampleCount: samples.length,
+        }, { immediate: true });
+        sampleStatus.textContent = candidates.length
+          ? '归纳完成：候选 ' + candidates.length + ' 条（关键词默认勾选，正则默认不勾选）；勾选后点「把选中加入规则」才会写入规则表。'
+          : 'AI 没有返回可用候选；未写入任何规则。';
+      } catch (error) {
+        ruleSampleCandidateCache[platform] = [];
+        renderSampleCandidates();
+        const reason = String(error && error.message || error).replace(/\s+/g, ' ').trim().slice(0, 120);
+        EventLog.record('ai.sample-mining.error', { platform, reasonCode: reason.slice(0, 60) }, { immediate: true });
+        showToast('AI 归纳失败：' + (reason || '请求未完成') + '；未写入任何规则');
+        sampleStatus.textContent = '';
+      } finally {
+        syncAiButtonState();
+      }
+    };
+    if (candidateAddButton) candidateAddButton.onclick = () => {
+      if (!candidateList) return;
+      const checked = Array.from(candidateList.querySelectorAll('.ob-rule-sample-candidate'))
+        .filter((row) => row.querySelector('input[type="checkbox"]').checked);
+      if (!checked.length) { showToast('请先勾选要加入的候选'); return; }
+      let added = 0;
+      let skipped = 0;
+      const firstErrors = [];
+      for (const row of checked) {
+        const input = row.querySelector('input[type="checkbox"]');
+        const result = DanmakuRules.add(platform, input.dataset.candidateKind, input.dataset.candidatePattern);
+        if (result.ok) added++;
+        else {
+          skipped++;
+          if (firstErrors.length < 2) firstErrors.push(result.error);
+        }
+      }
+      EventLog.record('ui.content-rule.sample-candidate-add', { platform, added, skipped }, { immediate: true });
+      showToast('已新增 ' + added + ' 条规则；' + skipped + ' 条重复/无效被跳过'
+        + (firstErrors.length ? '（' + firstErrors.join('；') + '）' : ''));
+      if (added) { refresh(); refreshScan(); }
+      else if (sampleStatus) sampleStatus.textContent = '没有候选被写入：' + firstErrors.join('；');
     };
     refresh();
     return () => {};
@@ -21402,6 +21903,7 @@
       ui: { undoToastDurationMs, showOBConfirm },
       danmakuRules: DanmakuRules,
       danmakuExemptions: DanmakuExemptions,
+      ruleSamples: RuleSamples,
       runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
       lifecycle: {
         pageStatus: () => PageLifecycle.status(),
