@@ -1,0 +1,22 @@
+feat(rules): blocked-content sample store, one-click keywords, AI rule mining (v0.62.0)
+
+Every user-confirmed local block now optionally records the content text
+into a local sample store (omniblock:rule-samples:v1, per-platform LRU 200,
+normalized/truncated, local-only, excluded from sync/export/logs). The
+keyword panel gains a collapsible sample section: one-click "convert to
+keyword" (checkbox selection), refresh and clear. A gated "AI 归纳提炼规则"
+button sends up to 100 samples through the same direct provider transport
+with a strict JSON contract and retry semantics, rendering candidates
+(keywords checked, regexes unchecked by default) that are only written via
+DanmakuRules.add after explicit confirmation - never auto-added. Keyword
+auto-rule writes and background UID enrichment deliberately produce no
+samples.
+
+- structure regression: new test/rule-samples.cjs 10/10 (capture/dedupe/
+  LRU, conversion, AI candidate flow incl. risky-regex rejection and
+  duplicate skip, 500-error path with zero writes, request privacy
+  assertions, snapshot isolation); rule-manager 5/5, quickblock 38/38,
+  danmaku-auto 8/8, run 20/20, product 7/7, ai suites green; docs-check
+  passed
+- queued during the 2026-10-27 autonomous run; findings triaged in
+  docs/changelog/v0.58.0.md and .mimosa/security-policy.json

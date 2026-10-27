@@ -1,0 +1,15 @@
+feat(ui): automatic dark theme following the system preference (v0.63.0)
+
+All OmniBlock surfaces (settings panel, content manager, AI review and
+feedback, keyword panel incl. sample section, confirm bubble and modal,
+work-block box, toast, AI pending/background pills, focus outlines) gain a
+@media (prefers-color-scheme: dark) override section built on --ob-dark-*
+tokens with color-scheme: dark for native controls. Light theme rules are
+untouched (purely additive media block); zero JavaScript behavior changes.
+
+- structure regression: new test/dark-mode.cjs 18/18 (browser-level
+ 双向 emulateMedia luminance assertions + 142-rule static coverage);
+  run 20/20, product 7/7, ui-settings 16 assertions green; docs-check
+  passed
+- queued during the 2026-10-27 autonomous run; findings triaged in
+  docs/changelog/v0.58.0.md and .mimosa/security-policy.json
