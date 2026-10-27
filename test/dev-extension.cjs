@@ -1,7 +1,20 @@
 /* 专用开发扩展回归：证明源码不是只在当前标签页一次性注入。
  * 人工合成 B 站/抖音页面，打开三个新文档，验证不同平台/子域都自动加载扩展，
- * chrome.storage 本地桥接能跨页面保存设置和 AI 反馈，loopback AI 窄 JSON 请求可经桥接返回，
- * 页面脚本不能伪造桥接消息；最后在缺少隔离桥的人工页面验证启动会有界降级，不会无限重试。
+ * chrome.storage 本地桥接能跨页面保存设置和 AI 反馈，页面脚本不能伪造桥接消息；
+ * 并验证 AI 直连形态下的开发扩展边界：无设备 Key 时 analyzePage 有界失败、
+ * 零 provider 请求离开页面、设备 Key 无法经桥接存储面写入；
+ * 最后在缺少隔离桥的人工页面验证启动会有界降级，不会无限重试。
+ *
+ * 2026-10-27 降级说明（OB-MAINT-003）：本用例原先验证 loopback AI 网关与事实核查
+ * 往返（写入 aiGatewayUrl/aiGatewayModel 后断言 analyzePage 请求经桥接往返）。
+ * v0.57.1 起 AI 主链路改为直连：设置键为 aiProviderUrl/aiProviderModel，设备 Key
+ * 存 Tampermonkey GM 键 omniblock:ai-direct-config:v1，网关设置键已从源码整体移除，
+ * 旧往返断言结构性失效（每轮必然失败）。在开发扩展内恢复直连往返需要改
+ * build-dev-extension.cjs 的桥接协议：存储白名单加入设备 Key、请求头白名单放行
+ * Authorization、service worker 增加 omniblock-direct-ai 取回处理器——三者都是
+ * 桥接安全面协议变更，超出维护轮非目标，因此把两个往返用例降级为直连拒绝断言
+ * （旧行为上网关请求会真实发出，新断言"零请求离开页面"在旧架构上失败），
+ * 桥接三层的反馈样例/存储键/事实核查/作品语境白名单静态断言全部保留。
  * 运行：node test/dev-extension.cjs
  */
 const { execFileSync } = require('child_process');
@@ -35,7 +48,6 @@ const fixtureUrls = [
 // 让该用例真正覆盖“缺少隔离桥”的 runtime-main 降级路径。
 const fallbackUrl = 'https://example.com/omniblock-bridge-timeout-fixture';
 let aiUrl = '';
-let factUrl = '';
 let aiServer = null;
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>OmniBlock extension fixture</title></head>
 <body><main data-ob-fixture="artificial"><h1>人工合成扩展回归页面</h1><p>不包含真实作品或账号标识。</p></main></body></html>`;
@@ -79,54 +91,36 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   } else {
     report.fail.push('作品语境 context/contextCatalog 未在三层开发扩展桥同步校验');
   }
-  const aiRequests = [];
-  const factRequests = [];
-  const responseFor = (body) => {
-    if (body && body.policyVersion === 'fact-local-allowlist-v1') {
-      factRequests.push(body);
-      return { schemaVersion: 1, policyVersion: 'fact-local-allowlist-v1', items: (body.claims || []).map((claim) => ({
-        id: claim.id, status: 'contradicted', method: 'local_allowlist',
-        sources: [{ sourceId: 'synthetic-source', sourceTier: 'official', title: '人工合成来源',
-          snippet: '人工合成矛盾摘要', publishedAt: '2026-09-10' }],
-      })) };
-    }
-    let input = {};
-    try { input = JSON.parse(body && body.messages && body.messages[1] && body.messages[1].content || '{}'); } catch (error) {}
-    if (input.rules && input.rules.includes('桥接事实核查规则') && input.items && input.items[0]) {
-      return { items: [{
-        id: input.items[0].id, decision: 'block', claimType: 'factual_claim', verificationStatus: 'contradicted',
-        verificationMethod: 'external_source', ruleMatched: false, category: 'synthetic', confidence: 0.8,
-        reasonCodes: ['synthetic-fact'], reason: '人工合成来源与内容共同满足', evidence: '人工合成矛盾摘要',
-      }] };
-    }
-    return { items: [] };
-  };
-  // 扩展 service worker 发起的 fetch 不一定经过 Playwright 的 page/context
-  // route；用一次性本地 HTTP mock 保证桥接回归验证的是“扩展 worker → loopback”
-  // 真实路径，而不是依赖某个浏览器版本的网络拦截实现。
+  // OB-MAINT-003 降级守卫：内嵌源码必须仍是 AI 直连形态（网关设置键 0 处），
+  // 否则本文件的降级说明与直连拒绝断言不再描述当前架构，需要重写该用例。
+  if (!bridgeSources[0].includes('aiGatewayUrl')
+    && bridgeSources[0].includes('aiProviderUrl')
+    && bridgeSources[0].includes('aiProviderModel')
+    && bridgeSources[0].includes("'omniblock:ai-direct-config:v1'")) {
+    report.pass.push('内嵌源码为 AI 直连形态：loopback 网关设置键已移除，直连设置与设备 GM 键存在');
+  } else {
+    report.fail.push('内嵌源码 AI 传输形态与预期不符（应无 aiGatewayUrl，含直连设置与设备 GM 键）');
+  }
+  // loopback mock provider：直连形态下预期零请求到达；计数同时覆盖
+  // 页面级（context.route）与 service worker fetch（本地 HTTP）两条可能路径。
+  let providerRequests = 0;
   aiServer = http.createServer((request, response) => {
     const chunks = [];
     request.on('data', (chunk) => chunks.push(chunk));
     request.on('end', () => {
-      let body = {};
-      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (error) {}
-      const input = body && body.messages ? (() => { try { return JSON.parse(body.messages[1] && body.messages[1].content || '{}'); } catch (error) { return {}; } })() : {};
-      if (!(body && body.policyVersion === 'fact-local-allowlist-v1')) aiRequests.push({ body, input });
-      const payload = responseFor(body);
+      providerRequests++;
       response.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
         'access-control-allow-origin': '*',
       });
-      response.end(JSON.stringify(body && body.policyVersion === 'fact-local-allowlist-v1'
-        ? payload : { choices: [{ message: { content: JSON.stringify(payload) } }] }));
+      response.end('{}');
     });
   });
   await new Promise((resolve, reject) => {
     aiServer.once('error', reject);
     aiServer.listen(0, '127.0.0.1', () => {
-    const address = aiServer.address();
+      const address = aiServer.address();
       aiUrl = 'http://127.0.0.1:' + address.port + '/v1/chat/completions';
-      factUrl = 'http://127.0.0.1:' + address.port + '/v1/fact-check';
       resolve();
     });
   });
@@ -146,15 +140,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     await context.route('**/*', (route) => {
       const url = route.request().url();
-      if (url === aiUrl || url === factUrl) {
-        let body = {};
-        try { body = JSON.parse(route.request().postData() || '{}'); } catch (error) {}
-        const input = body && body.messages ? (() => { try { return JSON.parse(body.messages[1] && body.messages[1].content || '{}'); } catch (error) { return {}; } })() : {};
-        if (!(body && body.policyVersion === 'fact-local-allowlist-v1')) aiRequests.push({ body, input });
-        const payload = responseFor(body);
-        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(
-          body && body.policyVersion === 'fact-local-allowlist-v1'
-            ? payload : { choices: [{ message: { content: JSON.stringify(payload) } }] }) });
+      if (url === aiUrl) {
+        providerRequests++;
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: '{}' });
       }
       if (fixtureUrls.some((fixtureUrl) => url.startsWith(fixtureUrl)) || url.startsWith(fallbackUrl)) {
         return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fixture });
@@ -213,22 +201,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.fail.push('page-1 运行时不完整：' + JSON.stringify(firstState));
     }
 
+    // AI 直连形态下的开发扩展边界（OB-MAINT-003 重写）：配置合法 loopback
+    // provider 后，analyzePage 必须因设备 Key 缺失有界失败，任何 provider 请求
+    // 都不得离开页面；setApiKey 经桥接 GM shim 的存储白名单必须被丢弃。
     await first.evaluate((endpoint) => {
-      const host = document.createElement('bili-comments');
-      const hostRoot = host.attachShadow({ mode: 'open' });
-      const renderer = document.createElement('bili-comment-renderer');
-      renderer.__data = { mid: '123', member: { mid: '123', uname: '人工合成 AI 用户' } };
-      const root = renderer.attachShadow({ mode: 'open' });
-      const link = document.createElement('a');
-      link.className = 'user-name'; link.href = 'https://space.bilibili.com/123'; link.textContent = '人工合成 AI 用户';
-      const text = document.createElement('span'); text.className = 'text'; text.textContent = '人工合成评论正文';
-      root.append(link, text); hostRoot.appendChild(renderer); document.body.appendChild(host);
-      const card = document.createElement('div'); card.className = 'bili-video-card';
-      const title = document.createElement('a'); title.href = 'https://www.bilibili.com/video/av123'; title.textContent = '人工合成作品标题';
-      const owner = document.createElement('a'); owner.className = 'bili-video-card__info--owner'; owner.href = 'https://space.bilibili.com/124'; owner.textContent = '人工合成作品作者';
-      card.append(title, owner); document.body.appendChild(card);
-      window.OB.Store.setSetting('aiGatewayUrl', endpoint);
-      window.OB.Store.setSetting('aiGatewayModel', 'bridge-test');
+      window.OB.Store.setSetting('aiProviderUrl', endpoint);
+      window.OB.Store.setSetting('aiProviderModel', 'bridge-test');
       window.OB.Store.setSetting('aiRules', [{ text: '人工合成规则', enabled: true }]);
       window.OB.Store.setSetting('aiEnabled', true);
       window.OB.ai.prompt.recordFeedback({
@@ -237,61 +215,39 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         reasonCode: 'other', note: '桥接 contentType 回归',
       });
     }, aiUrl);
+    const aiTransport = await first.evaluate(() => {
+      const before = window.OB.ai.status();
+      window.OB.ai.setApiKey('bridge-test-device-key-0123456789');
+      const keyAfterSet = window.OB.ai.apiKeyConfigured();
+      window.OB.ai.clearApiKey();
+      return {
+        mode: before.mode,
+        gatewayConfigured: before.gatewayConfigured,
+        providerConfigured: before.providerConfigured,
+        keyConfiguredBefore: before.keyConfigured,
+        keyAfterSet,
+      };
+    });
     const aiResult = await first.evaluate(async () => window.OB.ai.analyzePage('人工合成页面规则'));
-    const aiBridgeState = await first.evaluate(() => window.OB.ai.status());
-    const aiInput = aiRequests[0] && aiRequests[0].input;
-    const aiItems = aiInput && Array.isArray(aiInput.items) ? aiInput.items : [];
-    const aiExamples = aiInput && Array.isArray(aiInput.examples) ? aiInput.examples : [];
-    const aiFeedbackExampleOk = aiExamples.length >= 1
-      && aiExamples.every((example) => Object.keys(example).sort().join(',')
-        === 'contentType,kind,label,note,reasonCode,role,text')
-      && aiExamples.some((example) => example.contentType === 'comment');
-    const aiContextCatalogOk = !!(aiInput && aiInput.contextSchemaVersion === 2
-      && aiInput.contextCatalog && Array.isArray(aiInput.contextCatalog.works)
-      && aiInput.contextCatalog.works.every((work) => /^w\d+$/.test(work.id || '')
-        && typeof work.title === 'string' && !/space\.bilibili|bili:(?:uid|dmhash)/i.test(JSON.stringify(work)))
-      && (!aiInput.contextCatalog.defaults || (typeof aiInput.contextCatalog.defaults.workId === 'string'
-        && typeof aiInput.contextCatalog.defaults.sufficiency === 'string')));
-    const aiUnsafeMatches = JSON.stringify(aiInput || {}).match(/bili:uid|bili:dmhash|space\.bilibili|["'](?:uid|mid|hash|keys)["']/gi) || [];
-    const aiHasOnlySafeItems = !!(aiInput && Array.isArray(aiInput.rules)
-      && aiItems.length === 2
-      && aiItems.every((item) => ['contentType,id,kind,text', 'contentType,id,kind,text,title',
-        'contentType,context,id,kind,text', 'contentType,context,id,kind,text,title'].includes(Object.keys(item).sort().join(',')))
-      && aiItems.some((item) => item.kind === 'comment' && item.contentType === 'comment')
-      && aiItems.some((item) => item.kind === 'content' && item.contentType === 'video' && item.title === '人工合成作品标题')
-      && !/bili:uid|bili:dmhash|space\.bilibili|["'](?:uid|mid|hash|keys)["']/i.test(JSON.stringify(aiInput)));
-    if (aiResult && aiResult.ok && aiBridgeState.state === 'ready' && aiRequests.length === 1
-      && aiHasOnlySafeItems && aiContextCatalogOk && aiFeedbackExampleOk) {
-      report.pass.push('page-1 loopback AI 作品/评论/反馈样例窄 JSON 经持久桥接返回，未携带身份字段');
+    const aiStatus = await first.evaluate(() => window.OB.ai.status());
+    const aiDirectRefusalOk = aiTransport.mode === 'direct'
+      && aiTransport.gatewayConfigured === false
+      && aiTransport.providerConfigured === true
+      && aiTransport.keyConfiguredBefore === false
+      && aiTransport.keyAfterSet === false
+      && aiResult && aiResult.ok === false && /AI API Key/.test(String(aiResult.error || ''))
+      && aiStatus.state === 'error' && /AI API Key/.test(String(aiStatus.lastError || ''))
+      && providerRequests === 0;
+    if (aiDirectRefusalOk) {
+      report.pass.push('page-1 AI 直连形态：无设备 Key 时 analyzePage 有界失败，零 provider 请求离开页面，设备 Key 无法经桥接存储面写入');
     } else {
-      report.fail.push('loopback AI 桥接失败：' + JSON.stringify({ aiResult, aiBridgeState, requests: aiRequests.length, aiInput, aiFeedbackExampleOk,
-        aiContextCatalogOk, aiHasOnlySafeItems, aiUnsafeMatches, itemShapes: aiItems.map((item) => Object.keys(item).sort().join(',')) }));
+      report.fail.push('AI 直连拒绝断言失败：' + JSON.stringify({
+        aiTransport, aiResult, aiStatus,
+        providerRequests,
+        stateOk: !!(aiResult && aiResult.ok === false && /AI API Key/.test(String(aiResult.error || ''))),
+        lastErrorOk: !!(aiStatus.state === 'error' && /AI API Key/.test(String(aiStatus.lastError || ''))),
+      }));
     }
-
-    const aiBeforeFact = aiRequests.length;
-    const factBefore = factRequests.length;
-    const factResult = await first.evaluate(async (endpoint) => {
-      window.OB.Store.setSetting('aiFactRetrievalMode', 'canary');
-      window.OB.Store.setSetting('aiFactRetrievalUrl', endpoint);
-      return window.OB.ai.analyzePage('桥接事实核查规则');
-    }, factUrl);
-    for (let attempt = 0; attempt < 40 && (aiRequests.length < aiBeforeFact + 2 || factRequests.length < factBefore + 1); attempt++) await sleep(50);
-    const factAiCalls = aiRequests.slice(aiBeforeFact);
-    const factBody = factRequests[factBefore] || {};
-    const factInput = factAiCalls[factAiCalls.length - 1] && factAiCalls[factAiCalls.length - 1].input || {};
-    const factBridgeOk = factResult && factResult.ok
-      && factAiCalls.length >= 2 && factRequests.length >= factBefore + 1
-      && Array.isArray(factBody.claims) && factBody.claims.length >= 1
-      && factBody.claims.every((claim) => /^c\d{1,2}$/.test(claim.id) && claim.language === 'zh-CN')
-      && Array.isArray(factInput.verificationSources) && factInput.verificationSources.length >= 1
-      && !/(?:bili:(?:uid|dmhash)|space\.bilibili|cookie|token|api[_ -]?key)/i.test(JSON.stringify({ factBody, factInput }));
-    if (factBridgeOk) {
-      report.pass.push('事实核查请求与带 verificationSources 的二次 AI 请求均经持久桥接返回');
-    } else {
-      report.fail.push('事实核查持久桥接失败：' + JSON.stringify({ factResult, aiCalls: factAiCalls.length,
-        factCalls: factRequests.length - factBefore, factBody, factInput }));
-    }
-    await first.evaluate(() => window.OB.Store.setSetting('aiFactRetrievalMode', 'off'));
 
     await first.evaluate(() => window.OB.Store.setSetting('skipCap', 11));
     await sleep(120);

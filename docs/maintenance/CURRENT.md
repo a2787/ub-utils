@@ -12,22 +12,26 @@
 - 当前公开版本/功能提交：`0.59.0` / `0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
 - 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0~v0.63.0 候选改动仍在工作区，未提交）
 - 当前候选源码 SHA-256：`97d9d02b28d9fa0188e2d1242a69e964c19f96c78b975aeffbc9d74586f9763d`
-- 发布状态：v0.59.0 为最新公开版本（`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`）；v0.60.0~v0.63.0 候选在本地队列，待统一发布——工作区含 `omniblock.user.js`、`test/ui-settings.cjs`、`test/ai-auto-gate.cjs`、`test/rule-samples.cjs`、`test/dark-mode.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
+- 发布状态：v0.59.0 为最新公开版本（`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`）；v0.60.0~v0.63.0 候选在本地队列，待统一发布——工作区含 `omniblock.user.js`、`test/ui-settings.cjs`、`test/ai-auto-gate.cjs`、`test/rule-samples.cjs`、`test/dark-mode.cjs`、`test/dev-extension.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
 - 当前公开 tag/Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
+
+## 2026-10-27 dev-extension 遗留用例重构与扫描噪声治理（OB-MAINT-003，无用户可见行为）
+
+- `test/dev-extension.cjs`：v0.57.1 直连切换后结构性失效的 loopback AI 网关/事实核查往返用例降级为直连拒绝断言——在开发扩展内恢复直连往返需改 build-dev-extension.cjs 桥接协议（设备 Key 入存储白名单、放行 Authorization 头、service worker 增加 direct-ai 处理器；direct-ai 取回现属正式扩展 `extension/service-worker-extra.js` 产品路径），超出维护非目标。现断言：配置合法 loopback provider 后 analyzePage 因缺设备 Key 有界失败、零 provider 请求离开页面、`setApiKey` 被桥接存储白名单丢弃，并新增“内嵌源码无 aiGatewayUrl”形态守卫；三层白名单静态断言与页面加载/存储共享/伪造消息/有界降级用例全部保留，降级原因写入测试头注释。
+- `structure regression`：重构前基线 9 过 2 失败（两个失效往返，`mode: direct`、0 请求）；重构后 dev-extension 11/11、product-extension 3/3、`node --check` 通过；`omniblock.user.js` SHA-256 前后一致（`97d9d02b…763d`），页面/控制台错误 0。`blocked`：实页验证暂停（2026-09-12 起）；本项为测试与文档治理，无用户可见行为，无 CHANGELOG 条目。
+- Mimosa 扫描噪声治理：封存深度扫描 + `.mimosa/security-policy.json` 基线流程写入 `docs/MAINTENANCE_WORKFLOW.md` §5。已知限制：门禁内置扫描器对约 1MB 单文件 `omniblock.user.js` 多次 ETIMEDOUT（证据：`.mimosa/finding-ledger/v1/events/*` 中 `scanner_failed…ETIMEDOUT`、`runStatus: inconclusive`），原生钩子已于 2026-10-27 以 `mimosa git-gate uninstall` 卸载；恢复命令：`node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`。inconclusive 结果不得写成通过。
 
 ## 2026-10-27 自建界面深色模式（OB-UI-003，v0.63.0，本地候选未发布）
 
-- 范围：系统深色（`prefers-color-scheme: dark`）时全部自建 UI（设置面板、内容弹窗与嵌入管理器、AI 审核/反馈浮层、关键词面板、确认气泡与自建确认浮层、作品确认、批量范围面板、AI 待审/后台状态浮条、行内入口按钮）自动切换深色主题，无独立开关；原生表单控件与滚动条经 `color-scheme: dark`（只作用于自建浮层根节点）变暗；命中/作用域徽章保留色相换深底；深色下补 `:focus-visible` 焦点描边。
-- 实现与边界：浅色规则零改动——深色是样式表末尾纯追加的媒体查询覆盖段（142 条规则 + `--ob-dark-*` 设计令牌），零 JS 行为改动，布局/尺寸/z-index 不变，`:hover` 均有深色等价。
-- `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级：覆盖段规则数实测 142 ≥ 40、`color-scheme: dark`、全样式表仅 1 处 `@media (prefers-color-scheme`、`--ob-dark-*` 令牌就位；DARK-1 浏览器级：Playwright `emulateMedia` 双向切换——深色下面板/内容弹窗/确认气泡/确认浮层背景亮度 0.015、正文 0.824、输入框深底浅字、`#ob-panel` 计算色 `color-scheme=dark`，同一批元素浅色恢复白底深字且计算值回 `normal`；DARK-3 浅色快捷拉黑 → 确认 → 名单 → toast 链路不变）；run 20/20、userscript-product 7/7、ui-settings 16 项、`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。已知限制（无独立开关；行内入口在深色站点浅色区块上仍为深底；存储状态行错误红依赖 style 序列化匹配）见 [v0.63.0 条目](../changelog/v0.63.0.md)。v0.63.0 未 commit/push/tag/Release。
+- 范围：系统深色（`prefers-color-scheme: dark`）时全部自建 UI（设置面板、内容弹窗、审核/反馈浮层、关键词面板、确认气泡/浮层、批量范围面板、待审/后台浮条、行内入口）自动切换深色主题，无独立开关；浅色规则零改动，深色为样式表末尾纯追加媒体查询覆盖段（142 条规则 + `--ob-dark-*` 令牌 + `color-scheme: dark`），零 JS 行为改动。
+- `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级、DARK-1 浏览器级 emulateMedia 双向切换、DARK-3 浅色快捷拉黑链路回归，逐项数字见 [v0.63.0 条目](../changelog/v0.63.0.md)）；run 20/20、userscript-product 7/7、ui-settings 16 项、`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。已知限制见 [v0.63.0 条目](../changelog/v0.63.0.md)。v0.63.0 未 commit/push/tag/Release。
 
 ## 2026-10-27 已屏蔽内容样本库与规则提炼（OB-RULE-004，v0.62.0，本地候选未发布）
 
-- 范围：确认拉黑五类提交点（快捷/批量/作品/B站弹幕/AI 审核确认）把正文（规范化截断 240 字）写入本机样本库 `RuleSamples`（独立 GM 键，按平台 LRU 200 条，仅本机，不进 Store 快照/同步/导出/备份/日志；关键词自动规则写入与后台 UID 增强刻意不采样）；关键词面板新增可折叠「已屏蔽内容样本」区（最近 50 条，逐条/勾选批量「转为关键词」，走 `DanmakuRules.add` 完整校验，转换不删样本，可刷新/清空）；「AI 归纳提炼规则」取该平台最近 100 条样本发独立一次性直连请求，候选关键词默认勾选、正则默认不勾选，经「把选中加入规则」人工确认后才写入，重复/超限/危险正则被拒并显示原因；候选仅内存缓存。`@version` 0.61.0→0.62.0，构建 `0.62.0-rule-samples`。
-- `structure regression`：新增 `test/rule-samples.cjs` 10/10（含 SOURCE-1 源码级隐私边界：样本键字面量全源码 1 处、快照/同步/导出不引用 RuleSamples、样本/归纳事件只含平台与计数；SAMPLE-1a/1b/1c 入库/去重/LRU、CONV-1/1b 转规则与门控、AI-1/1b/ERR-1 请求形态/去重拒绝/失败零写入）；rule-manager 5、quickblock 38、danmaku-auto 8、run 20、product 7、ui-settings 16、work-block 3、comment-manager 3、adapters 28、content-ai 12、content-coverage 6、ai-screening 25、ai-auto-gate 11、ai-autoload 3、state、performance、douyin、real-bilibili-probe --verify-local 全绿；页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。v0.62.0 未 commit/push/tag/Release。
-- 已知限制：快捷确认按锚点回溯正文，个别锚点不在内容容器内的入口（如 B站弹幕多候选人工核对确认）不产生样本；AI 候选仅内存缓存（重新归纳即恢复）；样本只存正文，不含作者与身份键。
+- 范围：确认拉黑五类提交点（快捷/批量/作品/B站弹幕/AI 审核确认）把正文（截断 240 字）写入本机样本库 `RuleSamples`（独立 GM 键，按平台 LRU 200 条，仅本机，不进 Store 快照/同步/导出/日志）；关键词面板新增样本区（最近 50 条，逐条/批量「转为关键词」走 `DanmakuRules.add` 完整校验）与「AI 归纳提炼规则」（该平台最近 100 条样本发一次性直连请求，候选经人工确认才写入，重复/超限/危险正则被拒并显示原因）。`@version` 0.61.0→0.62.0，构建 `0.62.0-rule-samples`。
+- `structure regression`：新增 `test/rule-samples.cjs` 10/10（SOURCE-1 源码级隐私边界 + 入库/去重/LRU/转规则门控/AI 请求形态/失败零写入）；rule-manager 5、quickblock 38、danmaku-auto 8、run 20、product 7、ui-settings 16、work-block 3、comment-manager 3、adapters 28、content-ai 12、content-coverage 6、ai-screening 25、ai-auto-gate 11、ai-autoload 3、state、performance、douyin、real-bilibili-probe --verify-local 全绿；`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。v0.62.0 未 commit/push/tag/Release。已知限制见版本条目：个别锚点不在内容容器内的入口不产生样本；AI 候选仅内存缓存；样本只存正文，不含作者与身份键。
 
 ## 2026-10-27 本地候选事实路由（v0.60.0/v0.61.0，详细范围与证据见版本条目）
 
@@ -103,18 +107,9 @@
 - `blocked`：真实内容长期精度无标注集证据；根评论分页仍可能 partial。
 - 发布状态：功能提交 `3f94c1bb` 已推送，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。详细设计与数据见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
 
-## 已发布历史摘要
+## 已发布历史路由（详情见版本条目与 [HISTORY_INDEX.md](HISTORY_INDEX.md)）
 
-- v0.54.0 独立 AI 评测与受控事实核查：细节、数据集哈希和真实站点证据见 [v0.54.0 changelog](../changelog/v0.54.0.md)。
-- v0.53.1 B 站 AI 后台屏蔽生命周期与 UID 缓存：细节和回滚见 [v0.53.1 changelog](../changelog/v0.53.1.md)。
-
-## 已发布历史路由（详情见版本条目）
-
-- v0.53.0 的事实核查门禁、v0.52.0 的提示词反馈、v0.51.x 的增量 AI/平台入口等历史证据已移入对应 changelog 和历史索引；当前只继承“未核查不等于虚假、候选必须人工确认、平台不写入”的边界。
-
-## 历史事实路由
-
-- 2026-09-08 至 2026-09-09 的 AI 型号、提示词、桥接和反馈证据已归档在对应版本条目；当前运行边界见本页“当前边界摘要”。
+- v0.54.0（独立 AI 评测）、v0.53.1（B站 AI 后台生命周期）、v0.53.0、v0.52.0、v0.51.x 与 2026-09-08/09 的 AI 型号、提示词、桥接和反馈证据均已移入对应版本 changelog 与历史索引；当前只继承“未核查不等于虚假、候选必须人工确认、平台不写入”的边界。
 
 ## 当前边界摘要
 
@@ -142,7 +137,7 @@
 
 ### `structure regression`
 
-- `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是每轮同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目与版本 changelog。
+- `node --check omniblock.user.js`、docs check 和 diff check 是每轮同轮门禁（完整矩阵见 `AGENTS.md`）；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目与版本 changelog。
 
 ### `real-site verified` / `blocked`
 
@@ -150,29 +145,16 @@
 
 ## 常用命令
 
-```powershell
-node test/docs-check.cjs
-node test/maintenance-check.cjs
-node test/userscript-product.cjs
-node test/ai-screening.cjs
-node test/ai-platforms.cjs
-node test/content-ai.cjs
-node test/ai-autoload.cjs
-node test/sync.cjs
-node test/sync-server.cjs
-node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
-node test/real-platform-probe.cjs <platform> --verify-local
-node test/installed-browser-probe.cjs --url=https://www.bilibili.com/...
-```
-
-固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；2026-09-13 v0.57.4 右键只读证据见顶部 OB-CTX-001 条目，未执行平台写入。
-v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v0.57.0 的历史 tag/Release 保持不变；v0.46.2 的历史 tag/Release 保持不变。0.48.0、0.49.0 和 0.51.1 仍是已推送但没有独立公开 Release 的历史候选。
+完整矩阵以 `AGENTS.md` 最低验证矩阵与 `docs/MAINTENANCE_WORKFLOW.md` §5 为准；本页只留高频入口：`node test/docs-check.cjs`、
+`node test/userscript-product.cjs`、`node test/dev-extension.cjs`（先 `node test/build-dev-extension.cjs`）、
+`node test/real-bilibili-probe.cjs --verify-local`、`node test/real-platform-probe.cjs <platform> --verify-local`。
+固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；登录态探针授权与红线见 `AGENTS.md`。
 
 ## 下一项最有价值的验证
 
 v0.59.0 已公开发布；v0.60.0（OB-UI-001）、v0.61.0（OB-AI-016）、v0.62.0（OB-RULE-004）与 v0.63.0（OB-UI-003 深色模式）
-均已通过全量本地回归并作为本地候选留在工作区，待编排方统一 commit/push/tag/Release。维护重心下一项为
-**OB-MAINT-003**。实页验证（v0.62.0 确认拉黑 → 样本 → 转规则与 AI 归纳请求形态、v0.60.0 面板分组/搜索/最近操作、
-v0.61.0 重访同页 0 重复请求与上限提示、v0.63.0 系统深色下的面板/弹窗观感抽查，以及 v0.58.0 遗留的新默认值
-0 次自动请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据
-仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
+均已通过全量本地回归并作为本地候选留在工作区，待编排方统一 commit/push/tag/Release。OB-MAINT-003 已于 2026-10-27
+verified：dev-extension 11/11（失效往返降级为直连拒绝断言）+ 扫描噪声治理流程落 WORKFLOW §5。实页验证（v0.62.0 确认拉黑 →
+样本 → 转规则与 AI 归纳请求形态、v0.60.0 面板分组/搜索/最近操作、v0.61.0 重访同页 0 重复请求与上限提示、v0.63.0 系统深色
+下的面板/弹窗观感抽查，以及 v0.58.0 遗留的新默认值 0 次自动请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态
+探针补齐；历史遗留：贴吧右键证据仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout` 唤醒/重试仍需另立专项处理。

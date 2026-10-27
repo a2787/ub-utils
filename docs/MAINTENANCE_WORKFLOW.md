@@ -99,6 +99,18 @@ git diff --check
 需要匿名对照时使用 `--dedicated`，它会额外保留隔离探针结果；两条证据必须分开记录，隔离会话的登录页/验证码
 不再代替专用浏览器结论。真实探针即使被阻断也要运行并记录 `blocked`，不能用夹具通过替代。
 
+### 扫描噪声与 git 门禁治理（2026-10-27 起）
+
+Mimosa 对 `omniblock.user.js` 的静态扫描存在已知按设计告警（userscript 跨域请求能力等），基线在
+`.mimosa/security-policy.json`（threatModel.exclusions）与 `docs/changelog/v0.58.0.md` 的逐条分诊中维护，
+不在每轮重复争论：
+
+1. 修改 `omniblock.user.js` 后、提交前，用 MCP `security_scan_start` 跑一次封存深度扫描，并在当轮交接记录结论。
+2. git 门禁再次阻断于已分诊的同族告警时，先补记一次封存扫描证据再重试提交；不得静默绕过钩子，卸载或恢复钩子
+   必须在 `docs/maintenance/CURRENT.md` 留痕（当前恢复命令见 2026-10-27 OB-MAINT-003 条目）。
+3. 门禁内置扫描器对约 1MB 单文件可能 ETIMEDOUT（证据：`.mimosa/finding-ledger/v1/events/*` 的
+   `scanner_failed…ETIMEDOUT`、`runStatus: inconclusive`）；此时结论如实记 inconclusive/blocked，不得写成通过。
+
 ## 6. 发布与关闭
 
 只有当前任务上下文中的明确授权且发布边界满足时才公开发布；历史授权不自动继承。发布前：提升 userscript `@version`，同步 `RUNTIME_BUILD`、README、

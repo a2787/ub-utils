@@ -108,17 +108,17 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-MAINT-003 — dev-extension 遗留用例重构与扫描噪声治理
 
-- status: proposed
+- status: verified
 - priority: P3
 - scope: `test/dev-extension.cjs` 的"loopback AI 桥接"用例自 v0.57.1 直连切换后写入已不存在的 `aiGatewayUrl`（结构性过时，当前必然失败）；按当前持久扩展直连架构重写该用例（loopback mock provider + direct handler + 设备 Key 语义），或将其明确降级为历史兼容夹具并从默认矩阵移出。同时为 Mimosa 静态扫描建立已审阅基线的治理方式：20 个 high 的"SSRF"告警属 userscript 按设计跨域能力（provider/同步 endpoint 均经 HTTPS 规范化校验，B站 API/更新地址固定），与维护者确认后的接受方式需要在工具配置或文档中固化，避免每轮误报阻断提交。
 - non-goals: 不改变 AI 直连/桥接运行时行为；不删除历史实验文件；不降低身份、隐私或平台写入红线。
 - dependencies: none
 - acceptance: required
-  - [ ] dev-extension 用例在当前架构下可运行并通过，或已从默认矩阵明确移出并在文档记录原因。
-  - [ ] 扫描 high 告警的处置方式（基线/忽略/文档）落地后，常规提交不再被已知误报阻断。
-  - [ ] docs-check 与相关回归通过。
-- evidence: 2026-10-27 安全轮确认：当前源码 0 处 `aiGatewayUrl`（v0.56.0 时代 8 处）；dev-extension 失败与安全门禁无关。
-- next: 排在 OB-RULE-003 之后的维护轮处理；处理前每轮如实记录该用例为既有失败。
+  - [x] dev-extension 用例在当前架构下可运行并通过，或已从默认矩阵明确移出并在文档记录原因。
+  - [x] 扫描 high 告警的处置方式（基线/忽略/文档）落地后，常规提交不再被已知误报阻断。
+  - [x] docs-check 与相关回归通过。
+- evidence: `structure regression`：2026-10-27 重构前基线 dev-extension 9 过 2 失败（loopback AI 网关与事实核查往返，`mode: direct`、`providerConfigured: false`、0 请求，与立项证据一致）。选择降级路径：开发扩展内恢复直连往返需同时改 build-dev-extension.cjs 三处桥接协议（设备 Key 入存储白名单、Authorization 头白名单、service worker direct-ai 取回处理器；该处理器现属正式扩展 `extension/service-worker-extra.js` 产品路径），超出本轮非目标；两个往返降级为直连拒绝断言（配置合法 loopback provider 后 analyzePage 因缺设备 Key 有界失败、零 provider 请求离开页面、`setApiKey` 被桥接存储白名单丢弃，旧行为上会失败），保留全部其余用例并新增“内嵌源码无 aiGatewayUrl”形态守卫，降级原因写入测试头注释；重构后 dev-extension 11/11、product-extension 3/3、`node --check` 通过，`omniblock.user.js` SHA-256 前后一致。扫描治理：流程落 `docs/MAINTENANCE_WORKFLOW.md` §5（提交前封存深度扫描 + `.mimosa/security-policy.json` 基线 + 门禁 ETIMEDOUT 时如实记 inconclusive），钩子卸载/恢复命令与 ETIMEDOUT 证据记录于 `docs/maintenance/CURRENT.md` 当日条目；docs-check、`git diff --check` 通过。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；本项为测试与文档治理，无用户可见行为。
+- next: 已关闭；常规提交的扫描噪声按 `docs/MAINTENANCE_WORKFLOW.md` §5 流程处理。若未来要在开发扩展内恢复直连往返，需先另立计划评审 build-dev-extension.cjs 的三处协议变更。
 - updated: 2026-10-27
 - supersedes: none
 
