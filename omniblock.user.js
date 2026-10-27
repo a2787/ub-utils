@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.60.0
+// @version       0.61.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.60.0-ui-settings-ia';
+  const RUNTIME_BUILD = '0.61.0-ai-analysis-cache';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -475,6 +475,14 @@
   // AI 用量只在本机累计请求数/记录条数/发送字符数，用于让"自动分析花了多少"可见；
   // 不含正文、身份键或 URL，不进入名单导出、提示词导出或账户同步。
   const AI_USAGE_STORAGE_KEY = 'omniblock:ai-usage:v1';
+  // AI 已分析记录缓存：跨页面/会话记住自动模式已发送过的稳定记录 ID（内容
+  // 签名的哈希），重访同一页面时不重复产生 provider 请求。只存记录 ID 与最后
+  // 分析时间，不含正文、昵称、身份键或 URL；不进入 Store、同步或任何导出。
+  const AI_ANALYZED_STORAGE_KEY = 'omniblock:ai-analyzed:v1';
+  const AI_ANALYZED_SCHEMA_VERSION = 1;
+  const AI_ANALYZED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const AI_ANALYZED_MAX_ENTRIES = 2000;
+  const AI_ANALYZED_SAVE_DELAY_MS = 2000;
   const AI_DIRECT_KEY_MAX_LENGTH = 512;
   const AI_FACT_RETRIEVAL_DEFAULT_URL = 'http://127.0.0.1:4001/v1/fact-check';
   const AI_TRANSPORT_MODES = new Set(['direct']);
@@ -517,6 +525,9 @@
   // 单次 AI API 请求的安全上限。当前页已观察内容会按此大小分批，而不是被截断。
   const AI_BATCH_SIZE = 80;
   const AI_TEXT_BUDGET = 48000;
+  // 自动模式每页最多发送的批量数：超出部分保持未分析，由状态栏提示用
+  // 「分析本页」手动续跑；手动分析不受此上限约束。
+  const AI_AUTO_MAX_BATCHES = 3;
   // 提示词系统是本地、有限、可导入导出的结构化状态；反馈不会进入主名单，
   // 也不会因为积累而自动变成屏蔽规则。所有上限都在浏览器端再次校验。
   const AI_PROMPT_SCHEMA_VERSION = 1;
@@ -1219,6 +1230,7 @@
     douyinDanmakuExemptions: [], // 抖音自动规则例外；只跳过规则，不是新的屏蔽身份
     aiEnabled: false,            // AI 建议默认关闭；不因设置存在而请求 AI 服务
     aiAutoAnalyze: false,        // 自动分析独立开关：默认关闭，开启 AI 后也只手动分析
+    aiAutoCommentsOnly: false,   // 自动模式只看评论：弹幕不进入自动 AI 请求，仅手动分析
     aiMode: 'direct',            // 保留为协议迁移字段；当前唯一运行方式是 direct
     aiProviderUrl: '',            // 用户配置的 OpenAI-compatible endpoint；不含 API Key
     aiProviderModel: '',          // provider 的模型名
@@ -1262,7 +1274,7 @@
     function sanitizeSettings(input) {
       const source = input && typeof input === 'object' ? input : {};
       const out = { ...DEFAULT_SETTINGS };
-      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled', 'logEnabled', 'aiAutoAnalyze']) {
+      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled', 'logEnabled', 'aiAutoAnalyze', 'aiAutoCommentsOnly']) {
         if (typeof source[key] === 'boolean') out[key] = source[key];
       }
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
@@ -17620,6 +17632,13 @@
     let autoRetryCount = 0;
     let autoContentPending = false;
     const autoAnalyzedRecordIds = new Set();
+    // 跨会话的已分析缓存（仅自动模式读写）：记录 ID → 最后分析时间。
+    // 与会话内 Set 的差异是生命周期：Set 只存活于当前页面会话，缓存持久化在
+    // 独立 GM 键并按 generation/TTL/LRU 收敛，重访同页不重复计费。
+    const analyzedCache = {
+      loaded: false, generation: '', dirty: false, saveCancel: null,
+      entries: new Map(),
+    };
     const autoCandidates = new Map();
     let configSignatureValue = '';
     let generation = 0;
@@ -17642,7 +17661,8 @@
     const subscriptions = [];
     let last = {
       state: 'idle', source: '', records: 0, analyzed: 0, batchIndex: 0, batchCount: 0,
-      batched: false, sampled: false, candidates: 0, deferred: 0, lastError: '', lastAt: 0,
+      batched: false, sampled: false, candidates: 0, deferred: 0, autoCappedRemaining: 0,
+      lastError: '', lastAt: 0,
     };
 
     function factRetrievalSnapshot() {
@@ -17774,6 +17794,117 @@
       autoCandidates.clear();
       autoContentPending = false;
       renderPendingStatus();
+    }
+
+    // ------------------------------------------------------------------
+    // 已分析记录持久缓存：generation 覆盖规则文本、提示词签名、provider 地址
+    // 与模型，任一变化即整体失效。条目只有记录 ID（内容签名哈希）与时间戳，
+    // LRU 上限 2000、TTL 7 天；延迟 2 秒合并落盘，页面隐藏/销毁时立即冲刷。
+    // ------------------------------------------------------------------
+    function analyzedCacheGeneration() {
+      return ruleHash(JSON.stringify({
+        rules: activeRules('').map((rule) => rule.text),
+        prompt: PromptSystem.signature(),
+        providerUrl: normalizeAIProviderUrl(Store.getSetting('aiProviderUrl')),
+        model: normalizeAIModel(Store.getSetting('aiProviderModel')),
+      }));
+    }
+
+    function loadAnalyzedCache() {
+      if (analyzedCache.loaded) return;
+      analyzedCache.loaded = true;
+      if (!analyzedCache.generation) analyzedCache.generation = analyzedCacheGeneration();
+      let parsed = null;
+      try {
+        const raw = typeof GM_getValue === 'function' ? GM_getValue(AI_ANALYZED_STORAGE_KEY, '') : '';
+        parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : null;
+      } catch (e) { parsed = null; }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+        || parsed.version !== AI_ANALYZED_SCHEMA_VERSION
+        || typeof parsed.generation !== 'string' || !parsed.generation
+        || !parsed.entries || typeof parsed.entries !== 'object' || Array.isArray(parsed.entries)) return;
+      if (parsed.generation !== analyzedCache.generation) return;
+      const now = Date.now();
+      for (const id of Object.keys(parsed.entries)) {
+        if (!/^ai-item-[0-9a-f]{8}$/.test(id)) continue;
+        const lastAt = Number(parsed.entries[id]);
+        if (!Number.isFinite(lastAt) || lastAt <= 0 || now - lastAt > AI_ANALYZED_TTL_MS) continue;
+        analyzedCache.entries.set(id, lastAt);
+      }
+      if (analyzedCache.entries.size > AI_ANALYZED_MAX_ENTRIES) {
+        const keep = Array.from(analyzedCache.entries.entries())
+          .sort((a, b) => b[1] - a[1]).slice(0, AI_ANALYZED_MAX_ENTRIES);
+        analyzedCache.entries = new Map(keep);
+      }
+    }
+
+    function pruneAndSerializeAnalyzedCache() {
+      const now = Date.now();
+      for (const [id, lastAt] of analyzedCache.entries) {
+        if (now - lastAt > AI_ANALYZED_TTL_MS) analyzedCache.entries.delete(id);
+      }
+      if (analyzedCache.entries.size > AI_ANALYZED_MAX_ENTRIES) {
+        const keep = Array.from(analyzedCache.entries.entries())
+          .sort((a, b) => b[1] - a[1]).slice(0, AI_ANALYZED_MAX_ENTRIES);
+        analyzedCache.entries = new Map(keep);
+      }
+      const entries = {};
+      for (const [id, lastAt] of analyzedCache.entries) entries[id] = lastAt;
+      return { version: AI_ANALYZED_SCHEMA_VERSION, generation: analyzedCache.generation, entries };
+    }
+
+    function saveAnalyzedCacheNow() {
+      analyzedCache.dirty = false;
+      if (!analyzedCache.loaded || typeof GM_setValue !== 'function') return;
+      try { GM_setValue(AI_ANALYZED_STORAGE_KEY, JSON.stringify(pruneAndSerializeAnalyzedCache())); } catch (e) {}
+    }
+
+    function scheduleAnalyzedCacheSave() {
+      if (analyzedCache.saveCancel) return;
+      analyzedCache.saveCancel = RuntimeResources.timeout(() => {
+        analyzedCache.saveCancel = null;
+        if (analyzedCache.dirty) saveAnalyzedCacheNow();
+      }, AI_ANALYZED_SAVE_DELAY_MS);
+    }
+
+    function flushAnalyzedCache() {
+      if (analyzedCache.saveCancel) {
+        try { analyzedCache.saveCancel(); } catch (e) {}
+        analyzedCache.saveCancel = null;
+      }
+      if (analyzedCache.dirty) saveAnalyzedCacheNow();
+    }
+
+    function syncAnalyzedCacheGeneration() {
+      const next = analyzedCacheGeneration();
+      const previous = analyzedCache.generation;
+      analyzedCache.generation = next;
+      if (analyzedCache.loaded && previous && previous !== next) {
+        analyzedCache.entries.clear();
+        analyzedCache.dirty = true;
+        scheduleAnalyzedCacheSave();
+      }
+    }
+
+    // 只有自动模式读写缓存：查询前确保已加载；手动「分析本页」从不查询也
+    // 从不写入，用户显式点击时始终完整重新分析。
+    function analyzedCacheHas(id) {
+      loadAnalyzedCache();
+      return analyzedCache.entries.has(id);
+    }
+
+    function recordAnalyzedRecordIds(ids) {
+      loadAnalyzedCache();
+      const now = Date.now();
+      let changed = false;
+      for (const id of Array.isArray(ids) ? ids : []) {
+        if (!id) continue;
+        analyzedCache.entries.set(id, now);
+        changed = true;
+      }
+      if (!changed) return;
+      analyzedCache.dirty = true;
+      scheduleAnalyzedCacheSave();
     }
 
     function usageDayKey() {
@@ -19185,40 +19316,52 @@
       const allRecords = collected.records;
       // 本地名单/关键词规则先行处理掉的条数：这部分内容不会再消耗任何 AI 配额。
       const skippedLocal = (Number(collected.skippedBlocked) || 0) + (Number(collected.skippedKeyword) || 0);
-      const pendingRecords = source === 'auto'
-        ? allRecords.filter((record) => !autoAnalyzedRecordIds.has(record.id))
+      const isAutoRun = source === 'auto';
+      const commentsOnly = isAutoRun && Store.getSetting('aiAutoCommentsOnly') === true;
+      // 自动模式的增量过滤按三层进行：页面会话内已分析（Set）、跨会话已分析
+      // （持久缓存，仅自动模式查询）、「自动分析只看评论」开启时跳过全部弹幕
+      // ——被跳过的弹幕不做任何已分析记账，之后仍可手动分析。
+      const pendingRecords = isAutoRun
+        ? allRecords.filter((record) => !autoAnalyzedRecordIds.has(record.id)
+          && !analyzedCacheHas(record.id)
+          && !(commentsOnly && record.kind === 'danmaku'))
         : allRecords;
       // `analyzed` 是当前页面的累计数，不是本次请求新增的数量；增量运行仍
       // 用 pendingRecords 控制 token 消耗，但 UI/错误状态要保留此前已分析的记录。
-      const analyzedBefore = source === 'auto'
-        ? allRecords.reduce((count, record) => count + (autoAnalyzedRecordIds.has(record.id) ? 1 : 0), 0)
+      const analyzedBefore = isAutoRun
+        ? allRecords.reduce((count, record) => count
+          + ((autoAnalyzedRecordIds.has(record.id) || analyzedCacheHas(record.id)) ? 1 : 0), 0)
         : 0;
       if (!pendingRecords.length) {
-        const pendingCandidates = source === 'auto' ? Array.from(autoCandidates.values()) : [];
+        const pendingCandidates = isAutoRun ? Array.from(autoCandidates.values()) : [];
         const state = pendingCandidates.length ? 'review' : (allRecords.length ? 'ready' : 'empty');
-        setLast({ state, source, records: allRecords.length, analyzed: allRecords.length, batchIndex: 0, batchCount: 0,
-          batched: false, sampled: false, candidates: pendingCandidates.length,
+        setLast({ state, source, records: allRecords.length, analyzed: analyzedBefore, batchIndex: 0, batchCount: 0,
+          batched: false, sampled: false, candidates: pendingCandidates.length, autoCappedRemaining: 0,
           deferred: Number(last.deferred) || 0, skippedLocal,
           lastError: allRecords.length ? '' : '当前页没有可分析的已观察内容' });
-        if (pendingCandidates.length && source === 'auto') renderPendingStatus();
+        if (pendingCandidates.length && isAutoRun) renderPendingStatus();
         return { ok: true, empty: !allRecords.length, candidates: pendingCandidates };
       }
       const batches = splitAIBatches(pendingRecords);
       const batchCount = batches.length;
+      // 自动模式每页最多发送 AI_AUTO_MAX_BATCHES 批：其余内容保持未分析，
+      // 结束后在状态栏提示用「分析本页」手动续跑；手动分析从不设此上限。
+      const autoBatchLimit = isAutoRun ? Math.min(batchCount, AI_AUTO_MAX_BATCHES) : batchCount;
       const model = transport.model || 'omni-default';
       let analyzed = 0;
       let currentBatch = 0;
       let deferred = 0;
-      let candidates = source === 'auto' ? Array.from(autoCandidates.values()) : [];
+      let candidates = isAutoRun ? Array.from(autoCandidates.values()) : [];
       setLast({ state: 'loading', source, records: allRecords.length, newRecords: pendingRecords.length, analyzed: analyzedBefore,
-        batchIndex: 0, batchCount, batched: batchCount > 1, sampled: false, candidates: 0, deferred: 0, lastError: '' });
+        batchIndex: 0, batchCount, batched: batchCount > 1, sampled: false, candidates: 0, deferred: 0,
+        autoCappedRemaining: 0, lastError: '' });
       EventLog.record('ai.analysis.start', {
         runId, collectMs: timing.collectMs,
         source, recordCount: allRecords.length, newRecordCount: pendingRecords.length, batchCount, batchSize: AI_BATCH_SIZE,
         ruleCount: rules.length, sampled: false,
       }, { immediate: true });
       try {
-        for (let index = 0; index < batches.length; index++) {
+        for (let index = 0; index < autoBatchLimit; index++) {
           if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
           currentBatch = index + 1;
           const batch = batches[index];
@@ -19355,15 +19498,31 @@
             candidates: candidates.length, deferred, lastError: '' });
         }
         if (runGeneration !== generation || stopped) return { ok: false, error: 'AI 分析已取消' };
-        if (source === 'auto') for (const record of pendingRecords) autoAnalyzedRecordIds.add(record.id);
+        // 已分析记账只在全部成功批次完成后统一进行（与会话内 Set 既有语义
+        // 一致）：取消或中途失败的运行不记账，下次自动运行会重发这些内容。
+        // 持久缓存同样只记本次实际发送的记录，且只服务自动模式。
+        const processedRecords = isAutoRun
+          ? batches.slice(0, autoBatchLimit).reduce((all, batch) => all.concat(batch), [])
+          : [];
+        // 上限提示按“未分析的记录条数”计（不是批数）：这些内容本轮没有被
+        // 发送，也没有进入任何已分析记账，等待手动「分析本页」处理。
+        const autoCappedRemaining = isAutoRun
+          ? Math.max(0, pendingRecords.length - processedRecords.length)
+          : 0;
+        if (isAutoRun) {
+          for (const record of processedRecords) autoAnalyzedRecordIds.add(record.id);
+          if (processedRecords.length) recordAnalyzedRecordIds(processedRecords.map((record) => record.id));
+        }
         setLast({ state: candidates.length ? 'review' : 'ready', source, records: allRecords.length,
-          newRecords: pendingRecords.length, analyzed: allRecords.length, batchIndex: batchCount, batchCount, batched: batchCount > 1,
-          sampled: false, candidates: candidates.length, deferred, skippedLocal, lastError: '' });
+          newRecords: pendingRecords.length, analyzed: analyzedBefore + analyzed,
+          batchIndex: autoBatchLimit, batchCount: autoBatchLimit, batched: autoBatchLimit > 1,
+          autoCappedRemaining, sampled: false, candidates: candidates.length, deferred, skippedLocal, lastError: '' });
         EventLog.record('ai.analysis.finish', {
           runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, providerMs: timing.providerMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
-          analyzedCount: allRecords.length, newAnalyzedCount: analyzed,
-          batchCount, candidateCount: candidates.length, deferred, skippedLocal, sampled: false,
+          analyzedCount: analyzedBefore + analyzed, newAnalyzedCount: analyzed,
+          batchCount, batchesSent: autoBatchLimit, autoCappedRemaining,
+          candidateCount: candidates.length, deferred, skippedLocal, sampled: false,
         }, { immediate: true });
         if (candidates.length && source === 'auto') {
           // 自动模式的候选不再自动弹窗：进入右侧「AI 待审建议」浮条，由用户决定何时审核。
@@ -19378,7 +19537,7 @@
         setLast({ state: 'error', source, records: allRecords.length, newRecords: pendingRecords.length,
           analyzed: analyzedBefore + analyzed,
           batchIndex: currentBatch, batchCount, batched: batchCount > 1, sampled: false,
-          candidates: 0, deferred, lastError: message });
+          candidates: 0, deferred, autoCappedRemaining: 0, lastError: message });
         EventLog.record('ai.analysis.error', {
           runId, durationMs: elapsedMs(runStartedAt), collectMs: timing.collectMs, providerMs: timing.providerMs,
           source, recordCount: allRecords.length, newRecordCount: pendingRecords.length,
@@ -19442,6 +19601,7 @@
       if (started || stopped) return;
       started = true;
       configSignatureValue = configSignature();
+      loadAnalyzedCache();
       subscriptions.push(Store.onChange(() => {
         const next = configSignature();
         const changed = next !== configSignatureValue;
@@ -19452,6 +19612,7 @@
         } else if (changed) {
           autoRouteKey = '';
           autoRetryCount = 0;
+          syncAnalyzedCacheGeneration();
           clearAutoAnalysis(); factCache.clear();
           closeReview('settings-changed', true);
           scheduleAuto(500);
@@ -19466,6 +19627,7 @@
           emit();
           return;
         }
+        syncAnalyzedCacheGeneration();
         autoRouteKey = '';
         autoRetryCount = 0;
         clearAutoAnalysis();
@@ -19516,7 +19678,7 @@
       }));
       subscriptions.push(PageLifecycle.subscribe((visible) => {
         if (visible) { resumeBackgroundJobs(); scheduleAuto(500); }
-        else { cancelAutoTimer(); pauseBackgroundJobs('hidden'); }
+        else { cancelAutoTimer(); pauseBackgroundJobs('hidden'); flushAnalyzedCache(); }
       }));
       RuntimeResources.add(() => {
         stopped = true;
@@ -19524,6 +19686,7 @@
           try { unsubscribe(); } catch (e) {}
         }
         cancelAutoTimer(); cancelActive('runtime-dispose'); cancelBackgroundJobs('runtime-dispose'); closeReview('runtime-dispose', true);
+        flushAnalyzedCache();
         listeners.length = 0;
       });
       scheduleAuto(1400);
@@ -19940,6 +20103,7 @@
         <p class="ob-ai-intro">AI 默认关闭；开启后默认仅手动分析——只有点击"分析本页"才会请求 AI 服务。如需自动模式，请单独勾选"自动分析新内容"：页面加载和内容更新时会自动分析，候选不再自动弹窗，而是等在屏幕右侧的「AI 待审建议」浮条里，点击才进入审核。抖音点击"分析本页"会自动展开/滚动评论、扫描当前视频弹幕时间轴，再分析本次实际观察到的全部内容。确认前不会写入名单。本地名单和关键词/正则规则命中的内容会先行处理，不进入 AI 请求。事实核查与屏蔽决策分开：缺少引用不等于虚假，当前没有外部检索结果时，未核查或语境不足的事实不会单独进入屏蔽候选。AI 只通过你填写的 OpenAI-compatible API 直接请求；API Key 只保存在当前设备的 Tampermonkey GM 存储，不进入页面对象、名单导出、提示词导出或账户同步。首次访问新的 API 域名时，Tampermonkey 可能显示跨源权限提示。</p>
         <label style="display:block"><input type="checkbox" id="ob-ai-enabled"> 启用 AI 智能屏蔽（默认仅手动分析，不自动请求）</label>
         <label style="display:block"><input type="checkbox" id="ob-ai-auto"> 自动分析新内容（页面加载、滚动加载和弹幕更新时自动请求 AI；候选等在「AI 待审建议」浮条，不会自动弹窗）</label>
+        <label style="display:block"><input type="checkbox" id="ob-ai-auto-comments-only"> 自动分析只看评论（弹幕仅手动分析）</label>
         <div class="ob-ai-provider">
           <label>AI API 地址<input id="ob-ai-provider-url" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1/chat/completions"></label>
           <label>模型名<input id="ob-ai-provider-model" type="text" autocomplete="off" placeholder="填写 provider 的模型名"></label>
@@ -19987,6 +20151,13 @@
         : ' 自动分析已关闭，AI 仅在点击“分析本页”或打开待审建议时请求。';
       const skippedHint = Number(status.skippedLocal) > 0
         ? ' 本地名单/关键词已先行处理 ' + Number(status.skippedLocal) + ' 条，未发送 AI。' : '';
+      const autoCapHint = status.source === 'auto' && Number(status.autoCappedRemaining) > 0
+        ? ' 已达本页自动分析批量上限（每页最多 ' + AI_AUTO_MAX_BATCHES + ' 批），其余 '
+          + Number(status.autoCappedRemaining) + ' 条可用「分析本页」手动处理。' : '';
+      const analyzedTotal = Number(status.analyzed) || 0;
+      const recordsTotal = Number(status.records) || 0;
+      const analyzedPhrase = analyzedTotal >= recordsTotal
+        ? '全部 ' + recordsTotal + ' 条' : analyzedTotal + '/' + recordsTotal + ' 条';
       const batchCount = Number(status.batchCount) || 0;
       const newRecordsHint = status.source === 'auto' && status.newRecords != null
         ? '（本轮新增 ' + (Number(status.newRecords) || 0) + ' 条）' : '';
@@ -20003,14 +20174,18 @@
         }
       }
       if (status.state === 'loading') return '正在分析当前页已观察到的 ' + status.records + ' 条内容' + newRecordsHint + progress + '…' + batchHint;
-      if (status.state === 'review') return '已分析当前页全部 ' + status.records + ' 条已观察内容，找到 ' + status.candidates + ' 条候选'
+      if (status.state === 'review') return '已分析当前页' + (analyzedTotal >= recordsTotal
+        ? '全部 ' + recordsTotal + ' 条已观察内容'
+        : ' ' + analyzedPhrase + '已观察内容') + '，找到 ' + status.candidates + ' 条候选'
         + newRecordsHint + (batchCount > 1 ? '，共 ' + batchCount + ' 批' : '')
         + (Number(status.deferred) > 0 ? '；另有 ' + Number(status.deferred) + ' 条事实/语境内容尚未核查，未列为屏蔽候选' : '')
-        + skippedHint
+        + skippedHint + autoCapHint
         + (status.source === 'auto' ? '，点击屏幕右侧的「AI 待审建议」浮条查看并确认。' : '，请在审核弹窗中选择后确认。');
-      if (status.state === 'ready') return '本轮已分析当前页全部 ' + status.records + ' 条已观察内容，没有待审核候选。'
+      if (status.state === 'ready') return '本轮已分析当前页' + (analyzedTotal >= recordsTotal
+        ? '全部 ' + recordsTotal + ' 条已观察内容，没有待审核候选。'
+        : ' ' + analyzedPhrase + '已观察内容，没有待审核候选。')
         + (Number(status.deferred) > 0 ? ' 其中 ' + Number(status.deferred) + ' 条事实/语境内容尚未核查，已保留未屏蔽。' : '')
-        + skippedHint + newRecordsHint + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '') + autoHint;
+        + skippedHint + newRecordsHint + (batchCount > 1 ? ' 共 ' + batchCount + ' 批。' : '') + autoCapHint + autoHint;
       if (status.state === 'empty') return status.lastError || '当前页没有可分析的已观察内容。';
       if (status.state === 'error') return 'AI 分析失败：' + (status.lastError || 'AI API 不可用');
       if (status.state === 'disabled') return 'AI 当前关闭；不会自动请求 AI 服务。';
@@ -20257,12 +20432,20 @@
     const settings = Store.settings();
     enabled.checked = settings.aiEnabled === true;
     const autoInput = query('#ob-ai-auto');
+    const autoCommentsInput = query('#ob-ai-auto-comments-only');
     const syncAutoInput = () => {
-      if (!autoInput) return;
-      autoInput.checked = Store.getSetting('aiAutoAnalyze') === true;
-      const unlocked = Store.getSetting('aiEnabled') === true;
-      autoInput.disabled = !unlocked;
-      autoInput.title = unlocked ? '' : '先启用 AI 智能屏蔽，才能开启自动分析';
+      if (autoInput) {
+        autoInput.checked = Store.getSetting('aiAutoAnalyze') === true;
+        const unlocked = Store.getSetting('aiEnabled') === true;
+        autoInput.disabled = !unlocked;
+        autoInput.title = unlocked ? '' : '先启用 AI 智能屏蔽，才能开启自动分析';
+      }
+      if (autoCommentsInput) {
+        autoCommentsInput.checked = Store.getSetting('aiAutoCommentsOnly') === true;
+        const unlocked = Store.getSetting('aiEnabled') === true;
+        autoCommentsInput.disabled = !unlocked;
+        autoCommentsInput.title = unlocked ? '' : '先启用 AI 智能屏蔽，才能调整自动分析范围';
+      }
     };
     syncAutoInput();
     if (providerUrlInput) providerUrlInput.value = settings.aiProviderUrl || '';
@@ -20293,6 +20476,12 @@
       const value = !!event.target.checked;
       Store.setSetting('aiAutoAnalyze', value);
       EventLog.record('settings.ai-auto.toggle', { enabled: value }, { immediate: true });
+      refreshStatus();
+    };
+    if (autoCommentsInput) autoCommentsInput.onchange = (event) => {
+      const value = !!event.target.checked;
+      Store.setSetting('aiAutoCommentsOnly', value);
+      EventLog.record('settings.ai-auto-comments-only.toggle', { enabled: value }, { immediate: true });
       refreshStatus();
     };
     query('#ob-ai-save').onclick = () => {

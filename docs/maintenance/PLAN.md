@@ -72,18 +72,18 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-AI-016 — 已分析记录持久缓存与自动批量上限
 
-- status: proposed
+- status: verified
 - priority: P2
 - scope: 为自动分析增加跨页面/会话的已分析缓存：以现有稳定记录签名为键，只存签名、时间与决策元数据（不存正文、昵称或身份键），LRU + TTL + 容量上限，规则或提示词签名变化时整体失效；自动模式设每页发送批量数上限，超出部分提示手动续跑；提供"自动模式只分析评论、弹幕仅手动"可选开关。
 - non-goals: 不改变手动分析行为；不把缓存结果冒充新的 AI 决策；缓存不进入账户同步；不新增任何上传。
 - dependencies: OB-AI-015
 - acceptance: required
-  - [ ] 同一记录签名在 TTL 内重访不重复产生 provider 请求（mock 断言）。
-  - [ ] 规则/提示词变更后缓存失效并重新分析。
-  - [ ] 缓存内容仅含签名与决策元数据，隐私门禁通过。
-  - [ ] 批量上限触发时用户可见提示，手动路径不受限。
-- evidence: 尚未实施（2026-10-27 立项）；本轮仅源码调查与计划，无行为断言与真实站点证据。
-- next: 待 OB-AI-015 落地后实施。
+  - [x] 同一记录签名在 TTL 内重访不重复产生 provider 请求（mock 断言）。
+  - [x] 规则/提示词变更后缓存失效并重新分析。
+  - [x] 缓存内容仅含签名与决策元数据，隐私门禁通过。
+  - [x] 批量上限触发时用户可见提示，手动路径不受限。
+- evidence: `structure regression`：`test/ai-auto-gate.cjs` 11/11（新增 CACHE-1 跨 reload 0 重复请求 + 缓存键只含 `ai-item-` ID 与时间戳的结构/隐私校验、CACHE-INV-1 提示词变更使缓存失效后重发、CAP-1 260 条只发 3 批 + `autoCappedRemaining=20` + 状态行提示 + 手动 4 批补齐、ONLY-COMMENTS-1 请求项 0 弹幕；GM shim 修复为 localStorage 后备）；ai-screening 25/25（同页增量不受影响）、content-ai 12/12、ai-platforms 7/7、ai-prompt-system 13/13、ai-autoload 3/3、run 20/20、quickblock 38/38、userscript-product 7/7，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。缓存键 `omniblock:ai-analyzed:v1`（TTL 7 天 / LRU 2000 / 2s 防抖 + pagehide 冲刷），generation 覆盖规则文本 + `PromptSystem.signature()` + provider 地址 + 模型。随 v0.61.0 本地候选交付，发布由编排方执行。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
+- next: 已实现并随 v0.61.0 候选交付；实页验证（重访 0 重复请求、上限提示在长评论区的触发）待用户恢复授权后补齐。下一省钱相邻项为 OB-RULE-004。
 - updated: 2026-10-27
 - supersedes: none
 

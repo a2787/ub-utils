@@ -1,24 +1,26 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-10-27
-状态来源：v0.59.0（关键词/正则规则管理升级）为当前公开版本；v0.60.0（设置面板信息架构与操作一致性，OB-UI-001）已完成本地回归并作为本地候选留在工作区，未 commit/push/tag/Release。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.59.0（关键词/正则规则管理升级）为当前公开版本；v0.60.0（OB-UI-001 设置面板信息架构）与 v0.61.0（OB-AI-016 AI 已分析持久缓存与自动批量上限）已完成本地回归并作为本地候选留在工作区，未 commit/push/tag/Release。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
-> 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 的对象库与 `refs/` 于当日丢失（`objects/pack` 只剩孤立 `.idx`、
-> 无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer；工作区文件自始至终无损失）。经用户同意后从远端重建：重新克隆
-> `git@github.com:a2787/ub-utils.git` 并把校验通过的 `.git` 植入原位，对象库、`refs/heads/master`（`a3a769f`）与
-> v0.55.0~v0.57.2 全部 tag 恢复，`git fsck` 无错误；损坏的 `.git` 与孤立索引已备份到
-> `%TEMP%\omniblock-broken-git-20260913\`（未删除，可继续排查根因）。唯一无法恢复的是未推送提交 `c025d8b`（v0.57.3），
-> 其代码内容完整保留在工作区，并已随本轮提交 `b83003a` 落库。
+> 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 对象库与 `refs/` 丢失（工作区无损失），经用户同意从远端重建，v0.55.0~v0.57.2 全部 tag 恢复；唯一无法恢复的未推送提交 `c025d8b`（v0.57.3）的代码内容已随提交 `b83003a` 落库。细节见当时交接与 [v0.57.3 条目](../changelog/v0.57.3.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.60.0`（本地候选）；当前公开版本为 `0.59.0`
-- 构建：`0.60.0-ui-settings-ia`
+- 当前 userscript：`0.61.0`（本地候选）；当前公开版本为 `0.59.0`
+- 构建：`0.61.0-ai-analysis-cache`
 - 当前公开版本/功能提交：`0.59.0` / `0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
-- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0 候选改动仍在工作区，未提交）
-- 当前候选源码 SHA-256：`7283099f4f02ac3b56882669d247852726964c910e6d1ca25ea747863d14af02`
-- 发布状态：v0.59.0 功能提交 `0e3e89d` 已推送到 `origin/master`，`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`；v0.60.0 为本地候选（未 push/tag/Release），工作区含 `omniblock.user.js`、`test/ui-settings.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
+- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0/v0.61.0 候选改动仍在工作区，未提交）
+- 当前候选源码 SHA-256：`4f890fb54aa2076bf08617f7cd1e1640786a0161fe50975e3226912fa7f2e8a0`
+- 发布状态：v0.59.0 为最新公开版本（`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`）；v0.60.0/v0.61.0 候选在本地队列，待统一发布——工作区含 `omniblock.user.js`、`test/ui-settings.cjs`、`test/ai-auto-gate.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
 - 当前公开 tag/Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
+
+## 2026-10-27 AI 已分析持久缓存、自动批量上限与只看评论（OB-AI-016，v0.61.0，本地候选未发布）
+
+- 范围/文件：`omniblock.user.js` AI 模块新增持久缓存（独立键 `omniblock:ai-analyzed:v1`：记录 ID + 时间戳，TTL 7 天 / LRU 2000 / 2 秒防抖落盘 + PageLifecycle hidden 与 dispose 冲刷；generation 覆盖规则文本 + `PromptSystem.signature()` + provider 地址 + 模型，变化即整体失效）；自动模式 `pendingRecords` 叠加缓存过滤并在成功后记账（新函数 `recordAnalyzedRecordIds`/`analyzedCacheHas`/`syncAnalyzedCacheGeneration`/`flushAnalyzedCache`）；自动模式每页最多 3 批（`AI_AUTO_MAX_BATCHES`），最终状态新增 `autoCappedRemaining`（按未分析记录条数计）与状态栏提示；新增 `aiAutoCommentsOnly` 设置（默认 false，进 `sanitizeSettings` 布尔清单）与 AI 面板复选框「自动分析只看评论（弹幕仅手动分析）」；手动分析不查询/不写入缓存、不受上限。`@version` 0.60.0→0.61.0，构建 `0.61.0-ai-analysis-cache`。
+- `structure regression`：`test/ai-auto-gate.cjs` 扩到 11/11（新增 CACHE-1 跨 reload 0 重复请求与缓存结构/隐私校验、CACHE-INV-1 提示词变更失效、CAP-1 260 条只发 3 批 + 状态行提示 + 手动 4 批补齐、ONLY-COMMENTS-1 请求项 0 弹幕；GM shim 改为 localStorage 后备修复跨导航持久化夹具缺陷）；ai-screening 25/25（同页增量 AI-14/16/17/18 不受影响）、content-ai 12/12、ai-platforms 7/7、ai-prompt-system 13/13、ai-autoload 3/3、run 20/20、quickblock 38/38、userscript-product 7/7；页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。v0.61.0 未 commit/push/tag/Release。
+- 已知限制：缓存只承诺自动模式不重复计费；LRU/TTL 只在加载与保存时清理；上限提示按记录条数计（首轮实现曾误用批数，已在测试 CAP-1 固定）。
 
 ## 2026-10-27 设置面板信息架构与操作一致性（OB-UI-001，v0.60.0，本地候选未发布）
 
@@ -42,18 +44,8 @@
 
 ## 2026-10-27 接手调查与 AI 成本治理规划（无代码改动）
 
-- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理。本轮仅源码调查与计划，
-  未改 `omniblock.user.js`，未运行平台探针，无新增 `real-site verified` 证据。
-- 调查结论（源码审计，非行为断言）：AI 默认关闭（`aiEnabled:false`），但启用后即全自动——`start()` 末尾
-  `scheduleAuto(1400)` 起批，路由变化、DOM 新评论/弹幕、seg.so 内容信号、页面重新可见都会再次触发；每批最多
-  80 条 / 48,000 字符、串行请求；已分析记录集合 `autoAnalyzedRecordIds` 仅存活于当前页面会话，重访同页重新计费；
-  事实核查开启时每批追加第二次 AI 请求；手动「分析本页」要求先填写页面附加规则，无"仅手动"模式。关键词/正则
-  规则仅 B站/抖音，支持增删与启停，不可编辑、无每条命中计数、无规则级导入导出；设置面板残留已失去挂载点的
-  自动规则死代码与指向失效的文案；面板单列长滚动、无分组导航，「反馈与日志」置于最前。
-- 计划更新：新增 OB-AI-015（AI 自动分析独立开关与成本计数，P1）、OB-RULE-003（关键词/正则规则管理升级，P1）、
-  OB-AI-016（已分析持久缓存与自动批量上限，P2）、OB-UI-001（设置面板信息架构与操作一致性，P2），均 proposed；
-  OB-RULE-001、OB-REL-001、OB-CTX-001、OB-MAINT-002 四个 verified 项移入
-  [2026-10-27 计划收尾归档](plans/2026-10-27-plan-closure.md)。实施顺序待用户确认，默认按两个 P1 先行。
+- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理。本轮仅源码调查与计划，未改 `omniblock.user.js`、未运行探针、无新增 `real-site verified`。
+- 调查结论（源码审计）：启用 AI 后自动分析全开（路由变化/DOM/seg.so/重新可见都触发），`autoAnalyzedRecordIds` 仅存活当前会话导致重访重新计费；关键词规则不可编辑、无命中计数、无导入导出；设置面板残留死代码且无分组。由此立项 OB-AI-015、OB-RULE-003、OB-AI-016、OB-UI-001（见 [PLAN](PLAN.md)），四个 verified 项移入 [2026-10-27 计划收尾归档](plans/2026-10-27-plan-closure.md)。
 
 ## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
@@ -177,9 +169,9 @@ v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v
 
 ## 下一项最有价值的验证
 
-v0.59.0 已公开发布（OB-RULE-003）；v0.60.0（OB-UI-001 设置面板信息架构与操作一致性）已通过全量本地回归并作为
-本地候选留在工作区，待编排方 commit/push/tag/Release。维护重心按已确认顺序推进 **OB-AI-016（已分析持久缓存与
-自动批量上限）**，随后 OB-RULE-004 → OB-UI-003 → OB-MAINT-003。实页验证（v0.60.0 面板分组导航/搜索/最近操作与
-撤销窗口在真实拉黑后的行为，以及 v0.58.0 遗留的新默认值页面加载 0 次自动 AI 请求、待审浮条交互）待用户恢复授权
+v0.59.0 已公开发布；v0.60.0（OB-UI-001）与 v0.61.0（OB-AI-016 已分析持久缓存、自动批量上限、只看评论）均已通过
+全量本地回归并作为本地候选留在工作区，待编排方统一 commit/push/tag/Release。维护重心按已确认顺序推进
+**OB-RULE-004（已屏蔽样本库与规则提炼）**，随后 OB-UI-003 → OB-MAINT-003。实页验证（v0.60.0 面板分组/搜索/最近操作、
+v0.61.0 重访同页 0 重复请求与上限提示，以及 v0.58.0 遗留的新默认值 0 次自动请求、待审浮条交互）待用户恢复授权
 后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout`
 仍需另立专项处理。
