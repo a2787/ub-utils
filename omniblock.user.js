@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.59.0
+// @version       0.60.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.59.0-rule-manager';
+  const RUNTIME_BUILD = '0.60.0-ui-settings-ia';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -1210,6 +1210,7 @@
     skipCap: 6,                  // 连续跳过上限，超过则停在遮罩不再自动切
     showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
     showBulkBlock: true,         // 本页/弹窗内"一键拉黑全部用户"
+    undoToastSeconds: 10,        // 撤销 toast 停留秒数；sanitizeSettings 固定在 5–30
     localBackupEnabled: true,    // 自动保留最近 5 份本地快照（不上传）
     logEnabled: true,            // 记录本机 OmniBlock 运行事件，反馈页可暂停/导出
     biliDanmakuRules: [],        // B站自动弹幕关键词/正则；不承担 PAKKU 去重
@@ -1267,6 +1268,8 @@
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
       const cap = Number(source.skipCap);
       if (Number.isFinite(cap)) out.skipCap = clamp(Math.round(cap), 0, 50);
+      const undoSeconds = Number(source.undoToastSeconds);
+      if (Number.isFinite(undoSeconds)) out.undoToastSeconds = clamp(Math.round(undoSeconds), 5, 30);
       for (const platform of Object.keys(DANMAKU_RULE_SETTING_KEYS)) {
         const key = DANMAKU_RULE_SETTING_KEYS[platform];
         out[key] = sanitizeDanmakuRules(source[key]);
@@ -1904,6 +1907,134 @@
 
   // 首次加载即建立一个恢复点；没有本地备份开关或 GM 存储支持时静默降级，不影响名单。
   try { Store.ensureLocalBackup(); } catch (e) {}
+
+  // ====================================================================
+  // 1.4 最近本地屏蔽操作（OB-UI-001）
+  // --------------------------------------------------------------------
+  // 只记录“用户确认后的本地名单写入”：快捷/批量/作品/弹幕/AI 确认。身份键
+  // 与备注标签本来就已经存放在本地名单里，因此可以保存；但绝不保存页面
+  // 正文、URL 或 Cookie。独立 GM 键，不进入 Store 的同步/导出/备份快照
+  // （与 AI 用量计数同级）。关键词自动规则命中、后台 UID 增强不属于人工
+  // 确认操作：撤销它们无法阻止规则再次写入，会产生误导性的“撤销”，因此
+  // 刻意不记录。
+  // ====================================================================
+  const RecentActions = (function () {
+    const STORAGE_KEY = 'omniblock:recent-actions:v1';
+    const MAX_ENTRIES = 20;
+    const LABEL_MAX_CHARS = 120;
+    const TYPE_LABELS = {
+      quick: '快捷拉黑',
+      bulk: '批量拉黑',
+      work: '作品屏蔽',
+      danmaku: '弹幕拉黑',
+      ai: 'AI 确认',
+    };
+    let entries = null;
+
+    function load() {
+      if (entries) return entries;
+      let raw;
+      try { raw = GM_getValue(STORAGE_KEY, null); } catch (e) { raw = null; }
+      if (raw && typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+      }
+      if (!Array.isArray(raw)) raw = [];
+      entries = [];
+      for (const item of raw.slice(0, MAX_ENTRIES)) {
+        const normalized = normalizeEntry(item);
+        if (normalized) entries.push(normalized);
+      }
+      return entries;
+    }
+
+    function normalizeEntry(item) {
+      if (!item || typeof item !== 'object') return null;
+      const addedKeys = Array.isArray(item.addedKeys)
+        ? Array.from(new Set(item.addedKeys.map((key) => String(key || '')).filter(Boolean)))
+        : [];
+      const type = TYPE_LABELS[item.type] ? item.type : '';
+      if (!type || !addedKeys.length) return null;
+      return {
+        id: /^a_[A-Za-z0-9_-]+$/.test(String(item.id || '')) ? item.id : genRecentId(),
+        at: Number.isFinite(Number(item.at)) && Number(item.at) > 0 ? Math.round(Number(item.at)) : Date.now(),
+        type,
+        platform: String(item.platform || 'unknown').slice(0, 24),
+        label: String(item.label || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, LABEL_MAX_CHARS),
+        addedKeys,
+      };
+    }
+
+    function genRecentId() {
+      return 'a_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+
+    function persist() {
+      try { GM_setValue(STORAGE_KEY, JSON.stringify(entries)); } catch (e) {}
+    }
+
+    function platformForKeys(keys) {
+      const groups = new Set((keys || []).map((key) => String(key || '').split(':')[0]).filter(Boolean));
+      if (!groups.size) return 'unknown';
+      if (groups.size > 1) return 'mixed';
+      return Array.from(groups)[0];
+    }
+
+    // 记录一次人工确认的本地屏蔽写入。addedKeys 为空（全部已存在）时不记录：
+    // 撤销按钮必须始终对应一次真实的名单新增。
+    function record(action) {
+      const entry = normalizeEntry({
+        id: genRecentId(),
+        at: Date.now(),
+        type: action && action.type,
+        platform: action && action.platform,
+        label: action && action.label,
+        addedKeys: action && action.addedKeys,
+      });
+      if (!entry) return null;
+      load();
+      // 同一批 keys 的重复记录只保留最新一条（例如同一入口短时间重复提交）。
+      const fingerprint = entry.addedKeys.slice().sort().join('|');
+      entries = entries.filter((item) => item.addedKeys.slice().sort().join('|') !== fingerprint);
+      entries.unshift(entry);
+      if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
+      persist();
+      return entry;
+    }
+
+    function list() {
+      return load().slice();
+    }
+
+    function remove(id) {
+      load();
+      const before = entries.length;
+      entries = entries.filter((item) => item.id !== id);
+      if (entries.length !== before) persist();
+      return before !== entries.length;
+    }
+
+    function clear() {
+      entries = [];
+      persist();
+    }
+
+    function typeLabel(type) {
+      return TYPE_LABELS[type] || '本地屏蔽';
+    }
+
+    // 与既有撤销路径完全一致：Store.removeIdentities + 扫描器重排（由调用方执行）。
+    // 成功后移除该条记录，避免“撤销后仍显示可撤销”的假状态。
+    function undoById(id) {
+      const entry = load().find((item) => item.id === id);
+      if (!entry) return { ok: false, removed: 0 };
+      const removed = Store.removeIdentities(entry.addedKeys);
+      remove(id);
+      EventLog.record('action.recent.undo', { type: entry.type, removed }, { immediate: true });
+      return { ok: removed > 0, removed };
+    }
+
+    return { record, list, remove, clear, undoById, typeLabel, platformForKeys, maxEntries: MAX_ENTRIES };
+  })();
 
   // ====================================================================
   // 1.5 本地详细事件日志
@@ -2940,6 +3071,22 @@
     #ob-work-confirm .ob-work-ok:disabled { background: #d8aaa4; cursor: default; }
     #ob-work-confirm .ob-work-no { background: #eee; color: #444; }
 
+    /* 自建确认/提示浮层（OB-UI-001） */
+    #ob-modal {
+      position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.45); color: #222; font-size: 13px;
+    }
+    #ob-modal .ob-modal-box {
+      box-sizing: border-box; width: min(340px, calc(100vw - 28px)); max-height: 86vh; overflow: auto;
+      border-radius: 10px; padding: 16px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,.24);
+    }
+    #ob-modal .ob-modal-title { font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+    #ob-modal .ob-modal-message { color: #555; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+    #ob-modal .ob-modal-row { display: flex; gap: 8px; margin-top: 14px; }
+    #ob-modal .ob-modal-row button { flex: 1; border: 0; border-radius: 6px; padding: 8px 0; cursor: pointer; font-size: 13px; }
+    #ob-modal .ob-modal-ok { background: #c0392b; color: #fff; }
+    #ob-modal .ob-modal-no { background: #eee; color: #444; }
+
     /* 撤销 toast */
     #ob-toast {
       position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
@@ -3379,6 +3526,7 @@
       #ob-content-manager button, #ob-content-manager select, #ob-content-manager textarea,
       #ob-content-manager input:not([type="checkbox"]):not([type="radio"]),
       #ob-ai-review button, #ob-ai-feedback button, #ob-confirm button,
+      #ob-modal button,
       #ob-work-confirm button, #ob-bulk-scope button,
       #ob-comment-manager button, #ob-dm-manager button,
       #ob-douyin-comment-manager button, #ob-douyin-dm-manager button {
@@ -3519,6 +3667,23 @@
     #ob-panel .ob-box { box-sizing: border-box; background: #fff; color: #222; width: min(680px, 92vw); max-height: 86vh; overflow: auto; border-radius: 8px; padding: 18px; font-size: 13px; }
     #ob-panel h2 { margin: 0 0 10px; font-size: 16px; }
     #ob-panel h3 { margin: 16px 0 6px; font-size: 14px; }
+    #ob-panel h4 { margin: 14px 0 6px; font-size: 13px; color: #333; }
+    #ob-panel .ob-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+    #ob-panel .ob-nav button { border: 1px solid #ddd; border-radius: 6px; padding: 5px 10px; background: #fff; color: #444; cursor: pointer; font-size: 12px; white-space: nowrap; }
+    #ob-panel .ob-nav button:hover { background: #f5f5f5; }
+    #ob-panel .ob-group { scroll-margin-top: 8px; }
+    #ob-panel .ob-list-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    #ob-panel .ob-list-tools input { flex: 1 1 200px; min-width: 160px; }
+    #ob-panel .ob-list-tools select { flex: 0 0 auto; width: auto; min-width: 110px; }
+    #ob-panel .ob-list-count { color: #999; font-size: 11px; margin: 0 0 6px; }
+    #ob-panel .ob-list-empty { flex: 1 1 100%; box-sizing: border-box; padding: 18px 12px; border: 1px dashed #ddd; border-radius: 8px; color: #777; text-align: center; }
+    #ob-panel .ob-recent-actions { display: grid; gap: 6px; }
+    #ob-panel .ob-recent-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #eee; border-radius: 8px; }
+    #ob-panel .ob-recent-item > div:first-child { min-width: 0; }
+    #ob-panel .ob-recent-item .ob-meta { color: #999; font-size: 11px; margin-top: 2px; word-break: break-word; }
+    #ob-panel .ob-recent-undo { flex: 0 0 auto; color: #c0392b; cursor: pointer; border: 1px solid #e2a39c; background: #fff; border-radius: 6px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+    #ob-panel .ob-recent-undo:hover { background: #fdeceb; }
+    #ob-panel .ob-recent-empty { padding: 10px 12px; border: 1px dashed #ddd; border-radius: 8px; color: #999; font-size: 12px; line-height: 1.5; }
     #ob-panel input:not([type="checkbox"]):not([type="radio"]), #ob-panel select, #ob-panel textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
     #ob-panel input[type="checkbox"], #ob-panel input[type="radio"] { width: auto; margin: 0 4px 0 0; }
     #ob-panel .ob-list { box-sizing: border-box; display: flex; align-items: stretch; gap: 8px; min-width: 0; max-width: 100%; max-height: 300px; padding: 1px; overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; }
@@ -7562,7 +7727,64 @@
     setTimeout(focus, 80);
   }
 
-  function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel) {
+  // 自建确认/提示浮层（OB-UI-001）：退出账户、清空日志、恢复快照等关键路径
+  // 统一用它替代 window.confirm/alert，样式复用 #ob-work-confirm 的覆盖层模式。
+  // resolve(true)=用户确认，resolve(false)=取消/Escape/点击遮罩。
+  // AI API Key 输入保留 window.prompt 是刻意的：浏览器原生 prompt 不把输入
+  // 内容暴露给页面 DOM/事件，是本脚本里唯一不经过自建 UI 的秘密输入路径。
+  function showOBConfirm(message, options) {
+    const opts = options && typeof options === 'object' ? options : {};
+    return new Promise((resolve) => {
+      const old = document.getElementById('ob-modal');
+      if (old) old.remove();
+      const overlay = document.createElement('div');
+      overlay.id = 'ob-modal';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', opts.title || 'OmniBlock 确认');
+      const box = document.createElement('div');
+      box.className = 'ob-modal-box';
+      const title = document.createElement('div');
+      title.className = 'ob-modal-title';
+      title.textContent = opts.title || '请确认';
+      const text = document.createElement('div');
+      text.className = 'ob-modal-message';
+      text.textContent = String(message == null ? '' : message);
+      const row = document.createElement('div');
+      row.className = 'ob-modal-row';
+      const ok = document.createElement('button');
+      ok.type = 'button'; ok.className = 'ob-modal-ok'; ok.textContent = opts.okText || '确定';
+      row.appendChild(ok);
+      if (!opts.hideCancel) {
+        const cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = 'ob-modal-no'; cancel.textContent = opts.cancelText || '取消';
+        cancel.onclick = () => finish(false);
+        row.insertBefore(cancel, ok);
+      }
+      box.append(title, text, row);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        document.removeEventListener('keydown', onKey, true);
+        resolve(result);
+      };
+      const onKey = (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      };
+      ok.onclick = () => finish(true);
+      overlay.onclick = (event) => { if (event.target === overlay && !opts.hideCancel) finish(false); };
+      document.addEventListener('keydown', onKey, true);
+      ok.focus();
+    });
+  }
+
+  // actionType（OB-UI-001）：本次确认对应的操作类别（quick/bulk/danmaku），
+  // 用于“最近本地屏蔽操作”列表；默认 quick（平台原生菜单旁的快捷本地拉黑）。
+  function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel, actionType) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { EventLog.record('ui.confirm.rejected', { reasonCode: 'no-reliable-identity' }, { immediate: true }); showToast('无法识别可靠身份'); return; }
     EventLog.record('ui.confirm.open', { action: 'block', keyCount: normalizedKeys.length, hasLabel: !!label }, { immediate: true });
@@ -7615,6 +7837,19 @@
       try { PromptSystem.recordManualBlockFromAnchor(anchorEl); } catch (e) { EventLog.recordError('ai.feedback.manual-miss', e); }
       try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
       const persisted = !(transaction && transaction.result && transaction.result.persisted === false);
+      const committedKeys = transaction && transaction.result && Array.isArray(transaction.result.addedKeys)
+        ? transaction.result.addedKeys : [];
+      if (committedKeys.length) {
+        // 最近本地屏蔽操作：与撤销 toast 的 undo 使用同一批 keys，保证撤销一致。
+        try {
+          RecentActions.record({
+            type: actionType === 'bulk' || actionType === 'danmaku' ? actionType : 'quick',
+            platform: RecentActions.platformForKeys(committedKeys),
+            label: String(toastLabel || label || normalizedKeys[0] || ''),
+            addedKeys: committedKeys,
+          });
+        } catch (e) { EventLog.recordError('action.recent.record', e); }
+      }
       showToast(persisted
         ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
         : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`,
@@ -7622,6 +7857,13 @@
       // 立即重扫
       if (currentScanner) currentScanner.schedule();
     };
+  }
+
+  // 撤销窗口（OB-UI-001）：读取 undoToastSeconds 设置（sanitize 固定 5–30 秒），
+  // 默认 10 秒；读不到设置时按默认值处理，不让 toast 永不消失。
+  function undoToastDurationMs() {
+    const seconds = Number(Store.getSetting('undoToastSeconds'));
+    return clamp(Number.isFinite(seconds) ? Math.round(seconds) : 10, 5, 30) * 1000;
   }
 
   function showToast(msg, onUndo) {
@@ -7637,7 +7879,7 @@
     else undoButton.onclick = () => { if (undone) return; undone = true; EventLog.record('action.undo', { available: true }, { immediate: true }); onUndo(); t.remove(); if (currentScanner) currentScanner.schedule(); };
     EventLog.record('ui.toast', { hasUndo: typeof onUndo === 'function' }, { immediate: false });
     document.body.appendChild(t);
-    setTimeout(() => { if (t.parentNode) t.remove(); }, 5000);
+    setTimeout(() => { if (t.parentNode) t.remove(); }, undoToastDurationMs());
   }
 
   let currentScanner = null;
@@ -8855,7 +9097,7 @@
       btn.onpointerdown = (e) => { e.stopPropagation(); };
       btn.onclick = (e) => {
         e.stopPropagation(); e.preventDefault();
-        showConfirm('该弹幕发送者', info.keys, btn);
+        showConfirm('该弹幕发送者', info.keys, btn, null, null, null, '', 'danmaku');
       };
       item.appendChild(btn);
       dyDmHoverBtn = btn;
@@ -12552,7 +12794,9 @@
     return !el.getClientRects || el.getClientRects().length > 0;
   }
 
-  function blockMany(list, anchorEl, confirmLabel, onBlocked, toastLabel) {
+  // actionType（OB-UI-001）：批量入口的类别（bulk/danmaku），透传给确认气泡，
+  // 让“最近本地屏蔽操作”能区分弹幕批量与普通批量。
+  function blockMany(list, anchorEl, confirmLabel, onBlocked, toastLabel, actionType) {
     if (!list.length) { EventLog.record('action.bulk.empty', {}, { immediate: true }); showToast('没有可拉黑的用户'); return; }
     const keys = [];
     list.forEach((i) => i.keys.forEach((k) => { if (keys.indexOf(k) === -1) keys.push(k); }));
@@ -12576,7 +12820,7 @@
           Store.removeIdentities(addedKeys);
         } : null,
       };
-    }, '', toastLabel);
+    }, '', toastLabel, actionType === 'danmaku' ? 'danmaku' : 'bulk');
   }
 
   // ---- 一键屏蔽单个作品的关联用户 ----
@@ -12789,6 +13033,16 @@
         releaseWorkOperation();
         box.remove(); FloatingDock.release('work-block');
         focusPageAfterOmniBlock('work-commit');
+        if (addedKeys.length) {
+          try {
+            RecentActions.record({
+              type: 'work',
+              platform: RecentActions.platformForKeys(addedKeys),
+              label: String(result.title || '') + '：' + result.users.length + ' 位已识别用户',
+              addedKeys,
+            });
+          } catch (error) { EventLog.recordError('action.recent.record', error); }
+        }
         showToast((persisted ? '已屏蔽当前作品的 ' : '已在本页屏蔽但未确认落盘：') + result.users.length + ' 位已识别用户'
           + (result.partial ? '（结果可能不完整）' : '') + (persisted ? '' : '，请重试或导出备份'),
           addedKeys.length ? () => {
@@ -14101,7 +14355,7 @@
         EventLog.record('ui.douyin-danmaku.batch', { selected: current.length }, { immediate: true });
         blockMany(current, batch, '屏蔽选中的 ' + current.length + ' 位抖音弹幕发送者', () => {
           selected.clear(); render(); refresh();
-        });
+        }, '', 'danmaku');
       };
       const totalMessages = filtered.reduce((sum, info) => sum + (Number(info.messageCount) || 1), 0);
       const blockedCount = filtered.filter((info) => info.blockedKeys.length).length;
@@ -16348,7 +16602,7 @@
           anchorEl.removeAttribute('data-ob-dm-uid-preparing');
         }
         blockMany(prepared.records, anchorEl && anchorEl.isConnected ? anchorEl : null,
-          dmUidPreparationLabel(confirmLabel, prepared), onBlocked, toastLabel);
+          dmUidPreparationLabel(confirmLabel, prepared), onBlocked, toastLabel, 'danmaku');
       } catch (error) {
         if (anchorEl && anchorEl.isConnected) {
           anchorEl.disabled = false;
@@ -16356,7 +16610,7 @@
         }
         EventLog.recordError('action.dm.uid-prepare', error);
         showToast('弹幕 UID 识别失败，将保留 hash 屏蔽');
-        blockMany(records, anchorEl && anchorEl.isConnected ? anchorEl : null, confirmLabel, onBlocked, toastLabel);
+        blockMany(records, anchorEl && anchorEl.isConnected ? anchorEl : null, confirmLabel, onBlocked, toastLabel, 'danmaku');
       }
     }
 
@@ -16386,6 +16640,16 @@
         return;
       }
       if (result.rejected) { showToast('无法识别可靠身份'); return; }
+      if (result.addedKeys && result.addedKeys.length) {
+        try {
+          RecentActions.record({
+            type: 'danmaku',
+            platform: RecentActions.platformForKeys(result.addedKeys),
+            label: '唯一候选：' + String(candidate.name || '') + '（UID ' + candidate.uid + '）',
+            addedKeys: result.addedKeys,
+          });
+        } catch (e) { EventLog.recordError('action.recent.record', e); }
+      }
       expandedDmUidGroups.delete(content);
       refreshDmTool();
       scanDmPanels();
@@ -16411,7 +16675,8 @@
           clearDanmakuExemptionsForManualBlock(keys);
           const result = Store.confirmIdentityLink(keys, candidate.name, note);
           return { result, undo: result.undo };
-        }
+        },
+        '', '', 'danmaku'
       );
     }
 
@@ -18618,6 +18883,18 @@
         globalCandidateCount: globalGroups.length, addedKeyCount: addedKeys.length, persisted: basePersisted,
         basePersisted,
       }, { immediate: true });
+      if (addedKeys.length) {
+        // 最近本地屏蔽操作只记录本次审核直接写入的全局身份；后台 UID 增强
+        // 的补充身份有自己的 toast 撤销，不重复计入。
+        try {
+          RecentActions.record({
+            type: 'ai',
+            platform: RecentActions.platformForKeys(addedKeys),
+            label: 'AI 审核确认：当前作品 ' + localCandidates.length + ' 项，全局新增 ' + addedKeys.length + ' 个身份',
+            addedKeys,
+          });
+        } catch (error) { EventLog.recordError('action.recent.record', error); }
+      }
       const undo = () => {
         const removedScoped = ScopedBlocks.remove(localTokens);
         const removedGlobal = undoIdentityKeys(addedKeys);
@@ -20178,89 +20455,136 @@
         <div class="ob-meta">当前屏蔽身份数：<b id="ob-count">0</b> · 平台：B站/微博/知乎/贴吧/X/抖音</div>
         <p id="ob-runtime-build" style="color:#777;font-size:11px;margin:5px 0 0;word-break:break-all"></p>
 
-        <h3>反馈与日志</h3>
-        <p class="ob-log-intro">日志按本地日期记录 OmniBlock 的完整运行事件摘要流，包括扫描批次、DOM 变化摘要、用户操作、收集/分页阶段、状态转移和错误；其中空闲页面的高频扫描与 DOM 观察按 10 秒窗口汇总。日志只保存在本机；不会记录 Cookie、Token、请求头、身份键、评论/弹幕正文、完整 URL 或原始 HTML。</p>
-        <div class="ob-log-toolbar">
-          <select id="ob-log-day" aria-label="日志日期"></select>
-          <button id="ob-log-refresh" type="button">刷新日志</button>
-          <button id="ob-log-copy" type="button">复制诊断摘要</button>
-          <button id="ob-log-export" type="button">导出日志 JSON</button>
-          <button id="ob-log-clear" class="ob-log-danger" type="button">清空日志</button>
-        </div>
-        <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-log-enabled" checked> 自动记录详细运行日志</label>
-        <div id="ob-log-status" class="ob-log-status"></div>
-        <div id="ob-log-summary" class="ob-log-summary"></div>
-        <pre id="ob-log-events" class="ob-log-events" aria-live="polite"></pre>
+        <nav class="ob-nav" id="ob-nav" aria-label="设置分组导航">
+          <button type="button" data-ob-nav-target="ob-group-block">屏蔽与名单</button>
+          <button type="button" data-ob-nav-target="ob-group-rules">规则</button>
+          <button type="button" data-ob-nav-target="ob-group-backup">备份与同步</button>
+          <button type="button" data-ob-nav-target="ob-group-about">更新与关于</button>
+          <button type="button" data-ob-nav-target="ob-group-logs">日志诊断</button>
+        </nav>
 
-        <h3>新增屏蔽</h3>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="ob-plat">
-            <option value="bili">B站 uid</option>
-            <option value="weibo">微博 uid</option>
-            <option value="zhihu">知乎 token</option>
-            <option value="tieba">贴吧 uid</option>
-            <option value="x">X handle</option>
-            <option value="douyin">抖音 sec_uid</option>
-          </select>
-          <input id="ob-val" placeholder="身份值（如 2233 / MS4wLjAB... / elonmusk）" style="flex:1;min-width:200px">
-          <input id="ob-label" placeholder="备注名（可选）" style="width:140px">
-          <button id="ob-add" style="background:#c0392b;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer">添加</button>
-        </div>
+        <section class="ob-group" id="ob-group-block">
+          <h3>屏蔽与名单</h3>
 
-        <h3>帖子 / 动态等其他内容的隐藏方式</h3>
-        <div style="display:flex;gap:16px;flex-wrap:wrap">
-          <label><input type="radio" name="ob-mode" value="collapse" checked> 折叠成灰条（默认，可追溯）</label>
-          <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>
-          <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
-          <label><input type="checkbox" id="ob-hover" checked> 显示平台专用悬浮入口（如抖音弹幕）</label>
-          <label><input type="checkbox" id="ob-quick" checked> 显示"本地拉黑"入口（含B站弹幕工具）</label>
-          <label><input type="checkbox" id="ob-bulk" checked> 显示批量拉黑入口（含弹幕勾选批量）</label>
-          <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
-          <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
-        </div>
-
-        <h3>平台专用屏蔽入口</h3>
-        <p class="ob-settings-ai-note">B站和抖音的关键词/正则规则在「内容屏蔽」弹窗的「关键词屏蔽」标签；新规则默认启用，命中可靠身份后直接写入本地名单，不消耗 AI token，也不需要逐条确认。AI 智能屏蔽同样在内容屏蔽弹窗中配置。下面两个按钮可在任意页面打开同一个规则管理界面（就地编辑、备注、命中计数、导入导出、跨平台规则）。</p>
-        <div class="ob-keyword-entry"><button id="ob-open-rules-bili" type="button">B站规则管理</button><button id="ob-open-rules-douyin" type="button">抖音规则管理</button></div>
-
-        <h3>名单（点击删除）</h3>
-        <div class="ob-list" id="ob-list"></div>
-
-        <h3>备份</h3>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button id="ob-export" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导出 JSON</button>
-          <button id="ob-import" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导入 JSON</button>
-          <button id="ob-restore-backup" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">恢复上一份快照</button>
-          <input type="file" id="ob-file" accept="application/json" style="display:none">
-        </div>
-        <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-local-backup" checked> 自动保留本地快照（最近 5 份）</label>
-        <div id="ob-backup-status" style="color:#999;font-size:12px;margin-top:5px"></div>
-        <div id="ob-storage-status" style="color:#999;font-size:12px;margin-top:5px"></div>
-
-        <h3>账户同步（客户端加密）</h3>
-        <p class="ob-sync-intro">同步名单、设置、AI 提示词和反馈。只有你点击“立即同步（合并）”时才访问同步服务；服务器只保存客户端加密文档，不能读取正文。账户密码和同步口令只在本次操作的内存中使用，API Key、登录令牌、运行日志、本地快照和浏览器登录态不会上传。首次填写新的服务域名时，Tampermonkey 可能显示跨源权限提示；不要把密码或同步口令写进导出文件。</p>
-        <div class="ob-sync-form">
-          <label>同步服务地址<input id="ob-sync-endpoint" type="url" inputmode="url" autocomplete="url" placeholder="https://sync.example.invalid"></label>
-          <label>账户名<input id="ob-sync-username" type="text" inputmode="email" autocomplete="username" placeholder="例如 omniblock-user"></label>
-          <label>账户密码<input id="ob-sync-password" type="password" autocomplete="current-password"></label>
-          <label>同步口令<input id="ob-sync-passphrase" type="password" autocomplete="new-password" placeholder="至少 8 个字符；每台设备输入同一口令"></label>
-          <div class="ob-sync-actions">
-            <button id="ob-sync-register" type="button">注册账户</button>
-            <button id="ob-sync-login" type="button">登录</button>
-            <button id="ob-sync-now" class="ob-sync-primary" type="button">立即同步（合并）</button>
-            <button id="ob-sync-logout" type="button">退出本机账户</button>
+          <h4>新增屏蔽</h4>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="ob-plat">
+              <option value="bili">B站 uid</option>
+              <option value="weibo">微博 uid</option>
+              <option value="zhihu">知乎 token</option>
+              <option value="tieba">贴吧 uid</option>
+              <option value="x">X handle</option>
+              <option value="douyin">抖音 sec_uid</option>
+            </select>
+            <input id="ob-val" placeholder="身份值（如 2233 / MS4wLjAB... / elonmusk）" style="flex:1;min-width:200px">
+            <input id="ob-label" placeholder="备注名（可选）" style="width:140px">
+            <button id="ob-add" style="background:#c0392b;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer">添加</button>
           </div>
-          <div id="ob-sync-status" class="ob-sync-status" aria-live="polite"></div>
-        </div>
 
-        <h3>更新</h3>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="ob-update" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">检查更新</button>
-          <span id="ob-update-status" style="font-size:12px;color:#999"></span>
-        </div>
-        <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
+          <h4>帖子 / 动态等其他内容的隐藏方式</h4>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <label><input type="radio" name="ob-mode" value="collapse" checked> 折叠成灰条（默认，可追溯）</label>
+            <label><input type="radio" name="ob-mode" value="disappear"> 完全消失</label>
+            <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
+            <label><input type="checkbox" id="ob-hover" checked> 显示平台专用悬浮入口（如抖音弹幕）</label>
+            <label><input type="checkbox" id="ob-quick" checked> 显示"本地拉黑"入口（含B站弹幕工具）</label>
+            <label><input type="checkbox" id="ob-bulk" checked> 显示批量拉黑入口（含弹幕勾选批量）</label>
+            <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
+            <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
+            <label>撤销确认停留 <input type="number" id="ob-undo-seconds" min="5" max="30" style="width:56px"> 秒（5–30，默认 10）</label>
+          </div>
 
-        <p style="color:#999;font-size:12px;margin-top:14px">名单、浏览数据、AI 规则和反馈默认保存在本机；同步必须由你显式点击执行，且采用客户端加密合并。启用 AI 后，当前页截短后的评论/弹幕正文会发送到你填写的 AI API；API Key 只保存在当前设备的 Tampermonkey GM 存储。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处“模拟操作”，已带随机延迟/连续上限等安全阀。</p>
+          <h4>平台专用屏蔽入口</h4>
+          <p class="ob-settings-ai-note">B站和抖音的关键词/正则规则在「内容屏蔽」弹窗的「关键词屏蔽」标签；新规则默认启用，命中可靠身份后直接写入本地名单，不消耗 AI token，也不需要逐条确认。AI 智能屏蔽同样在内容屏蔽弹窗中配置。下面两个按钮可在任意页面打开同一个规则管理界面（就地编辑、备注、命中计数、导入导出、跨平台规则）。</p>
+          <div class="ob-keyword-entry"><button id="ob-open-rules-bili" type="button">B站规则管理</button><button id="ob-open-rules-douyin" type="button">抖音规则管理</button></div>
+
+          <h4>名单（点击删除）</h4>
+          <div class="ob-list-tools">
+            <input id="ob-list-search" type="search" placeholder="搜索名单：备注 / 身份键（不区分大小写）">
+            <select id="ob-list-platform" aria-label="按平台筛选名单">
+              <option value="all">全部平台</option>
+              <option value="bili">B站</option>
+              <option value="weibo">微博</option>
+              <option value="zhihu">知乎</option>
+              <option value="tieba">贴吧</option>
+              <option value="x">X</option>
+              <option value="douyin">抖音</option>
+              <option value="mixed">跨平台</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div id="ob-list-count" class="ob-list-count"></div>
+          <div class="ob-list" id="ob-list"></div>
+
+          <h4>最近本地屏蔽操作</h4>
+          <div id="ob-recent-actions" class="ob-recent-actions"></div>
+        </section>
+
+        <section class="ob-group" id="ob-group-rules">
+          <h3>规则</h3>
+          <p class="ob-settings-ai-note">关键词与正则规则（B站/抖音）在「内容屏蔽」弹窗的「关键词屏蔽」标签管理：就地编辑、逐条备注、命中计数、导入导出和跨平台作用域都在那里；也可以用「屏蔽与名单」分组里的「B站规则管理」「抖音规则管理」按钮在任意页面打开同一个界面。规则命中可靠身份后直接写入本地名单，不消耗 AI token；规则自动写入不属于人工确认操作，因此不出现在「最近本地屏蔽操作」里，可在规则例外中恢复。</p>
+        </section>
+
+        <section class="ob-group" id="ob-group-backup">
+          <h3>备份与同步</h3>
+
+          <h4>备份</h4>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="ob-export" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导出 JSON</button>
+            <button id="ob-import" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">导入 JSON</button>
+            <button id="ob-restore-backup" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">恢复上一份快照</button>
+            <input type="file" id="ob-file" accept="application/json" style="display:none">
+          </div>
+          <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-local-backup" checked> 自动保留本地快照（最近 5 份）</label>
+          <div id="ob-backup-status" style="color:#999;font-size:12px;margin-top:5px"></div>
+          <div id="ob-storage-status" style="color:#999;font-size:12px;margin-top:5px"></div>
+
+          <h4>账户同步（客户端加密）</h4>
+          <p class="ob-sync-intro">同步名单、设置、AI 提示词和反馈。只有你点击“立即同步（合并）”时才访问同步服务；服务器只保存客户端加密文档，不能读取正文。账户密码和同步口令只在本次操作的内存中使用，API Key、登录令牌、运行日志、本地快照和浏览器登录态不会上传。首次填写新的服务域名时，Tampermonkey 可能显示跨源权限提示；不要把密码或同步口令写进导出文件。</p>
+          <div class="ob-sync-form">
+            <label>同步服务地址<input id="ob-sync-endpoint" type="url" inputmode="url" autocomplete="url" placeholder="https://sync.example.invalid"></label>
+            <label>账户名<input id="ob-sync-username" type="text" inputmode="email" autocomplete="username" placeholder="例如 omniblock-user"></label>
+            <label>账户密码<input id="ob-sync-password" type="password" autocomplete="current-password"></label>
+            <label>同步口令<input id="ob-sync-passphrase" type="password" autocomplete="new-password" placeholder="至少 8 个字符；每台设备输入同一口令"></label>
+            <div class="ob-sync-actions">
+              <button id="ob-sync-register" type="button">注册账户</button>
+              <button id="ob-sync-login" type="button">登录</button>
+              <button id="ob-sync-now" class="ob-sync-primary" type="button">立即同步（合并）</button>
+              <button id="ob-sync-logout" type="button">退出本机账户</button>
+            </div>
+            <div id="ob-sync-status" class="ob-sync-status" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="ob-group" id="ob-group-about">
+          <h3>更新与关于</h3>
+          <h4>更新</h4>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="ob-update" style="border:1px solid #ccc;background:#fff;border-radius:6px;padding:6px 14px;cursor:pointer">检查更新</button>
+            <span id="ob-update-status" style="font-size:12px;color:#999"></span>
+          </div>
+          <p style="color:#999;font-size:12px">点一下自动去仓库比对版本，有新版会弹出安装页（点一次即更新）。想彻底免拖文件：在 Tampermonkey 里把本脚本「更新 → 模式」设为「自动」，TM 会每天静默更新。</p>
+
+          <h4>隐私说明</h4>
+          <p style="color:#999;font-size:12px;margin-top:0">名单、浏览数据、AI 规则和反馈默认保存在本机；同步必须由你显式点击执行，且采用客户端加密合并。启用 AI 后，当前页截短后的评论/弹幕正文会发送到你填写的 AI API；API Key 只保存在当前设备的 Tampermonkey GM 存储。仅在你点击检查更新时请求脚本更新地址。抖音推荐流跳过是唯一一处“模拟操作”，已带随机延迟/连续上限等安全阀。</p>
+        </section>
+
+        <section class="ob-group ob-group-last" id="ob-group-logs">
+          <h3>日志诊断</h3>
+          <h4>反馈与日志</h4>
+          <p class="ob-log-intro">日志按本地日期记录 OmniBlock 的完整运行事件摘要流，包括扫描批次、DOM 变化摘要、用户操作、收集/分页阶段、状态转移和错误；其中空闲页面的高频扫描与 DOM 观察按 10 秒窗口汇总。日志只保存在本机；不会记录 Cookie、Token、请求头、身份键、评论/弹幕正文、完整 URL 或原始 HTML。</p>
+          <div class="ob-log-toolbar">
+            <select id="ob-log-day" aria-label="日志日期"></select>
+            <button id="ob-log-refresh" type="button">刷新日志</button>
+            <button id="ob-log-copy" type="button">复制诊断摘要</button>
+            <button id="ob-log-export" type="button">导出日志 JSON</button>
+            <button id="ob-log-clear" class="ob-log-danger" type="button">清空日志</button>
+          </div>
+          <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-log-enabled" checked> 自动记录详细运行日志</label>
+          <div id="ob-log-status" class="ob-log-status"></div>
+          <div id="ob-log-summary" class="ob-log-summary"></div>
+          <pre id="ob-log-events" class="ob-log-events" aria-live="polite"></pre>
+        </section>
       </div>`;
     document.body.appendChild(panel);
     FloatingDock.hold('settings');
@@ -20287,6 +20611,14 @@
     }
     panel.querySelector('.ob-close').onclick = closePanel;
     panel.onclick = (e) => { if (e.target === panel) closePanel(); };
+    panel.querySelectorAll('.ob-nav button[data-ob-nav-target]').forEach((button) => {
+      button.onclick = () => {
+        const targetId = button.getAttribute('data-ob-nav-target');
+        const target = document.getElementById(targetId);
+        EventLog.record('ui.settings.nav', { target: targetId }, { immediate: true });
+        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    });
     EventLog.record('ui.settings.open', { source: 'gear-or-menu' }, { immediate: true });
 
     function openKeywordManager(platformId) {
@@ -20505,9 +20837,9 @@
         refreshSync();
       }
     };
-    syncLogout.onclick = () => {
+    syncLogout.onclick = async () => {
       if (!AccountSync.status().loggedIn) { showToast('当前没有登录账户'); return; }
-      if (typeof window.confirm === 'function' && !window.confirm('退出本机同步账户？云端数据不会删除，本机名单也不会删除。')) return;
+      if (!(await showOBConfirm('退出本机同步账户？云端数据不会删除，本机名单也不会删除。', { title: '退出本机账户', okText: '退出登录' }))) return;
       AccountSync.logout();
       syncPasswordInput.value = '';
       syncPassphraseInput.value = '';
@@ -20547,24 +20879,42 @@
       setTimeout(() => URL.revokeObjectURL(link.href), 2000);
       refreshLogs();
     };
-    panel.querySelector('#ob-log-clear').onclick = () => {
-      if (!window.confirm('清空本机保存的全部 OmniBlock 运行日志？名单和备份不会受影响。')) return;
+    panel.querySelector('#ob-log-clear').onclick = async () => {
+      if (!(await showOBConfirm('清空本机保存的全部 OmniBlock 运行日志？名单和备份不会受影响。', { title: '清空日志', okText: '清空' }))) return;
       EventLog.clear();
       EventLog.record('diagnostic.clear', { scope: 'all' }, { immediate: true });
       refreshLogs();
     };
 
-    function refresh() {
-      panel.querySelector('#ob-count').textContent = String(Index.size());
+    const listSearchInput = panel.querySelector('#ob-list-search');
+    const listPlatformSelect = panel.querySelector('#ob-list-platform');
+
+    // 名单（点击删除）渲染：支持关键词搜索（备注/身份键，不区分大小写）与
+    // 平台筛选；筛选只影响本区显示，不改变存储与分组顺序。
+    function renderBlocklist() {
       const list = panel.querySelector('#ob-list');
+      const countEl = panel.querySelector('#ob-list-count');
+      if (!list || !countEl) return;
       list.innerHTML = '';
       const ps = Store.persons();
+      const all = [];
+      for (const id in ps) all.push({ id, person: ps[id] });
+      const query = String(listSearchInput && listSearchInput.value || '').trim().toLowerCase();
+      const platformFilter = String(listPlatformSelect && listPlatformSelect.value || 'all');
+      const matches = (entry) => {
+        const p = entry.person;
+        if (platformFilter !== 'all' && platformGroupForPerson(p) !== platformFilter) return false;
+        if (!query) return true;
+        const haystack = [p.label || '', p.note || ''].concat(Array.isArray(p.identities) ? p.identities : [])
+          .join('\n').toLowerCase();
+        return haystack.includes(query);
+      };
+      const visible = all.filter(matches);
       const grouped = new Map();
-      for (const id in ps) {
-        const p = ps[id];
-        const group = platformGroupForPerson(p);
+      for (const entry of visible) {
+        const group = platformGroupForPerson(entry.person);
         if (!grouped.has(group)) grouped.set(group, []);
-        grouped.get(group).push({ id, person: p });
+        grouped.get(group).push(entry);
       }
       const order = ['bili', 'weibo', 'douyin', 'zhihu', 'tieba', 'x', 'mixed', 'other'];
       for (const group of order) {
@@ -20581,23 +20931,89 @@
           const row = document.createElement('div');
           row.className = 'ob-item';
           if (p.note) row.title = '屏蔽依据：' + p.note;
-        const details = document.createElement('div');
-        const name = document.createElement('div'); name.textContent = p.label || '未命名';
-        const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).map(formatIdentityForDisplay).join('  ');
-        details.append(name, identities);
-        if (p.note) {
-          const note = document.createElement('div'); note.className = 'ob-note'; note.textContent = p.note;
-          details.appendChild(note);
-        }
-        row.appendChild(details);
-        const del = document.createElement('button');
-        del.className = 'ob-del'; del.textContent = '删除';
-        del.onclick = () => { Store.removePerson(id); refresh(); if (currentScanner) currentScanner.schedule(); };
-        row.appendChild(del);
+          const details = document.createElement('div');
+          const name = document.createElement('div'); name.textContent = p.label || '未命名';
+          const identities = document.createElement('div'); identities.className = 'ob-meta'; identities.textContent = (p.identities || []).map(formatIdentityForDisplay).join('  ');
+          details.append(name, identities);
+          if (p.note) {
+            const note = document.createElement('div'); note.className = 'ob-note'; note.textContent = p.note;
+            details.appendChild(note);
+          }
+          row.appendChild(details);
+          const del = document.createElement('button');
+          del.className = 'ob-del'; del.textContent = '删除';
+          del.onclick = () => { Store.removePerson(id); refresh(); if (currentScanner) currentScanner.schedule(); };
+          row.appendChild(del);
           section.appendChild(row);
         }
         list.appendChild(section);
       }
+      if (!all.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ob-list-empty';
+        empty.textContent = '名单为空：确认拉黑或在上方“新增屏蔽”后，这里会按平台列出可删除的记录。';
+        list.appendChild(empty);
+      } else if (!visible.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ob-list-empty';
+        empty.textContent = '没有匹配的记录：换个搜索词，或把平台筛选切回“全部平台”。';
+        list.appendChild(empty);
+      }
+      countEl.textContent = all.length
+        ? ('显示 ' + visible.length + ' / 共 ' + all.length)
+        : '共 0 条记录';
+    }
+
+    // 最近本地屏蔽操作（OB-UI-001）：与撤销 toast 同一条移除路径
+    // （Store.removeIdentities + 扫描器重排），撤销后该条记录随之移除。
+    function renderRecentActions() {
+      const wrap = panel.querySelector('#ob-recent-actions');
+      if (!wrap) return;
+      wrap.textContent = '';
+      const items = RecentActions.list();
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ob-recent-empty';
+        empty.textContent = '还没有本地屏蔽操作记录；通过确认气泡拉黑后会在这里保留最近 ' + RecentActions.maxEntries + ' 条，可随时撤销。';
+        wrap.appendChild(empty);
+        return;
+      }
+      for (const entry of items) {
+        const row = document.createElement('div');
+        row.className = 'ob-recent-item';
+        row.dataset.recentId = entry.id;
+        row.dataset.recentType = entry.type;
+        row.dataset.recentCount = String(entry.addedKeys.length);
+        const main = document.createElement('div');
+        const title = document.createElement('div');
+        title.textContent = RecentActions.typeLabel(entry.type) + ' · ' + (entry.label || '本地屏蔽');
+        const meta = document.createElement('div');
+        meta.className = 'ob-meta';
+        const platformText = entry.platform === 'mixed' ? '跨平台'
+          : (PLATFORM_LABELS[entry.platform] || '');
+        meta.textContent = new Date(entry.at).toLocaleString() + ' · 新增 ' + entry.addedKeys.length + ' 个身份'
+          + (platformText ? ' · ' + platformText : '');
+        main.append(title, meta);
+        const undoBtn = document.createElement('button');
+        undoBtn.type = 'button';
+        undoBtn.className = 'ob-recent-undo';
+        undoBtn.textContent = '撤销';
+        undoBtn.onclick = () => {
+          const result = RecentActions.undoById(entry.id);
+          showToast(result.ok ? '已撤销：移除 ' + result.removed + ' 个身份' : '该记录的身份已不在名单中，无需撤销');
+          renderRecentActions();
+          renderBlocklist();
+          if (currentScanner) currentScanner.schedule();
+        };
+        row.append(main, undoBtn);
+        wrap.appendChild(row);
+      }
+    }
+
+    function refresh() {
+      panel.querySelector('#ob-count').textContent = String(Index.size());
+      renderBlocklist();
+      renderRecentActions();
       const s = Store.settings();
       panel.querySelector('#ob-enabled').checked = s.enabled;
       panel.querySelector('#ob-hover').checked = s.showHoverButton;
@@ -20605,6 +21021,7 @@
       panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
+      panel.querySelector('#ob-undo-seconds').value = String(s.undoToastSeconds);
       panel.querySelector('#ob-log-enabled').checked = s.logEnabled !== false;
       const backup = Store.backupStatus();
       const backupToggle = panel.querySelector('#ob-local-backup');
@@ -20666,6 +21083,13 @@
     panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); logSettingChange('showBulkBlock', e.target.checked); refreshBulkBlock(); };
     panel.querySelector('#ob-skip').onchange = (e) => { Store.setSetting('douyinAutoSkip', e.target.checked); logSettingChange('douyinAutoSkip', e.target.checked); };
     panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) { Store.setSetting('skipCap', v); logSettingChange('skipCap', v); } };
+    panel.querySelector('#ob-undo-seconds').onchange = (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!isNaN(v)) { Store.setSetting('undoToastSeconds', v); logSettingChange('undoToastSeconds', Store.getSetting('undoToastSeconds')); }
+      e.target.value = String(Store.getSetting('undoToastSeconds'));
+    };
+    if (listSearchInput) listSearchInput.oninput = () => renderBlocklist();
+    if (listPlatformSelect) listPlatformSelect.onchange = () => renderBlocklist();
     panel.querySelector('#ob-local-backup').onchange = (e) => {
       Store.setSetting('localBackupEnabled', e.target.checked);
       logSettingChange('localBackupEnabled', e.target.checked);
@@ -20681,9 +21105,9 @@
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     };
-    panel.querySelector('#ob-restore-backup').onclick = () => {
+    panel.querySelector('#ob-restore-backup').onclick = async () => {
       if (Store.backupStatus().count < 2) { showToast('暂无可恢复的上一份快照'); return; }
-      if (!window.confirm('恢复上一份本地快照？当前状态会先保留为新的快照。')) return;
+      if (!(await showOBConfirm('恢复上一份本地快照？当前状态会先保留为新的快照。', { title: '恢复上一份快照', okText: '恢复' }))) return;
       try {
         const result = Store.restorePreviousBackup();
         EventLog.record('action.backup.restore', { ok: result.persisted !== false, identities: result.identities }, { immediate: true });
@@ -20708,7 +21132,11 @@
           showToast((result.persisted === false ? '已在本页导入但未确认落盘：' : '导入完成：') + '新增 ' + result.identities + ' 个身份'
             + (result.skipped ? '，跳过 ' + result.skipped + ' 条无效记录' : '')
             + (result.persisted === false ? '，请重试或导出备份' : ''));
-        } catch (e) { EventLog.recordError('action.backup.import', e); alert('导入失败：' + e.message); }
+        } catch (e) {
+          EventLog.recordError('action.backup.import', e);
+          // 导入失败用自建提示浮层（OB-UI-001）；不再使用原生 alert。
+          void showOBConfirm('导入失败：' + (e && e.message || e), { title: '导入 JSON', okText: '知道了', hideCancel: true });
+        }
         file.value = '';
       };
       reader.readAsText(f);
@@ -20781,6 +21209,8 @@
       promptSystem: PromptSystem,
       sync: AccountSync,
       logs: EventLog,
+      recentActions: RecentActions,
+      ui: { undoToastDurationMs, showOBConfirm },
       danmakuRules: DanmakuRules,
       danmakuExemptions: DanmakuExemptions,
       runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },

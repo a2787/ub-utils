@@ -1,7 +1,7 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-10-27
-状态来源：v0.57.4（撤销右键接管）为当前公开版本；无 hover 控制坞、弹幕点按入口、移动/触控布局、AI 直连、客户端加密同步和独立服务已完成本地回归。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。上一轮 MV3 方案已标记 superseded。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.59.0（关键词/正则规则管理升级）为当前公开版本；v0.60.0（设置面板信息架构与操作一致性，OB-UI-001）已完成本地回归并作为本地候选留在工作区，未 commit/push/tag/Release。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 的对象库与 `refs/` 于当日丢失（`objects/pack` 只剩孤立 `.idx`、
 > 无 `.pack`；`git fsck` 对全部 ref 报 invalid sha1 pointer；工作区文件自始至终无损失）。经用户同意后从远端重建：重新克隆
@@ -12,59 +12,33 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.59.0`（当前公开版本）
-- 构建：`0.59.0-rule-manager`
+- 当前 userscript：`0.60.0`（本地候选）；当前公开版本为 `0.59.0`
+- 构建：`0.60.0-ui-settings-ia`
 - 当前公开版本/功能提交：`0.59.0` / `0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
-- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
-- 当前候选源码 SHA-256：`4ca96cbe3a82880483a4f0efb9159d1ee9d36e5151c7166e335a916d21b36bd6`
-- 发布状态：v0.59.0 功能提交 `0e3e89d` 已推送到 `origin/master`，`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0` / `0.59.0-rule-manager`；`v0.58.0`/`v0.57.4` 等历史 tag/Release 保持不变；未执行平台写入。
+- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0 候选改动仍在工作区，未提交）
+- 当前候选源码 SHA-256：`7283099f4f02ac3b56882669d247852726964c910e6d1ca25ea747863d14af02`
+- 发布状态：v0.59.0 功能提交 `0e3e89d` 已推送到 `origin/master`，`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`；v0.60.0 为本地候选（未 push/tag/Release），工作区含 `omniblock.user.js`、`test/ui-settings.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
 - 当前公开 tag/Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
+
+## 2026-10-27 设置面板信息架构与操作一致性（OB-UI-001，v0.60.0，本地候选未发布）
+
+- 范围/文件：`omniblock.user.js` 设置面板（`openOptions`）重组为「屏蔽与名单/规则/备份与同步/更新与关于/日志诊断」五分组 + 顶部导航锚点（scrollIntoView，「反馈与日志」移到最后）；名单（点击删除）新增搜索框（备注/身份键，不区分大小写）、平台筛选下拉、「显示 X / 共 Y」计数行与空态；新增 `undoToastSeconds` 设置（默认 10，收敛 5–30，随设置快照同步）与 `undoToastDurationMs`；新增 `RecentActions` 模块（独立键 `omniblock:recent-actions:v1`，环 20 条，只存时间/类型/计数/短标签/身份键，不入同步/导出/备份）并在快捷确认、`blockMany`（含弹幕批量）、作品提交、B站弹幕唯一候选、`commitReviewSelection` 五类人工确认提交点记账；新增 `showOBConfirm` 自建确认浮层，替代退出账户/清空日志/恢复快照/导入失败 4 处关键路径原生对话框（`window.confirm(` 7→4，`alert(` 清零；AI API Key 输入保留原生 prompt 并注释原因）。`@version` 0.59.0→0.60.0，构建 `0.60.0-ui-settings-ia`。
+- `structure regression`：新增 `test/ui-settings.cjs` 16/16（分组导航与 DOM 顺序、搜索/筛选/计数/空态、默认 10s 撤销窗口行为断言与 5s 收敛、最近操作记账与撤销后名单/记录同步移除、自建浮层取消/确认、源码级对话框计数与 recent-actions 快照隔离；旧行为上必然失败）；run 20/20、quickblock 38/38、userscript-product 7/7、danmaku-auto 8/8、work-block 3/3；页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。关键词自动规则命中/后台 UID 增强刻意不进最近操作（撤销会被规则再次覆盖，误导），边界写入面板文案与版本条目。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。v0.60.0 未 commit/push/tag/Release。
 
 ## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0，已发布）
 
-- 范围/文件：`omniblock.user.js` 规则引擎扩展（`normalizeDanmakuRule` 增加备注/作用域字段，旧数据默认原平台）；
-  `DanmakuRules` 新增 `update`（就地编辑，内容派生 id 并迁移命中计数）、`exportRules`/`importRules`（规则包 JSON，
-  规范化/去重/上限/危险正则校验）、`hitCount`/`totalHits`/`clearHits`（独立 GM 键 `omniblock:rule-hits:v1`，
-  延迟落盘，不经 Store 级联）；`compiled()` 合并另一平台 `scope==='both'` 的启用规则；`mountKeywordControls`
-  行内编辑 + 命中徽标 + 导出/导入/清零工具栏；设置面板「平台专用屏蔽入口」新增规则管理按钮（任意页面打开同一
-  浮层）；删除设置面板死代码（`autoStatusText`/`refreshAutoRules`/旧添加处理器）；修正 4 处"请在设置中…"
-  失效文案。`@version` 0.58.0→0.59.0，构建 `0.59.0-rule-manager`。
-- `structure regression`：新增 `test/rule-manager.cjs` 5/5（就地编辑、跨平台作用域、命中计数持久化/迁移/清理、
-  规则包往返与拒绝、设置面板入口与行内编辑 UI；旧源码上 update/计数/导入导出 API 不存在而失败）；全量矩阵通过：
-  danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7、content-ai 12/12、adapters 28/28、
-  state、performance、weibo-replay、douyin、work-block、comment-manager、ai-screening 25/25、ai-auto-gate 5/5、
-  ai-autoload 3/3、ai-batch、ai-bridge、ai-context、ai-fact-integration 4/4、ai-platforms 7/7、ai-prompt-eval 5/5、
-  ai-prompt-system 13/13、ai-watchdog、content-coverage 6/6、sync、sync-server；页面/控制台错误 0；
-  `node --check`、docs-check、隐私门禁通过。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
+- 规则就地编辑（类型/内容/备注/作用域，内容派生 id 并迁移命中计数）、每条规则本机持久命中计数（`omniblock:rule-hits:v1`，可清零、随删除清理）、规则包导出/导入（去重/上限/危险正则校验）、跨平台作用域；设置面板新增任意页面可达的规则管理按钮，删除旧自动规则死代码并修正 4 处失效文案。详细范围、证据与矩阵数字见 [v0.59.0 条目](../changelog/v0.59.0.md)。
+- `structure regression`：新增 `test/rule-manager.cjs` 5/5（旧源码上必然失败）；danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7 等全量矩阵通过。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
 
 ## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0，已发布）
 
-- 范围/文件：`omniblock.user.js` 新增 `aiAutoAnalyze` 设置（默认 `false`，随设置快照同步）；`scheduleAuto`
-  统一拦截自动分析（页面加载/路由/内容信号/页面可见全部自动触发点）；`analyzePage` 取消页规则强制；
-  自动候选改「AI 待审建议」浮条（`#ob-ai-pending`，不再自动弹窗，点击进同一套多选审核）；AI 面板新增自动开关、
-  本机用量计数（`omniblock:ai-usage:v1`，仅请求/条数/字符，不入同步/导出）与"本地名单/关键词已先行处理 N 条"
-  提示；状态文案同步。`@version` 0.57.4→0.58.0，构建 `0.58.0-ai-manual-first`。
-- `structure regression`：新增 `test/ai-auto-gate.cjs` 5 项全绿（默认 0 次自动请求、手动免页规则、浮条契约、
-  用量计数与持久化）；ai-screening 25/25、content-ai 12/12、ai-platforms 7/7、ai-prompt-system 13/13、
-  ai-prompt-eval 5/5、ai-fact-integration 4/4、content-coverage 6/6、ai-batch 2/2、ai-autoload 3/3、
-  ai-bridge、ai-watchdog、ai-context、run 20/20、quickblock 38/38、danmaku-auto 8/8、userscript-product 7/7；
-  页面/控制台错误 0。旧行为失败对照未实跑（写入保护钩子拒绝以 shell 换入旧源码），按源码路径推理记录：
-  旧 `start()` 固定 `scheduleAuto(1400)`、`analyzePage('')` 直接报"请先填写本页面附加规则"、自动候选直接
-  `showReview`，见 [v0.58.0 条目](../changelog/v0.58.0.md)。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停，本轮未请求授权）；v0.58.0 未发布。
-- 安全加固（同候选内，2026-10-27）：`window.OB` 调试句柄不再无条件暴露给页面脚本——此前恶意页面可改写
-  AI provider 地址把本机 Key 发往第三方、篡改名单或外传页面内容；现在只有显式 `__OB_TEST_HOOKS__` 的
-  测试/探针注入环境（document-start 时设置）才挂载，生产页面只有只读 `__OB_RUNTIME_INFO__`。全部测试
-  夹具/探针/开发扩展构建器已同步声明钩子。Mimosa 深度扫描 125 项逐条分诊：20 个 high 为按设计跨域能力的
-  静态污点告警（真实攻击面即上述句柄暴露，已修复）；~55 条 mongo-sort-injection 与 ~35 条 xss 链核实为
-  误报（15 处 innerHTML 全为静态模板、动态内容全走 textContent；server.py 为参数化 SQL）；6 条跨文件
-  疑似污点指向参数化 SQL 与 mock transport，不成立。分诊细节见 [v0.58.0 条目](../changelog/v0.58.0.md)。
-- 既有损坏（非本轮引入）：`test/dev-extension.cjs` 的 loopback AI 桥接用例写入的 `aiGatewayUrl` 在
-  v0.57.1 直连切换后已从源码移除，该用例结构性过时；修复另立 OB-MAINT-003。
-- 依赖自动分析路径的既有测试 shim 已显式 `aiAutoAnalyze: true`；用户决策同步进计划：采纳"自动候选不打断"
-  （并入本项）、名单搜索/筛选（并入 OB-UI-001）、深色模式（新 OB-UI-003）；否决平台主开关、全局快捷键、
-  新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004（proposed）。
+- 范围/文件：`omniblock.user.js` 新增 `aiAutoAnalyze` 设置（默认 `false`，随设置快照同步）；`scheduleAuto` 统一拦截自动分析；自动候选改「AI 待审建议」浮条（`#ob-ai-pending`，不再自动弹窗）；AI 面板新增自动开关与本机用量计数（`omniblock:ai-usage:v1`，仅请求/条数/字符，不入同步/导出）；手动分析取消页规则强制。详细范围与状态文案见 [v0.58.0 条目](../changelog/v0.58.0.md)。
+- `structure regression`：新增 `test/ai-auto-gate.cjs` 5 项全绿（默认 0 次自动请求、手动免页规则、浮条契约、用量计数与持久化；旧行为失败对照按源码路径推理记录，见该版本条目）；ai-screening 25/25 等全量矩阵通过，页面/控制台错误 0。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；v0.58.0 已随后续发布。
+- 安全加固（同轮）：`window.OB` 调试句柄只在显式 `__OB_TEST_HOOKS__` 的测试/探针注入环境挂载，生产页面只有只读 `__OB_RUNTIME_INFO__`；此前恶意页面可改写 AI provider 地址外传本机 Key。Mimosa 深度扫描 125 项逐条分诊：20 个 high 为按设计跨域能力的静态污点告警（真实攻击面即上述句柄暴露，已修复），~90 条 mongo-sort/xss 链核实为误报；细节见 [v0.58.0 条目](../changelog/v0.58.0.md)。
+- 既有损坏（非本轮引入）：`test/dev-extension.cjs` 的 loopback AI 桥接用例写入的 `aiGatewayUrl` 在 v0.57.1 直连切换后已从源码移除，该用例结构性过时；修复另立 OB-MAINT-003。
+- 用户决策同步：自动候选不打断（并入 OB-AI-015）、名单搜索/筛选（并入 OB-UI-001，本页 2026-10-27 候选条目）、深色模式（OB-UI-003）；否决平台主开关、全局快捷键、新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004。
 
 ## 2026-10-27 接手调查与 AI 成本治理规划（无代码改动）
 
@@ -203,7 +177,9 @@ v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v
 
 ## 下一项最有价值的验证
 
-v0.58.0 已公开发布（含 OB-AI-015 与页面句柄安全门禁）；维护重心按已确认顺序推进 **OB-RULE-003（关键词/正则
-规则管理升级）**，随后 OB-UI-001 → OB-AI-016 → OB-RULE-004 → OB-UI-003 → OB-MAINT-003。实页验证（新默认值
-页面加载 0 次自动 AI 请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：
-贴吧右键证据仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
+v0.59.0 已公开发布（OB-RULE-003）；v0.60.0（OB-UI-001 设置面板信息架构与操作一致性）已通过全量本地回归并作为
+本地候选留在工作区，待编排方 commit/push/tag/Release。维护重心按已确认顺序推进 **OB-AI-016（已分析持久缓存与
+自动批量上限）**，随后 OB-RULE-004 → OB-UI-003 → OB-MAINT-003。实页验证（v0.60.0 面板分组导航/搜索/最近操作与
+撤销窗口在真实拉黑后的行为，以及 v0.58.0 遗留的新默认值页面加载 0 次自动 AI 请求、待审浮条交互）待用户恢复授权
+后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout`
+仍需另立专项处理。

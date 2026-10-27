@@ -89,19 +89,19 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-UI-001 — 设置面板信息架构与操作一致性
 
-- status: proposed
+- status: verified
 - priority: P2
-- scope: 设置面板（`openOptions`）信息架构重构：按"屏蔽与名单 / 规则 / 备份与同步 / 更新与关于 / 日志诊断"分组导航，核心操作前置、日志诊断后置，支持分节跳转；名单（点击删除）增加搜索与筛选（按平台、身份类型、关键词过滤，命中文本高亮），名单量大时可定位；撤销 toast 固定 5 秒加长为可配置（默认 ≥10 秒），并在面板提供"最近本地屏蔽操作"撤销列表（复用 EventLog 脱敏元数据，不含正文）；退出同步账户、清空日志、恢复快照等 `window.confirm/prompt` 关键路径统一为自建确认浮层；清理其他指向失效的提示文案。
-- non-goals: 不改存储格式与同步协议；不动平台适配与屏蔽执行链；平台级主开关（用户 2026-10-27 否决）、全局快捷键（用户否决，平板仍在用）、新手引导（用户否决，自用工具）不做；深色模式在 OB-UI-003。
+- scope: 设置面板（`openOptions`）信息架构重构：按"屏蔽与名单 / 规则 / 备份与同步 / 更新与关于 / 日志诊断"分组导航，核心操作前置、日志诊断后置，支持分节跳转；名单（点击删除）增加搜索与筛选（按平台、关键词过滤，不区分大小写）与"显示 X / 共 Y"计数行，空结果给出可读空态；撤销 toast 固定 5 秒加长为可配置（`undoToastSeconds`，默认 10 秒、收敛 5–30），并在面板提供"最近本地屏蔽操作"撤销列表（`RecentActions` 模块，独立 GM 键 `omniblock:recent-actions:v1`，环 20 条，只存时间/类型/计数/短标签/身份键，不含正文，不入同步/导出/备份）；退出同步账户、清空日志、恢复快照、导入失败提示统一为自建确认浮层 `showOBConfirm`（AI API Key 输入保留原生 prompt 并注释原因）；清理指向失效的提示文案。
+- non-goals: 不改存储格式与同步协议（`omniblock:data:v1` schema 不变；recent-actions 是独立键）；不动平台适配与屏蔽执行链；平台级主开关（用户 2026-10-27 否决）、全局快捷键（用户否决，平板仍在用）、新手引导（用户否决，自用工具）不做；深色模式在 OB-UI-003。
 - dependencies: none
 - acceptance: required
-  - [ ] 设置面板分组可导航，日志诊断不再置于首位；390px/768px/触控夹具无横向溢出（复用 product 断言）。
-  - [ ] 名单搜索/筛选可按平台与关键词过滤并在空结果时给出可理解空态。
-  - [ ] 撤销窗口可配置且默认加长；"最近操作"可撤销对应本地写入且不含敏感正文。
-  - [ ] 关键路径不再混用原生 `confirm/prompt` 与自建浮层（回归断言）。
-  - [ ] `test/run.cjs`、`test/userscript-product.cjs`、docs-check 通过。
-- evidence: 尚未实施（2026-10-27 立项）；本轮仅源码调查与计划，无行为断言与真实站点证据。
-- next: 排在 OB-RULE-003 之后实施。
+  - [x] 设置面板分组可导航（顶部 5 个锚点按钮 scrollIntoView），日志诊断置于备份与同步/更新与关于之后（DOM 顺序断言）；390px/768px 触控夹具无横向溢出（userscript-product 7/7 通过，面板按钮触控目标断言含新增按钮）。
+  - [x] 名单搜索/筛选可按平台与关键词过滤并在空结果时给出可理解空态（UI-LIST-1：计数行、大小写不敏感、平台筛选、空态文案）。
+  - [x] 撤销窗口可配置且默认加长（默认 10000ms，8.3s 行为断言旧源码必失败；`undoToastSeconds=5` 时提前消失）；"最近操作"可撤销对应本地写入且不含敏感正文（UI-ACTIONS-1：撤销后名单与记录同步移除；recent-actions 独立键且不进 Store 快照，UI-SRC-4 源码断言）。
+  - [x] 关键路径不再混用原生 `confirm/prompt` 与自建浮层（UI-MODAL-1 行为断言 + UI-SRC-1/2/3 源码断言：openOptions 函数体内无原生对话框，`window.confirm(` 7→4 处，`alert(` 清零）。
+  - [x] `test/run.cjs` 20/20、`test/userscript-product.cjs` 7/7、docs-check 通过。
+- evidence: `structure regression`：新增 `test/ui-settings.cjs` 16 项全绿（人工合成 B站评论夹具；源码级断言在旧实现上必然失败：旧 showToast 固定 5000ms、无 `#ob-recent-actions`、无搜索框、openOptions 使用原生 confirm）；run 20/20、quickblock 38/38、userscript-product 7/7、danmaku-auto 8/8、work-block 3/3，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。随 v0.60.0 本地候选交付（未 push/tag/Release）。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
+- next: 已实现并随 v0.60.0 本地候选交付；实页验证（分组导航/搜索/最近操作在真实拉黑后的行为）待用户恢复授权后补齐。关键词自动规则命中与后台 UID 增强刻意不进最近操作（撤销会被规则再次覆盖），边界记录在版本条目。
 - updated: 2026-10-27
 - supersedes: none
 
