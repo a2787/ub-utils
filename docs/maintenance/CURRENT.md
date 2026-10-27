@@ -1,31 +1,38 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-10-27
-状态来源：v0.59.0（关键词/正则规则管理升级）为当前公开版本；v0.60.0（OB-UI-001 设置面板信息架构）、v0.61.0（OB-AI-016 AI 已分析持久缓存与自动批量上限）与 v0.62.0（OB-RULE-004 已屏蔽内容样本库与规则提炼）已完成本地回归并作为本地候选留在工作区，未 commit/push/tag/Release。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.59.0（关键词/正则规则管理升级）为当前公开版本；v0.60.0（OB-UI-001 设置面板信息架构）、v0.61.0（OB-AI-016 AI 已分析持久缓存与自动批量上限）与 v0.62.0（OB-RULE-004 已屏蔽内容样本库与规则提炼）与 v0.63.0（OB-UI-003 自建界面深色模式）已完成本地回归并作为本地候选留在工作区，未 commit/push/tag/Release。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 对象库与 `refs/` 丢失（工作区无损失），经用户同意从远端重建，v0.55.0~v0.57.2 全部 tag 恢复；唯一无法恢复的未推送提交 `c025d8b`（v0.57.3）的代码内容已随提交 `b83003a` 落库。细节见当时交接与 [v0.57.3 条目](../changelog/v0.57.3.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.62.0`（本地候选）；当前公开版本为 `0.59.0`
-- 构建：`0.62.0-rule-samples`
+- 当前 userscript：`0.63.0`（本地候选）；当前公开版本为 `0.59.0`
+- 构建：`0.63.0-dark-mode`
 - 当前公开版本/功能提交：`0.59.0` / `0e3e89d1cd0277b12edd53be2f8fac392d4b0479`
-- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0~v0.62.0 候选改动仍在工作区，未提交）
-- 当前候选源码 SHA-256：`40f008ba4235365e30becf01a2440e8cb4897234dbf6e5659151de0123016601`
-- 发布状态：v0.59.0 为最新公开版本（`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`）；v0.60.0~v0.62.0 候选在本地队列，待统一发布——工作区含 `omniblock.user.js`、`test/ui-settings.cjs`、`test/ai-auto-gate.cjs`、`test/rule-samples.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
+- 最近验证的源码快照：`0e3e89d1cd0277b12edd53be2f8fac392d4b0479`（v0.60.0~v0.63.0 候选改动仍在工作区，未提交）
+- 当前候选源码 SHA-256：`97d9d02b28d9fa0188e2d1242a69e964c19f96c78b975aeffbc9d74586f9763d`
+- 发布状态：v0.59.0 为最新公开版本（`v0.59.0` tag 与 GitHub Release（Latest）已创建，raw 更新地址已服务 `0.59.0`）；v0.60.0~v0.63.0 候选在本地队列，待统一发布——工作区含 `omniblock.user.js`、`test/ui-settings.cjs`、`test/ai-auto-gate.cjs`、`test/rule-samples.cjs`、`test/dark-mode.cjs` 与文档改动，版本控制由编排方处理；未执行平台写入。
 - 当前公开 tag/Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
+
+## 2026-10-27 自建界面深色模式（OB-UI-003，v0.63.0，本地候选未发布）
+
+- 范围：系统深色（`prefers-color-scheme: dark`）时全部自建 UI（设置面板、内容弹窗与嵌入管理器、AI 审核/反馈浮层、关键词面板、确认气泡与自建确认浮层、作品确认、批量范围面板、AI 待审/后台状态浮条、行内入口按钮）自动切换深色主题，无独立开关；原生表单控件与滚动条经 `color-scheme: dark`（只作用于自建浮层根节点）变暗；命中/作用域徽章保留色相换深底；深色下补 `:focus-visible` 焦点描边。
+- 实现与边界：浅色规则零改动——深色是样式表末尾纯追加的媒体查询覆盖段（142 条规则 + `--ob-dark-*` 设计令牌），零 JS 行为改动，布局/尺寸/z-index 不变，`:hover` 均有深色等价。
+- `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级：覆盖段规则数实测 142 ≥ 40、`color-scheme: dark`、全样式表仅 1 处 `@media (prefers-color-scheme`、`--ob-dark-*` 令牌就位；DARK-1 浏览器级：Playwright `emulateMedia` 双向切换——深色下面板/内容弹窗/确认气泡/确认浮层背景亮度 0.015、正文 0.824、输入框深底浅字、`#ob-panel` 计算色 `color-scheme=dark`，同一批元素浅色恢复白底深字且计算值回 `normal`；DARK-3 浅色快捷拉黑 → 确认 → 名单 → toast 链路不变）；run 20/20、userscript-product 7/7、ui-settings 16 项、`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
+- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。已知限制（无独立开关；行内入口在深色站点浅色区块上仍为深底；存储状态行错误红依赖 style 序列化匹配）见 [v0.63.0 条目](../changelog/v0.63.0.md)。v0.63.0 未 commit/push/tag/Release。
 
 ## 2026-10-27 已屏蔽内容样本库与规则提炼（OB-RULE-004，v0.62.0，本地候选未发布）
 
-- 范围/文件：`omniblock.user.js` 新增 `RuleSamples` 模块（独立 GM 键 `omniblock:rule-samples:v1`，按平台 LRU 200 条、正文规范化截断 240 字，仅本机，不进 Store 快照/同步/导出/备份/日志）并在五类人工确认提交点接入采样：`showConfirm` 快捷确认（锚点回溯正文，`PromptSystem.textFromAnchor` 窄出口）、`blockMany` 批量（每次最多 20 条，`sampleTextFromRecord` 优先 `text`、剥已确认 note 前缀）、作品确认（`openWorkBlock` commit）、B站弹幕唯一候选直接提交（`blockUniqueDmUidCandidate`）、AI 审核确认（`commitReviewSelection`，候选 `record.text`）；关键词自动规则写入（`flushAutoBiliUidQueue`/`flushDouyinAutoQueue`/`applyContentKeywordRule`）与后台 UID 增强刻意不采样。`mountKeywordControls` 新增可折叠「已屏蔽内容样本」区：最近 50 条样本逐条/勾选批量「转为关键词」（`DanmakuRules.add` 完整校验，转换不删样本）、「刷新」「清空样本」；「AI 归纳提炼规则」按钮经 `aiEnabled + aiTransportConfig + readAIDirectKey` 门控，取该平台最近 100 条样本正文发独立一次性直连请求（AI 模块新导出 `requestDirectJSON`，与手动分析同通道同瞬态重试，计入本机用量但不进分析管线），候选关键词默认勾选、正则默认不勾选，经「把选中加入规则」人工确认后写入，重复/超限/危险正则由 `add()` 拒绝并显示原因；候选仅内存缓存。`@version` 0.61.0→0.62.0，构建 `0.62.0-rule-samples`。
-- `structure regression`：新增 `test/rule-samples.cjs` 10/10（SOURCE-1 源码级：样本键字面量全源码 1 处、快照/AccountSync/导出不引用 RuleSamples、样本/归纳事件只含平台与计数；SAMPLE-1a 批量确认入库且不进名单导出、1b 去重移队首、1c LRU 200 淘汰最旧且持久化一致、CONV-1 勾选转关键词且样本保留、CONV-1b AI 门控 title、AI-1 请求只含样本正文无身份键/URL + 候选默认勾选态、AI-1b 重复去重与 `(a+)+` 拒绝、AI-ERR-1 500 → 可读失败零写入）；rule-manager 5/5、quickblock 38/38、danmaku-auto 8/8、run 20/20、userscript-product 7/7、ui-settings 16、work-block 3/3、comment-manager 3/3、adapters 28/28、content-ai 12/12、content-coverage 6/6、ai-screening 25/25、ai-auto-gate 11/11、ai-autoload 3/3、state、performance、douyin、real-bilibili-probe --verify-local（含弹幕工具/浮动弹幕）；页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。
+- 范围：确认拉黑五类提交点（快捷/批量/作品/B站弹幕/AI 审核确认）把正文（规范化截断 240 字）写入本机样本库 `RuleSamples`（独立 GM 键，按平台 LRU 200 条，仅本机，不进 Store 快照/同步/导出/备份/日志；关键词自动规则写入与后台 UID 增强刻意不采样）；关键词面板新增可折叠「已屏蔽内容样本」区（最近 50 条，逐条/勾选批量「转为关键词」，走 `DanmakuRules.add` 完整校验，转换不删样本，可刷新/清空）；「AI 归纳提炼规则」取该平台最近 100 条样本发独立一次性直连请求，候选关键词默认勾选、正则默认不勾选，经「把选中加入规则」人工确认后才写入，重复/超限/危险正则被拒并显示原因；候选仅内存缓存。`@version` 0.61.0→0.62.0，构建 `0.62.0-rule-samples`。
+- `structure regression`：新增 `test/rule-samples.cjs` 10/10（含 SOURCE-1 源码级隐私边界：样本键字面量全源码 1 处、快照/同步/导出不引用 RuleSamples、样本/归纳事件只含平台与计数；SAMPLE-1a/1b/1c 入库/去重/LRU、CONV-1/1b 转规则与门控、AI-1/1b/ERR-1 请求形态/去重拒绝/失败零写入）；rule-manager 5、quickblock 38、danmaku-auto 8、run 20、product 7、ui-settings 16、work-block 3、comment-manager 3、adapters 28、content-ai 12、content-coverage 6、ai-screening 25、ai-auto-gate 11、ai-autoload 3、state、performance、douyin、real-bilibili-probe --verify-local 全绿；页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。
 - `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。v0.62.0 未 commit/push/tag/Release。
 - 已知限制：快捷确认按锚点回溯正文，个别锚点不在内容容器内的入口（如 B站弹幕多候选人工核对确认）不产生样本；AI 候选仅内存缓存（重新归纳即恢复）；样本只存正文，不含作者与身份键。
 
 ## 2026-10-27 本地候选事实路由（v0.60.0/v0.61.0，详细范围与证据见版本条目）
 
-- v0.61.0（OB-AI-016，`structure regression`：ai-auto-gate 11/11 等）：自动分析持久缓存 `omniblock:ai-analyzed:v1`（记录 ID+时间戳，TTL 7 天/LRU 2000，generation 覆盖规则/提示词/provider/模型）、自动模式每页最多 3 批 + `autoCappedRemaining` 提示、「自动分析只看评论」开关；手动分析不碰缓存不受限。`blocked`：实页验证暂停。
-- v0.60.0（OB-UI-001，`structure regression`：ui-settings 16 项等）：设置面板五分组导航、名单搜索/筛选/计数/空态、`undoToastSeconds`（默认 10s，收敛 5–30）、`RecentActions` 最近 20 条本地屏蔽操作（独立键，无正文）与 `showOBConfirm` 自建确认浮层；关键词自动规则命中/后台 UID 增强刻意不进最近操作。`blocked`：实页验证暂停。
+- v0.61.0（OB-AI-016，ai-auto-gate 11/11 等）：自动分析持久缓存（TTL 7 天/LRU 2000，generation 失效）、自动模式每页最多 3 批 + 上限提示、「自动分析只看评论」开关；手动分析不碰缓存不受限。`blocked`：实页验证暂停。
+- v0.60.0（OB-UI-001，ui-settings 16 项等）：设置面板五分组导航、名单搜索/筛选/计数/空态、`undoToastSeconds`（默认 10s）、最近 20 条本地屏蔽操作（独立键，无正文）与自建确认浮层。`blocked`：实页验证暂停。
 - 两个候选均未 commit/push/tag/Release；完整范围、逐项证据与边界见 [v0.61.0 条目](../changelog/v0.61.0.md) 与 [v0.60.0 条目](../changelog/v0.60.0.md)。
 
 ## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0，已发布）
@@ -40,12 +47,11 @@
 - `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；v0.58.0 已随后续发布。
 - 安全加固（同轮）：`window.OB` 调试句柄只在显式 `__OB_TEST_HOOKS__` 的测试/探针注入环境挂载，生产页面只有只读 `__OB_RUNTIME_INFO__`；此前恶意页面可改写 AI provider 地址外传本机 Key。Mimosa 深度扫描 125 项逐条分诊：20 个 high 为按设计跨域能力的静态污点告警（真实攻击面即上述句柄暴露，已修复），~90 条 mongo-sort/xss 链核实为误报；细节见 [v0.58.0 条目](../changelog/v0.58.0.md)。
 - 既有损坏（非本轮引入）：`test/dev-extension.cjs` 的 loopback AI 桥接用例写入的 `aiGatewayUrl` 在 v0.57.1 直连切换后已从源码移除，该用例结构性过时；修复另立 OB-MAINT-003。
-- 用户决策同步：自动候选不打断（并入 OB-AI-015）、名单搜索/筛选（并入 OB-UI-001，本页 2026-10-27 候选条目）、深色模式（OB-UI-003）；否决平台主开关、全局快捷键、新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004。
+- 用户决策同步：自动候选不打断（并入 OB-AI-015）、名单搜索/筛选（并入 OB-UI-001）、深色模式（OB-UI-003）；否决平台主开关、全局快捷键、新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004。
 
 ## 2026-10-27 接手调查与 AI 成本治理规划（无代码改动）
 
-- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理。本轮仅源码调查与计划，未改 `omniblock.user.js`、未运行探针、无新增 `real-site verified`。
-- 调查结论（源码审计）：启用 AI 后自动分析全开、`autoAnalyzedRecordIds` 仅存活当前会话导致重访重新计费；关键词规则不可编辑、无命中计数、无导入导出；设置面板残留死代码且无分组。由此立项并已全部落地。
+- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理；仅源码调查与计划。审计结论（自动分析全开且重访重复计费、规则不可编辑/无计数/无导入导出、面板死代码无分组）由此立项并已全部落地；用户决策同步与否决清单见上一节。
 
 ## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
@@ -136,16 +142,11 @@
 
 ### `structure regression`
 
-- 已发布 v0.56.0 基线回归为覆盖 6/6、规则 8/8、提示词 13/13、评测 5/5、内容 AI 12/12、AI screening 23 项、AI 多平台 7/7、自动弹幕 7/7、quickblock 38/38、适配器 28/28、运行器 20/20、扩展 8/8；本轮浏览器回归无页面/控制台错误。
-- `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目。
+- `node --check omniblock.user.js`、各探针语法检查、docs check 和 diff check 是每轮同轮门禁；历史 AI、网关、生命周期与其他平台结果保留在各自 dated 条目与版本 changelog。
 
-### `real-site verified`
+### `real-site verified` / `blocked`
 
-- `real-site verified`：2026-09-09 维护总检自动发现 `bilibili.com/video/...` 页面实际读到 1 条作品内容、3 条评论、210 条弹幕，四标签和 3 行评论管理器可见；公开评论 API 返回 3 条根评论、20 条楼中楼回复。`real-site verified`：同轮自动发现 `weibo.com/...` 详情页实际读到 1 条帖子内容、12 条评论 AI 记录，页面评论行 12 条（6 根、6 回复，其中 6 条回复可识别），评论/AI 两标签和 AI 面板可见。其他平台日期、页面形式和样本量保留在各自 dated 条目。
-
-### `blocked`
-
-- 匿名入口的知乎登录墙、贴吧滑块、X 登录墙、抖音验证码、微博 spacer、B站根评论分页和动态 UID 仍按 `blocked`/`partial` 记录；专用 Chrome 不再沿用匿名结论。本轮专用登录态探针只读，未读取凭证或执行平台写入。
+- 2026-09-09 维护总检：`bilibili.com/video/...` 读到 1 条作品、3 条评论、210 条弹幕；`weibo.com/...` 详情读到 1 条帖子、12 条评论 AI 记录（页面评论行 12 条）。匿名入口的知乎登录墙、贴吧滑块、X 登录墙、抖音验证码、微博 spacer、B站根评论分页和动态 UID 仍按 `blocked`/`partial` 记录；专用 Chrome 不再沿用匿名结论；探针只读，未读取凭证或执行平台写入。其他平台日期、页面形式和样本量保留在各自 dated 条目。
 
 ## 常用命令
 
@@ -169,9 +170,9 @@ v0.57.4 tag 与 Release 已创建并作为当前公开版本；v0.57.2/v0.57.1/v
 
 ## 下一项最有价值的验证
 
-v0.59.0 已公开发布；v0.60.0（OB-UI-001）、v0.61.0（OB-AI-016）与 v0.62.0（OB-RULE-004 已屏蔽样本库与规则提炼）均已通过
-全量本地回归并作为本地候选留在工作区，待编排方统一 commit/push/tag/Release。维护重心按已确认顺序推进
-**OB-UI-003（深色模式）**，随后 OB-MAINT-003。实页验证（v0.62.0 确认拉黑 → 样本 → 转规则与 AI 归纳请求形态、
-v0.60.0 面板分组/搜索/最近操作、v0.61.0 重访同页 0 重复请求与上限提示，以及 v0.58.0 遗留的新默认值 0 次自动请求、
-待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据仍为 `blocked`，
-专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。
+v0.59.0 已公开发布；v0.60.0（OB-UI-001）、v0.61.0（OB-AI-016）、v0.62.0（OB-RULE-004）与 v0.63.0（OB-UI-003 深色模式）
+均已通过全量本地回归并作为本地候选留在工作区，待编排方统一 commit/push/tag/Release。维护重心下一项为
+**OB-MAINT-003**。实页验证（v0.62.0 确认拉黑 → 样本 → 转规则与 AI 归纳请求形态、v0.60.0 面板分组/搜索/最近操作、
+v0.61.0 重访同页 0 重复请求与上限提示、v0.63.0 系统深色下的面板/弹窗观感抽查，以及 v0.58.0 遗留的新默认值
+0 次自动请求、待审浮条交互）待用户恢复授权后用隔离匿名探针 + 专用登录态探针补齐；历史遗留：贴吧右键证据
+仍为 `blocked`，专用 bridge 的 `degraded/ready-timeout` 仍需另立专项处理。

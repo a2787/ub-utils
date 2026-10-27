@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.62.0
+// @version       0.63.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.62.0-rule-samples';
+  const RUNTIME_BUILD = '0.63.0-dark-mode';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -4075,6 +4075,413 @@
       text-align: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); user-select: none;
     }
     #ob-gear:hover { background: #41414a; }
+
+    /* ===================== 深色模式（OB-UI-003） =====================
+       跟随系统 prefers-color-scheme: dark 自动启用，无用户开关。上方浅色
+       规则全部保持原样，本段是纯追加的覆盖层：变量只在深色媒体查询内
+       定义和引用，浅色主题不受影响；color-scheme: dark 只作用于脚本自建
+       浮层根节点，不触碰平台页面自身的原生控件。toast/齿轮/弹幕工具/
+       日志 pre 本身已是深色，无需覆盖。 */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ob-dark-bg: #1c2030;
+        --ob-dark-bg-soft: #232838;
+        --ob-dark-bg-raise: #2a3042;
+        --ob-dark-bg-input: #262c3e;
+        --ob-dark-bg-sunken: #202535;
+        --ob-dark-text: #e8eaf2;
+        --ob-dark-text-strong: #f3f5fb;
+        --ob-dark-text-dim: #adb5c8;
+        --ob-dark-text-faint: #8a92a6;
+        --ob-dark-text-disabled: #6d7488;
+        --ob-dark-border: #3c4359;
+        --ob-dark-border-soft: #303750;
+        --ob-dark-accent: #9aaaf2;
+        --ob-dark-accent-bg: #2b3350;
+        --ob-dark-accent-border: #4a568c;
+        --ob-dark-danger: #e57368;
+        --ob-dark-danger-bg: rgba(192, 57, 43, 0.28);
+        --ob-dark-danger-border: #7a4a44;
+        --ob-dark-warn: #e3b268;
+        --ob-dark-warn-bg: #322a1c;
+        --ob-dark-green: #85cda7;
+        --ob-dark-green-bg: #22322a;
+        --ob-dark-green-border: #2f5240;
+      }
+      #ob-panel, #ob-content-manager, #ob-comment-manager, #ob-dm-manager,
+      #ob-douyin-comment-manager, #ob-douyin-dm-manager, #ob-ai-review,
+      #ob-ai-feedback, #ob-ai-pending, #ob-ai-background-status,
+      #ob-keyword-manager, #ob-work-confirm, #ob-modal, #ob-confirm,
+      #ob-bulk-scope {
+        color-scheme: dark;
+      }
+      /* ---- 主容器与确认/弹窗 ---- */
+      #ob-panel .ob-box, #ob-content-manager .ob-content-box,
+      #ob-comment-manager .ob-cm-box, #ob-dm-manager .ob-dm-box,
+      #ob-douyin-comment-manager .ob-dc-box, #ob-douyin-dm-manager .ob-dd-box,
+      #ob-ai-review .ob-ai-review-box, #ob-modal .ob-modal-box,
+      #ob-work-confirm .ob-work-box, #ob-ai-feedback, #ob-confirm,
+      #ob-bulk-scope, #ob-keyword-manager .ob-keyword-box {
+        background: var(--ob-dark-bg); color: var(--ob-dark-text);
+      }
+      #ob-modal, #ob-work-confirm, #ob-content-manager, #ob-comment-manager,
+      #ob-dm-manager, #ob-douyin-comment-manager, #ob-douyin-dm-manager,
+      #ob-ai-review { color: var(--ob-dark-text); }
+      #ob-confirm, #ob-bulk-scope, #ob-ai-feedback { border-color: var(--ob-dark-border); }
+      #ob-confirm .ob-sub, #ob-modal .ob-modal-message { color: var(--ob-dark-text-dim); }
+      #ob-confirm .ob-no, #ob-modal .ob-modal-no, #ob-work-confirm .ob-work-no,
+      #ob-bulk-scope .ob-bs-no {
+        background: var(--ob-dark-bg-raise); color: var(--ob-dark-text);
+      }
+      #ob-work-confirm .ob-work-ok:disabled, #ob-bulk-scope .ob-bs-ok:disabled { background: #6b4a46; }
+      #ob-work-confirm .ob-work-close { color: var(--ob-dark-text-faint); }
+      #ob-work-confirm .ob-work-status { color: var(--ob-dark-text-dim); }
+      #ob-work-confirm .ob-work-count {
+        border-color: var(--ob-dark-border-soft); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      #ob-work-confirm .ob-work-warning { background: var(--ob-dark-warn-bg); color: var(--ob-dark-warn); }
+      /* ---- 输入控件（含同步/审核/反馈/批量范围表单） ---- */
+      #ob-panel input:not([type="checkbox"]):not([type="radio"]), #ob-panel select, #ob-panel textarea,
+      #ob-comment-manager .ob-cm-search, #ob-comment-manager .ob-cm-since,
+      #ob-dm-manager .ob-dm-search, #ob-douyin-comment-manager .ob-dc-search,
+      #ob-douyin-dm-manager .ob-dd-search,
+      #ob-bulk-scope select, #ob-bulk-scope input[type="datetime-local"],
+      .ob-auto-rule-editing input[type="text"], .ob-auto-rule-editing select {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-input); color: var(--ob-dark-text);
+      }
+      #ob-ai-feedback .ob-ai-feedback-note {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-input); color: var(--ob-dark-text);
+      }
+      /* ---- 通用浅底描边按钮 ---- */
+      #ob-panel .ob-nav button, #ob-panel .ob-log-toolbar button,
+      #ob-panel .ob-ai-key-row button, #ob-content-manager .ob-ai-key-row button,
+      #ob-panel .ob-sync-actions button,
+      #ob-panel .ob-ai-profile-import, #ob-content-manager .ob-ai-profile-import,
+      #ob-panel .ob-ai-prompt-recompute, #ob-content-manager .ob-ai-prompt-recompute,
+      #ob-panel .ob-ai-prompt-card-actions button, #ob-content-manager .ob-ai-prompt-card-actions button,
+      #ob-ai-review .ob-ai-review-foot button,
+      #ob-comment-manager .ob-cm-refresh, #ob-comment-manager .ob-cm-load-all,
+      #ob-dm-manager .ob-dm-retry, #ob-dm-manager .ob-dm-unblock,
+      #ob-douyin-comment-manager .ob-dc-expand, #ob-douyin-comment-manager .ob-dc-load,
+      #ob-douyin-comment-manager .ob-dc-retry,
+      #ob-douyin-dm-manager .ob-dd-scan, #ob-douyin-dm-manager .ob-dd-unblock,
+      .ob-auto-tools button, .ob-auto-tools .ob-auto-import-label,
+      .ob-auto-rule-editing button,
+      #ob-panel .ob-rule-sample-tools button, #ob-content-manager .ob-rule-sample-tools button,
+      #ob-keyword-manager .ob-rule-sample-tools button {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      #ob-panel .ob-nav button:hover, #ob-panel .ob-log-toolbar button:hover,
+      #ob-panel .ob-ai-key-row button:hover, #ob-content-manager .ob-ai-key-row button:hover,
+      #ob-panel .ob-sync-actions button:hover,
+      #ob-panel .ob-ai-prompt-recompute:hover, #ob-content-manager .ob-ai-prompt-recompute:hover,
+      #ob-panel .ob-ai-prompt-card-actions button:hover, #ob-content-manager .ob-ai-prompt-card-actions button:hover,
+      #ob-comment-manager .ob-cm-refresh:hover:not(:disabled), #ob-comment-manager .ob-cm-load-all:hover:not(:disabled),
+      #ob-dm-manager .ob-dm-retry:hover:not(:disabled), #ob-dm-manager .ob-dm-unblock:hover:not(:disabled),
+      #ob-douyin-comment-manager .ob-dc-expand:hover:not(:disabled), #ob-douyin-comment-manager .ob-dc-load:hover:not(:disabled),
+      #ob-douyin-comment-manager .ob-dc-retry:hover:not(:disabled),
+      #ob-douyin-dm-manager .ob-dd-scan:hover:not(:disabled), #ob-douyin-dm-manager .ob-dd-unblock:hover,
+      .ob-auto-tools .ob-auto-import-label:hover, .ob-auto-tools button:hover,
+      #ob-panel .ob-rule-sample-tools button:hover:not(:disabled), #ob-content-manager .ob-rule-sample-tools button:hover:not(:disabled),
+      #ob-keyword-manager .ob-rule-sample-tools button:hover:not(:disabled) {
+        background: var(--ob-dark-bg-raise); color: var(--ob-dark-text);
+      }
+      #ob-comment-manager button:disabled, #ob-douyin-comment-manager button:disabled,
+      #ob-dm-manager .ob-dm-retry:disabled, #ob-dm-manager .ob-dm-uid-query:disabled,
+      #ob-dm-manager .ob-dm-unblock:disabled, #ob-dm-manager .ob-dm-page:disabled,
+      #ob-douyin-dm-manager .ob-dd-scan:disabled { color: var(--ob-dark-text-disabled); }
+      #ob-dm-manager .ob-dm-batch:disabled, #ob-comment-manager .ob-cm-batch:disabled,
+      #ob-douyin-comment-manager .ob-dc-batch:disabled, #ob-douyin-dm-manager .ob-dd-batch:disabled {
+        background: #3a3f52; color: var(--ob-dark-text-disabled);
+      }
+      /* ---- 强调/危险色调按钮与徽章（保留色相、加深底色） ---- */
+      .ob-keyword-entry button {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-accent-bg); color: var(--ob-dark-accent);
+      }
+      .ob-keyword-entry button:hover { background: #333d63; }
+      .ob-auto-rule-editing .ob-auto-rule-save {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-accent-bg); color: var(--ob-dark-accent);
+      }
+      #ob-panel .ob-rule-sample-convert-one, #ob-content-manager .ob-rule-sample-convert-one,
+      #ob-keyword-manager .ob-rule-sample-convert-one {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-accent);
+      }
+      #ob-panel .ob-ai-prompt-card-actions .ob-ai-prompt-accept,
+      #ob-content-manager .ob-ai-prompt-card-actions .ob-ai-prompt-accept {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-accent-bg); color: var(--ob-dark-accent);
+      }
+      #ob-panel .ob-ai-prompt-card-actions .ob-ai-prompt-delete,
+      #ob-content-manager .ob-ai-prompt-card-actions .ob-ai-prompt-delete {
+        border-color: var(--ob-dark-danger-border); color: var(--ob-dark-danger);
+      }
+      #ob-panel .ob-recent-undo {
+        border-color: var(--ob-dark-danger-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-danger);
+      }
+      #ob-panel .ob-recent-undo:hover { background: var(--ob-dark-danger-bg); }
+      #ob-panel .ob-log-toolbar .ob-log-danger { border-color: var(--ob-dark-danger-border); color: var(--ob-dark-danger); }
+      #ob-panel .ob-del, #ob-panel .ob-auto-rule-remove, #ob-content-manager .ob-auto-rule-remove,
+      #ob-panel .ob-ai-rule-remove, #ob-content-manager .ob-ai-rule-remove,
+      #ob-panel .ob-ai-feedback-card button, #ob-content-manager .ob-ai-feedback-card button {
+        color: var(--ob-dark-danger);
+      }
+      #ob-panel .ob-ai-key-row .ob-ai-key-clear, #ob-content-manager .ob-ai-key-row .ob-ai-key-clear {
+        border-color: var(--ob-dark-danger-border); color: var(--ob-dark-danger);
+      }
+      #ob-dm-manager .ob-dm-single { color: var(--ob-dark-danger); }
+      #ob-dm-manager .ob-dm-single:hover { background: var(--ob-dark-danger-bg); }
+      #ob-dm-manager .ob-dm-uid-link {
+        border-color: var(--ob-dark-danger-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-danger);
+      }
+      #ob-dm-manager .ob-dm-uid-link:hover { background: var(--ob-dark-danger-bg); }
+      .ob-auto-rule-hits { border-color: #3d4a7a; background: #252c48; color: #9aa8e8; }
+      .ob-auto-rule-scope { border-color: var(--ob-dark-green-border); background: var(--ob-dark-green-bg); color: var(--ob-dark-green); }
+      /* ---- 设置面板各分区 ---- */
+      #ob-panel h4 { color: var(--ob-dark-text-strong); }
+      #ob-panel .ob-close { color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-list-count, #ob-panel .ob-item .ob-meta,
+      #ob-panel .ob-recent-item .ob-meta { color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-item .ob-note { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-list-empty { border-color: var(--ob-dark-border); color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-recent-empty { border-color: var(--ob-dark-border); color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-recent-item { border-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-platform-group { border-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-platform-title { background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-item { border-bottom-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-log-intro, #ob-panel .ob-log-status { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-log-summary-item {
+        border-color: var(--ob-dark-border-soft); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      #ob-panel .ob-log-events { border-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-log-events:empty::before { color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-auto-intro, #ob-content-manager .ob-auto-intro,
+      #ob-panel .ob-ai-intro, #ob-content-manager .ob-ai-intro,
+      #ob-panel .ob-ai-fact-note, #ob-content-manager .ob-ai-fact-note,
+      #ob-panel .ob-ai-provider label, #ob-content-manager .ob-ai-provider label,
+      #ob-panel .ob-ai-fact label, #ob-content-manager .ob-ai-fact label,
+      #ob-panel .ob-sync-form label, #ob-panel .ob-sync-intro, #ob-panel .ob-sync-status,
+      #ob-panel .ob-ai-key-status, #ob-content-manager .ob-ai-key-status,
+      #ob-panel .ob-ai-test-status, #ob-content-manager .ob-ai-test-status,
+      #ob-panel .ob-ai-prompt-intro, #ob-content-manager .ob-ai-prompt-intro,
+      #ob-panel .ob-ai-prompt-system label, #ob-content-manager .ob-ai-prompt-system label,
+      #ob-panel .ob-ai-prompt-management-note, #ob-content-manager .ob-ai-prompt-management-note,
+      #ob-panel .ob-ai-prompt-section-title, #ob-content-manager .ob-ai-prompt-section-title {
+        color: var(--ob-dark-text-dim);
+      }
+      #ob-panel .ob-ai-test-status[data-state="error"], #ob-content-manager .ob-ai-test-status[data-state="error"] { color: var(--ob-dark-danger); }
+      #ob-panel .ob-ai-status, #ob-content-manager .ob-ai-status { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-ai-status[data-state="error"], #ob-content-manager .ob-ai-status[data-state="error"] { color: var(--ob-dark-danger); }
+      #ob-panel .ob-ai-status[data-state="loading"], #ob-content-manager .ob-ai-status[data-state="loading"] { color: var(--ob-dark-accent); }
+      #ob-panel .ob-auto-platform, #ob-content-manager .ob-auto-platform { border-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-auto-platform h4, #ob-content-manager .ob-auto-platform h4 { color: var(--ob-dark-text-strong); }
+      #ob-panel .ob-auto-rule, #ob-content-manager .ob-auto-rule,
+      #ob-panel .ob-ai-rule, #ob-content-manager .ob-ai-rule,
+      #ob-panel .ob-ai-feedback-card, #ob-content-manager .ob-ai-feedback-card,
+      #ob-panel .ob-auto-exemption, #ob-content-manager .ob-auto-exemption,
+      #ob-panel .ob-rule-sample, #ob-content-manager .ob-rule-sample, #ob-keyword-manager .ob-rule-sample,
+      #ob-panel .ob-rule-sample-candidate, #ob-content-manager .ob-rule-sample-candidate,
+      #ob-keyword-manager .ob-rule-sample-candidate {
+        background: var(--ob-dark-bg-soft);
+      }
+      #ob-panel .ob-auto-rule-kind, #ob-content-manager .ob-auto-rule-kind,
+      #ob-panel .ob-rule-sample-candidate-kind, #ob-content-manager .ob-rule-sample-candidate-kind {
+        color: var(--ob-dark-text-dim);
+      }
+      #ob-panel .ob-auto-rule-pattern, #ob-content-manager .ob-auto-rule-pattern,
+      #ob-panel .ob-ai-rule-text, #ob-content-manager .ob-ai-rule-text,
+      #ob-panel .ob-ai-feedback-card-text, #ob-content-manager .ob-ai-feedback-card-text,
+      #ob-panel .ob-rule-sample-text, #ob-content-manager .ob-rule-sample-text, #ob-keyword-manager .ob-rule-sample-text,
+      #ob-panel .ob-rule-sample-candidate-pattern, #ob-content-manager .ob-rule-sample-candidate-pattern,
+      #ob-keyword-manager .ob-rule-sample-candidate-pattern {
+        color: var(--ob-dark-text);
+      }
+      #ob-panel .ob-auto-exemption-title, #ob-content-manager .ob-auto-exemption-title,
+      #ob-panel .ob-auto-exemption-key, #ob-content-manager .ob-auto-exemption-key,
+      #ob-panel .ob-auto-exemption-remove, #ob-content-manager .ob-auto-exemption-remove {
+        color: var(--ob-dark-text-dim);
+      }
+      #ob-panel .ob-auto-empty, #ob-panel .ob-auto-status, #ob-content-manager .ob-auto-empty,
+      #ob-content-manager .ob-auto-status,
+      #ob-panel .ob-rule-sample-empty, #ob-content-manager .ob-rule-sample-empty, #ob-keyword-manager .ob-rule-sample-empty,
+      #ob-panel .ob-rule-sample-status, #ob-content-manager .ob-rule-sample-status, #ob-keyword-manager .ob-rule-sample-status,
+      #ob-panel .ob-ai-prompt-count, #ob-content-manager .ob-ai-prompt-count,
+      #ob-panel .ob-ai-prompt-empty, #ob-content-manager .ob-ai-prompt-empty,
+      #ob-panel .ob-ai-feedback-card-meta, #ob-content-manager .ob-ai-feedback-card-meta {
+        color: var(--ob-dark-text-faint);
+      }
+      #ob-panel .ob-rule-samples, #ob-content-manager .ob-rule-samples, #ob-keyword-manager .ob-rule-samples { border-top-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-rule-samples > summary, #ob-content-manager .ob-rule-samples > summary,
+      #ob-keyword-manager .ob-rule-samples > summary { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-rule-sample-note, #ob-content-manager .ob-rule-sample-note,
+      #ob-keyword-manager .ob-rule-sample-note { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-rule-sample-time, #ob-content-manager .ob-rule-sample-time,
+      #ob-keyword-manager .ob-rule-sample-time { color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-rule-sample-candidate-box, #ob-content-manager .ob-rule-sample-candidate-box,
+      #ob-keyword-manager .ob-rule-sample-candidate-box {
+        border-color: var(--ob-dark-accent-border); background: rgba(43, 51, 80, 0.45);
+      }
+      #ob-panel .ob-rule-sample-candidate-title, #ob-content-manager .ob-rule-sample-candidate-title,
+      #ob-keyword-manager .ob-rule-sample-candidate-title { color: var(--ob-dark-text-strong); }
+      #ob-panel .ob-rule-sample-candidate-reason, #ob-content-manager .ob-rule-sample-candidate-reason,
+      #ob-keyword-manager .ob-rule-sample-candidate-reason { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-ai-fact, #ob-content-manager .ob-ai-fact { border-top-color: var(--ob-dark-border-soft); }
+      #ob-panel .ob-ai-prompt-system, #ob-content-manager .ob-ai-prompt-system {
+        border-color: var(--ob-dark-accent-border); background: rgba(43, 51, 80, 0.45);
+      }
+      #ob-panel .ob-ai-prompt-system h4, #ob-content-manager .ob-ai-prompt-system h4 { color: var(--ob-dark-text-strong); }
+      #ob-panel .ob-ai-prompt-system textarea, #ob-content-manager .ob-ai-prompt-system textarea {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-input); color: var(--ob-dark-text);
+      }
+      #ob-panel .ob-ai-prompt-management, #ob-content-manager .ob-ai-prompt-management { border-top-color: var(--ob-dark-accent-border); }
+      #ob-panel .ob-ai-prompt-management-head strong, #ob-content-manager .ob-ai-prompt-management-head strong { color: var(--ob-dark-text-strong); }
+      #ob-panel .ob-ai-prompt-card, #ob-content-manager .ob-ai-prompt-card {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-soft);
+      }
+      #ob-panel .ob-ai-prompt-card-text, #ob-content-manager .ob-ai-prompt-card-text { color: var(--ob-dark-text); }
+      #ob-panel .ob-ai-prompt-card-meta, #ob-content-manager .ob-ai-prompt-card-meta { color: var(--ob-dark-text-faint); }
+      #ob-panel .ob-ai-prompt-card-warning, #ob-content-manager .ob-ai-prompt-card-warning { color: var(--ob-dark-warn); }
+      /* 主名单存储状态行的颜色由内联样式按状态写入；深色下用 data-level 与
+         样式属性选择器替换为深色友好色，#999 常态对比约 5.7:1 保持不变。 */
+      #ob-storage-status[data-level="critical"] { color: var(--ob-dark-danger) !important; }
+      #ob-storage-status[data-level="warning"] { color: var(--ob-dark-warn) !important; }
+      #ob-storage-status[style*="rgb(198, 40, 40)"] { color: var(--ob-dark-danger) !important; }
+      /* ---- 统一内容弹窗（标签页 + 嵌入的管理器） ---- */
+      #ob-content-manager .ob-content-close, #ob-comment-manager .ob-cm-close,
+      #ob-dm-manager .ob-dm-close, #ob-dm-manager .ob-dm-page,
+      #ob-douyin-comment-manager .ob-dc-close, #ob-douyin-dm-manager .ob-dd-close {
+        color: var(--ob-dark-text-dim);
+      }
+      #ob-content-manager .ob-content-close:hover, #ob-comment-manager .ob-cm-close:hover,
+      #ob-dm-manager .ob-dm-close:hover, #ob-dm-manager .ob-dm-page:hover:not(:disabled),
+      #ob-douyin-comment-manager .ob-dc-close:hover, #ob-douyin-dm-manager .ob-dd-close:hover {
+        background: var(--ob-dark-bg-raise);
+      }
+      #ob-content-manager .ob-content-tabs { border-bottom-color: var(--ob-dark-border-soft); }
+      #ob-content-manager .ob-content-tab { color: var(--ob-dark-text-dim); }
+      #ob-content-manager .ob-content-tab:hover { background: var(--ob-dark-bg-raise); color: var(--ob-dark-text); }
+      #ob-content-manager .ob-content-tab[aria-selected="true"] {
+        border-bottom-color: var(--ob-dark-accent); background: var(--ob-dark-accent-bg); color: var(--ob-dark-accent);
+      }
+      #ob-content-manager .ob-content-empty { color: var(--ob-dark-text-dim); }
+      /* ---- 评论/弹幕管理器行与状态 ---- */
+      #ob-comment-manager .ob-cm-list, #ob-dm-manager .ob-dm-list,
+      #ob-douyin-comment-manager .ob-dc-list, #ob-douyin-dm-manager .ob-dd-list {
+        border-top-color: var(--ob-dark-border-soft); border-bottom-color: var(--ob-dark-border-soft);
+      }
+      #ob-comment-manager .ob-cm-empty, #ob-dm-manager .ob-dm-empty,
+      #ob-douyin-comment-manager .ob-dc-empty, #ob-douyin-dm-manager .ob-dd-empty,
+      #ob-comment-manager .ob-cm-status, #ob-comment-manager .ob-cm-count,
+      #ob-dm-manager .ob-dm-status, #ob-douyin-comment-manager .ob-dc-status,
+      #ob-douyin-dm-manager .ob-dd-status { color: var(--ob-dark-text-dim); }
+      #ob-comment-manager .ob-cm-row, #ob-dm-manager .ob-dm-sender,
+      #ob-douyin-comment-manager .ob-dc-row, #ob-douyin-dm-manager .ob-dd-row {
+        border-bottom-color: var(--ob-dark-border-soft);
+      }
+      #ob-comment-manager .ob-cm-name, #ob-douyin-comment-manager .ob-dc-name,
+      #ob-douyin-dm-manager .ob-dd-name { color: var(--ob-dark-text-strong); }
+      #ob-comment-manager .ob-cm-note, #ob-comment-manager .ob-cm-since-wrap,
+      #ob-douyin-comment-manager .ob-dc-note, #ob-douyin-dm-manager .ob-dd-note {
+        color: var(--ob-dark-text-dim);
+      }
+      #ob-comment-manager .ob-cm-meta, #ob-dm-manager .ob-dm-meta { color: var(--ob-dark-text-faint); }
+      #ob-dm-manager .ob-dm-sender.ob-dm-blocked, #ob-douyin-dm-manager .ob-dd-row.ob-dd-blocked {
+        background: var(--ob-dark-bg-soft);
+      }
+      #ob-dm-manager .ob-dm-sender.ob-dm-partial { background: var(--ob-dark-bg-sunken); }
+      #ob-dm-manager .ob-dm-state { color: var(--ob-dark-text-disabled); }
+      #ob-dm-manager .ob-dm-blocked .ob-dm-content, #ob-dm-manager .ob-dm-blocked .ob-dm-meta,
+      #ob-douyin-dm-manager .ob-dd-blocked .ob-dd-name, #ob-douyin-dm-manager .ob-dd-blocked .ob-dd-note {
+        color: var(--ob-dark-text-disabled);
+      }
+      #ob-dm-manager .ob-dm-uid-query { color: var(--ob-dark-text-dim); }
+      #ob-dm-manager .ob-dm-uid-query:hover:not(:disabled) { background: var(--ob-dark-bg-raise); }
+      #ob-dm-manager .ob-dm-uid-results { color: var(--ob-dark-text-dim); }
+      #ob-dm-manager .ob-dm-uid-warning { color: var(--ob-dark-warn); }
+      #ob-dm-manager .ob-dm-uid-hash-label { color: var(--ob-dark-text-dim); }
+      #ob-dm-manager .ob-dm-uid-candidate {
+        border-left-color: var(--ob-dark-border); background: var(--ob-dark-bg-soft);
+      }
+      #ob-dm-manager .ob-dm-uid-candidate a { color: #7fb3e0; }
+      /* ---- AI 审核浮层与反馈面板 ---- */
+      #ob-ai-review .ob-ai-review-sub, #ob-ai-review .ob-ai-review-status { color: var(--ob-dark-text-dim); }
+      #ob-ai-review .ob-ai-close { color: var(--ob-dark-text-dim); }
+      #ob-ai-review .ob-ai-close:hover { background: var(--ob-dark-bg-raise); }
+      #ob-ai-review .ob-ai-review-list {
+        border-top-color: var(--ob-dark-border-soft); border-bottom-color: var(--ob-dark-border-soft);
+      }
+      #ob-ai-review .ob-ai-candidate { border-bottom-color: var(--ob-dark-border-soft); }
+      #ob-ai-review .ob-ai-candidate-title { color: var(--ob-dark-text-strong); }
+      #ob-ai-review .ob-ai-candidate-meta, #ob-ai-review .ob-ai-candidate-reason { color: var(--ob-dark-text-dim); }
+      #ob-ai-review .ob-ai-candidate-text { color: var(--ob-dark-text); }
+      #ob-ai-review .ob-ai-candidate-evidence { color: #9db4c0; }
+      #ob-ai-review .ob-ai-candidate-warning { color: var(--ob-dark-warn); }
+      #ob-ai-review .ob-ai-candidate-scope, #ob-ai-review .ob-ai-reject {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-input); color: var(--ob-dark-text-dim);
+      }
+      #ob-ai-review .ob-ai-candidate-scope:disabled {
+        background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-disabled);
+      }
+      #ob-ai-review .ob-ai-reject:hover { border-color: #565d70; background: var(--ob-dark-bg-raise); }
+      #ob-ai-review .ob-ai-reject[aria-pressed="true"] {
+        border-color: #4a5166; background: #343a4e; color: #9aa2b6;
+      }
+      #ob-ai-review .ob-ai-reject[aria-pressed="true"]:hover { border-color: #565d70; background: #3a4156; }
+      #ob-ai-feedback .ob-ai-feedback-close, #ob-ai-feedback .ob-ai-feedback-text { color: var(--ob-dark-text-dim); }
+      #ob-ai-feedback .ob-ai-feedback-reasons button {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      #ob-ai-feedback .ob-ai-feedback-reasons button[data-selected="1"] {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-accent-bg); color: var(--ob-dark-accent);
+      }
+      #ob-ai-feedback .ob-ai-feedback-foot button {
+        border-color: var(--ob-dark-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      /* ---- AI 待审浮条与后台状态浮条 ---- */
+      #ob-ai-background-status {
+        border-color: #3d4a7a; background: rgba(35, 42, 68, 0.97); color: #aab8f5;
+      }
+      #ob-ai-background-status .ob-ai-background-undo {
+        border-color: var(--ob-dark-accent-border); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
+      }
+      #ob-ai-background-status .ob-ai-background-undo:hover { background: var(--ob-dark-bg-raise); }
+      #ob-ai-pending { border-color: #44508c; background: rgba(38, 46, 78, 0.97); color: #aab8f5; }
+      #ob-ai-pending:hover { background: #2d3759; }
+      .ob-ai-usage { color: var(--ob-dark-text-faint); }
+      /* ---- 平台页内的行内入口按钮（原浅色规则带 !important，深色需同权重） ---- */
+      .ob-bar {
+        background: #262b3d !important; color: var(--ob-dark-text-dim) !important;
+        border-left-color: #4a5166 !important;
+      }
+      .ob-bar:hover { background: #2d3448 !important; }
+      .ob-quick { color: var(--ob-dark-danger) !important; }
+      .ob-quick:hover { background: var(--ob-dark-danger-bg) !important; }
+      .ob-work-block {
+        background: #262b3d !important; color: var(--ob-dark-danger) !important;
+        border-color: var(--ob-dark-danger-border) !important;
+      }
+      .ob-work-block:hover { background: var(--ob-dark-danger-bg) !important; }
+      .ob-weibo-comment-block, .ob-weibo-thread-block,
+      .ob-weibo-author-block, .ob-bili-author-block, .ob-dm-block {
+        color: var(--ob-dark-danger) !important; border-color: var(--ob-dark-danger-border) !important;
+      }
+      .ob-weibo-author-block, .ob-bili-author-block { background: rgba(38, 43, 61, 0.94) !important; }
+      .ob-dm-block { background: #262b3d !important; }
+      .ob-weibo-comment-block:hover, .ob-weibo-thread-block:hover,
+      .ob-weibo-author-block:hover, .ob-bili-author-block:hover,
+      .ob-dm-block:hover { background: var(--ob-dark-danger-bg) !important; }
+      .ob-dm-block:disabled {
+        border-color: var(--ob-dark-border) !important; background: var(--ob-dark-bg-soft) !important;
+        color: var(--ob-dark-text-disabled) !important;
+      }
+      /* ---- 深色下的键盘焦点可见性 ---- */
+      #ob-panel :focus-visible, #ob-content-manager :focus-visible,
+      #ob-comment-manager :focus-visible, #ob-dm-manager :focus-visible,
+      #ob-douyin-comment-manager :focus-visible, #ob-douyin-dm-manager :focus-visible,
+      #ob-ai-review :focus-visible, #ob-ai-feedback :focus-visible,
+      #ob-keyword-manager :focus-visible, #ob-work-confirm :focus-visible,
+      #ob-modal :focus-visible, #ob-confirm :focus-visible, #ob-bulk-scope :focus-visible {
+        outline: 2px solid var(--ob-dark-accent); outline-offset: 1px;
+      }
+    }
   `);
 
   // 右下角统一控制坞。页面入口的创建/销毁仍由各平台适配器负责，

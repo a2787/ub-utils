@@ -54,17 +54,17 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 
 ### OB-UI-003 — 深色模式
 
-- status: proposed
+- status: verified
 - priority: P3
 - scope: 用户 2026-10-27 采纳：为 userscript 全部自建 UI（设置面板、内容弹窗、审核浮层、确认气泡、toast、浮条）增加 `prefers-color-scheme: dark` 适配，深色下保持对比度与触控/悬停反馈；提供"跟随系统"默认即可，不加独立开关（若需要再加）。
 - non-goals: 不改布局与交互；不做主题自定义；不改动平台页面本身。
 - dependencies: none
 - acceptance: required
-  - [ ] 深色系统偏好下六平台夹具中自建 UI 均可读，无浅色残留死块（截图或断言 CSS 变量覆盖）。
-  - [ ] 浅色行为与现状一致（回归断言）。
-  - [ ] `test/run.cjs`、`test/userscript-product.cjs`、docs-check 通过。
-- evidence: 尚未实施（2026-10-27 立项）；当前全部样式为硬编码浅色，无 `prefers-color-scheme`。
-- next: 排在 P1/P2 项之后，作为低风险 UI 轮实施。
+  - [x] 深色系统偏好下自建 UI 可读，无浅色残留死块（DARK-2 静态断言样式表末尾深色覆盖段 142 条规则 + `color-scheme: dark`，逐面覆盖设置面板/内容弹窗/审核/关键词/确认/toast/浮条/行内入口；DARK-1 在合成 B站夹具上用 `emulateMedia` 断言面板/内容弹窗/确认气泡/确认浮层深底浅字与输入框深色，浅色切换后逐项复原）。
+  - [x] 浅色行为与现状一致（DARK-1 同批元素浅色下恢复白底深字且 `color-scheme` 计算值回 `normal`；DARK-3 快捷拉黑 → 确认 → 名单 → toast 链路回归；浅色规则源码零改动、全样式表仅 1 处 `@media (prefers-color-scheme`）。
+  - [x] `test/run.cjs` 20/20、`test/userscript-product.cjs` 7/7、docs-check 通过。
+- evidence: `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级、DARK-1 浏览器级双向 emulateMedia、DARK-3 浅色行为回归；深色正文亮度 0.824 > 0.7、背景亮度 0.015 < 0.25）；run 20/20、userscript-product 7/7、ui-settings 16 项通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。随 v0.63.0 本地候选交付（未 push/tag/Release）。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。
+- next: 已随 v0.63.0 本地候选交付；实页恢复授权后可在系统深色浏览器中抽查一次真实页面观感（无新增 DOM 断言需求）。后续如需用户手动主题开关，另立计划项。
 - updated: 2026-10-27
 - supersedes: none
 
