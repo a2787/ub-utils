@@ -6,7 +6,15 @@
  * 维护者仍可用 `--url=` 显式指定目标。
  *
  * 只读：只打开公开入口页读取链接，不登录、不写任何站内状态。
+ *
+ * OB-MAINT-004（2026-10-28）：链接收集改用共享模块 test/content-discovery.cjs
+ * 的 Shadow DOM 深度遍历 —— 2026 版 SPA 入口页把内容详情链接渲染进 open
+ * shadow root，此前的浅层 querySelectorAll 收集不到任何目标（该旧行为已由
+ * content-discovery 夹具 DISC-1 在合成页上固化为失败对照）。ENTRIES 的
+ * accept/normalize 过滤语义保持不变。
  */
+const { deepHrefsExpression } = require('./content-discovery.cjs');
+
 const ENTRIES = {
   bilibili: {
     url: 'https://www.bilibili.com/',
@@ -38,7 +46,8 @@ async function discoverTargets(browser, platform, options) {
   try {
     await page.goto(entry.url, { waitUntil: 'domcontentloaded', timeout: 40000 });
     await sleep(settle);
-    const hrefs = await page.evaluate(() => Array.from(document.querySelectorAll('a[href]')).map((a) => a.href));
+    // 深度遍历收集（含 open shadow root），表达式由共享模块生成、页面上下文执行。
+    const hrefs = await page.evaluate(deepHrefsExpression());
     const seen = new Set();
     const found = [];
     for (const href of hrefs) {

@@ -2,7 +2,9 @@
 
 本文件是 `docs/maintenance/CURRENT.md` 在 v0.57.4 一轮中为守住 24 KiB 活动文档预算而移出的
 2026-09-06 至 2026-09-08 条目原文，内容按当时的记录逐字保留，不追加新的当前状态。
-2026-10-27 又为同一预算原因把 v0.57.4 的 OB-CTX-001 日期条目原样移入文末。
+2026-10-27 又为同一预算原因把 v0.57.4 的 OB-CTX-001 日期条目原样移入文末；
+2026-10-28 再为同一预算原因把 2026-09-10 OB-AI-014（v0.56.0）、2026-09-11 OB-TM-001/OB-SYNC-001
+（v0.57.1）与 2026-09-12 OB-RULE-001（v0.57.2）四个日期条目原样移入文末。
 当前事实、最近证据与限制仍以 [CURRENT.md](../CURRENT.md) 为准；本节日期段的入口见
 [HISTORY_INDEX.md](../HISTORY_INDEX.md)。
 
@@ -82,3 +84,44 @@
   `origin/master`，`v0.57.4` tag 与 GitHub Release 已创建；本仓库没有登记的插件生产部署链，未执行平台写入。
 - 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
   [移出存档](plans/2026-09-13-current-dated-archive.md)。
+
+## 2026-09-10 作品语境感知的 AI 屏蔽与紧凑协议收口（OB-AI-014，v0.56.0，已发布）
+
+- 范围：B站视频详情页的作品标题/简介、分 P、真实评论父级与弹幕进度进入脱敏 `WorkContext/LocalContext`；`contextSchemaVersion=2` 紧凑线协议；候选默认确认到当前作品 `ScopedBlocks`，全局屏蔽仍需显式选择。
+- `structure regression`：上下文契约 CTX-1..9 与受影响 AI/平台/通用/性能回归通过；评测输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
+- `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；动态页 99 条记录全部带作品语境；AI mock 确认 2 条弹幕候选只入当前作品作用域，平台写入 0 次；字幕/音频/画面语义保持 `blocked`（远期预留封存）。
+- `blocked`：真实内容长期精度无标注集证据；根评论分页仍可能 partial。
+- 发布状态：功能提交 `3f94c1bb` 已推送，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。详细设计与数据见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
+
+## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
+
+- 范围/文件：`omniblock.user.js` 窄屏/触控、无 hover 控制坞、弹幕点按入口、设备直连 API、GM Key、账户注册/登录与客户端加密同步；`sync/`、`sync-server/` 提供协议/服务回归。`extension/` MV3 实验不属于交付路径。
+- `structure regression`：v0.57.1 发布时 product 6/6；通用 20/20、B站 38/38、适配器 28/28、同步核心 7/7、Python 服务 5/5 等受影响回归通过。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；候选 `0.57.1`（源码 SHA-256 `2efe63df…`）实际加载，观察到 2 个评论 renderer、1 条作品内容、2 条评论、77 条弹幕（AI 记录 80 条，79 带身份），内容弹窗 4 个标签，本地拉黑注入与撤销恢复通过，页面/控制台错误 0；不覆盖平板触控与线上同步。
+- `real-site verified`：2026-09-11，匿名隔离只读会话，脱敏页面形式 `weibo.com/...`；同一候选实际加载并观察到 1 条帖子内容、53 条评论 AI 记录（48 带身份），平台评论 28 条（13 根行、15 回复行），本地拉黑/撤销恢复通过，页面/控制台错误 0；spacer 未出现，仍记 `blocked`。
+- `real-site verified`：2026-09-11，东京机独立 `omniblock-sync` 服务 loopback 与 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码 SHA-256 与本地 `sync-server/server.py` 一致。
+- `blocked`：平板实机触控、真实 provider 与双设备加密合并未取得设备结果，2026-09-12 起随平板线封存待重启；抖音匿名探针停在验证码中间页；Quick Tunnel 无固定域名，重启可能换址。
+- 发布状态：v0.57.1 已发布（tag/Release 在 GitHub）；当前 Latest 已由 v0.57.2 接替；未执行平台写入。
+- 触控入口手势：入口常驻可见 + 齿轮单次点按进设置；旧两段式手势在触控端 dock 挂载即 expanded，不可满足，已退休。
+- 平板 561px+ 触控宽度下紧凑按钮被组件级 min-height 压回 26–34px 的缺陷已在 v0.57.1 内修复（coarse-pointer 组件规则后置覆盖恢复 44px）。
+- 计划收尾：2026-09-11 关闭 11 个积压项，2026-09-12 重新启用并完成 OB-RULE-001；终态见 [收尾归档](plans/2026-09-11-plan-closure.md)。
+
+## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，deferred，随平板线封存）
+
+- 范围：东京机新增独立 `/opt/omniblock-sync`（server.py、独立 SQLite、systemd 服务、独立 Quick Tunnel）；未改 Vibeme/V2/KB 数据库、代码、网关路由或既有隧道。
+- `structure regression`：本地 sync-core 7/7、Python 服务 5/5；服务启用 loopback、独立数据目录、最小权限、不记录请求内容。
+- `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地 SHA-256 一致。
+- `blocked`：真实账户注册/登录、第一台写入、第二台解密合并与墓碑读回未执行；稳定 HTTPS 域名未配置。
+- 当前限制：Quick Tunnel 重启可能换址，需两台设备同步更新；API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
+- 下一步：随平板线封存；重启时按 [封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再双设备互测。
+
+## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
+
+- 范围/文件：`omniblock.user.js` 保存入口拒绝明显灾难性回溯正则（嵌套可变重复 `(a+)+` 类、量词分组分支首字符重叠 `(a|aa)+` 类），错误文案可理解；已存规则不回删；`DanmakuRules.status()` 编译计数；`.github/workflows/maintenance.yml` + 锁定依赖 `package.json`/`package-lock.json` 把 22 项本地回归搬进 CI（明确排除真实站点探针）。
+- `structure regression`：自动弹幕 8/8（新增 AUTO-REGEX-SAFETY，旧行为上失败后转通过）；quickblock 38/38、适配器 28/28、通用 20/20；维护总检本地项通过。
+- `real-site verified`：2026-09-12，用户专用 Chrome 登录态只读探针（扩展桥接部分就绪）：脱敏页面形式 `bilibili.com/page/...` 读到 8 条作品内容；`douyin.com/jingxuan/...` 登录态读到 48 条作品内容（首次取得抖音登录态真实读取，匿名探针此前被验证码阻断）；`weibo.com/page/...` 读到 6 条内容、6 个身份。三条均为内容读取证据，不含评论/弹幕展开与 AI/存储链路。
+- `blocked`：专用 Chrome 批量补采仍被桥接故障阻断——B站/抖音/微博/知乎的 AI/存储链路报"桥接未就绪"，tieba/x 报 `Target.getTargets` 超时；换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版楼层、抖音性能基线均未覆盖。故障定位：MV3 service worker 休眠后 attach 竞态（`Session with given id not found`），手动重载扩展可临时恢复，需要专门一轮修 `test/dedicated-browser.cjs` 的唤醒/重试。
+- `blocked`：商汤 provider 评估与事实检索真实来源——本地配置无任何商汤凭据、事实来源只有 example 配置，等用户提供。
+- `structure regression`：CI `maintenance` 工作流转绿（run 34628105864）：22 项本地回归 + 门禁在 ubuntu-latest + 系统 Chrome + 锁定依赖通过，真实站点探针排除在外；迭代修了 checkout 浅克隆、方向键采样、弹幕按钮对中三个测试脆弱点。
+- v0.57.3 追加：AI 设置新增「测试连接」（`max_tokens=1` 最小请求即时验证 provider 配置，成功显示延迟、失败给可理解原因），直连批量请求 429/5xx/超时/网络抖动自动重试一次（1.5s 退避，取消与 4xx 不重试）；ai-screening 25 项全绿（AI-24 重试用例旧行为失败后转通过）、userscript product 全绿。适配任意 OpenAI-compatible provider：用户确认将填写官方 DeepSeek API，无需 provider 专项评估。
+- 用户决策（2026-09-12）：① OB-AI-001 商汤评估作废（直连 provider 无关，见归档追记）；② 因用户备考使用专注插件（自动关闭社交/娱乐页面），所有实页验证（登录态补采、换片隔离、B站分页/动态 UID、微博点赞列表、贴吧旧版、抖音探针/基线）暂缓，待条件允许恢复；本轮完善只用本地夹具与 mock provider。

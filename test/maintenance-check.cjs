@@ -83,6 +83,7 @@ const checks = [
   { label: 'probe hygiene', command: process.execPath, args: ['test/probe-hygiene.cjs'] },
   { label: 'dedicated browser probe classification', command: process.execPath, args: ['test/dedicated-browser-probe.cjs', '--self-test'] },
   { label: 'cross-platform adapters', command: process.execPath, args: ['test/adapters.cjs'] },
+  { label: 'content discovery fixtures', command: process.execPath, args: ['test/content-discovery.cjs'] },
   { label: 'Bilibili isolated real-site probe', command: process.execPath, args: ['test/real-bilibili-probe.cjs', '--verify-local'] },
   { label: 'Douyin feed', command: process.execPath, args: ['test/douyin.cjs'] },
   { label: 'Douyin isolated real-site probe', command: process.execPath, args: ['test/real-platform-probe.cjs', 'douyin', '--verify-local'] },

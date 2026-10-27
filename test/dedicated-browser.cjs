@@ -5,6 +5,13 @@
  * profile 上偶发握手卡死，而 Target.attachToTarget + 页面 Runtime 是当前
  * 专用调试浏览器已经验证过的兼容路径。模块只读取页面和脚本自己的状态，
  * 不读取 Cookie，不注入 userscript，不触发平台写入。
+ *
+ * OB-MAINT-004（2026-10-28）：内容详情链接发现改用共享模块
+ * test/content-discovery.cjs（open shadowRoot 深度遍历 + href 路由形状匹配），
+ * 与 test/discover.cjs 的隔离匿名证据链共用同一实现；2026 版 SPA 入口页的
+ * 内容链接位于嵌套 open shadow root，此前的浅层 querySelectorAll 复刻已由
+ * content-discovery 夹具 DISC-2 固化为失败对照。contentSelectors 保留原语义
+ * （readSnapshot 右键兜底仍使用），导航路径改用 contentRouteShapes。
  */
 'use strict';
 
@@ -12,6 +19,12 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { ROOT } = require('./runtime.cjs');
+const {
+  ROUTE_SHAPES,
+  DEFAULT_DEEP_OPTIONS,
+  filterRouteShapes,
+  deepHrefsExpression,
+} = require('./content-discovery.cjs');
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:9222';
 const endpoint = process.env.OMNIBLOCK_CDP_URL || DEFAULT_ENDPOINT;
@@ -24,18 +37,23 @@ const PLATFORM_CONFIG = {
   bilibili: {
     url: 'https://www.bilibili.com/',
     contentSelectors: ['a[href*="/video/"]'],
+    // OB-MAINT-004：内容详情路由形状（^/video/<id>，2026-10-28 专用会话捕获形态）。
+    contentRouteShapes: ROUTE_SHAPES.bilibili,
   },
   douyin: {
     url: 'https://www.douyin.com/jingxuan',
     contentSelectors: ['a[href*="/video/"]'],
+    contentRouteShapes: ROUTE_SHAPES.douyin,
   },
   weibo: {
     url: 'https://weibo.com/',
     contentSelectors: [],
+    contentRouteShapes: [],
   },
   zhihu: {
     url: 'https://www.zhihu.com/hot',
     contentSelectors: ['a[href*="/question/"]'],
+    contentRouteShapes: ROUTE_SHAPES.zhihu,
   },
   tieba: {
     url: 'https://tieba.baidu.com/f?kw=python',
@@ -44,10 +62,12 @@ const PLATFORM_CONFIG = {
       'a.top-thread-card-item[href*="/p/"]',
       'a[href*="/p/"]',
     ],
+    contentRouteShapes: ROUTE_SHAPES.tieba,
   },
   x: {
     url: 'https://x.com/home',
     contentSelectors: ['article[data-testid="tweet"] a[href*="/status/"]'],
+    contentRouteShapes: ROUTE_SHAPES.x,
   },
 };
 
@@ -357,25 +377,24 @@ function discoverSelectors(platform) {
   return (PLATFORM_CONFIG[platform] && PLATFORM_CONFIG[platform].contentSelectors) || [];
 }
 
+function contentRouteShapes(platform) {
+  return (PLATFORM_CONFIG[platform] && PLATFORM_CONFIG[platform].contentRouteShapes) || [];
+}
+
+// OB-MAINT-004：导航目标发现改用共享模块 —— 先深度遍历（含嵌套 open shadow
+// root）收集链接，再按平台路由形状过滤；保留旧实现的 https-only 与同主机约束，
+// 命中首个目标后在页面内导航。weibo 没有形状，保持"不导航"的原有语义。
 async function navigateToContent(client, page, platform) {
-  const selectors = discoverSelectors(platform);
-  if (!selectors.length) return false;
+  const shapes = contentRouteShapes(platform);
+  if (!shapes.length) return false;
   return !!(await evaluate(client, page.sessionId, `return (() => {
-    const selectors = ${JSON.stringify(selectors)};
-    let anchor = null;
-    for (const selector of selectors) {
-      anchor = Array.from(document.querySelectorAll(selector)).find((candidate) => {
-        const href = candidate && candidate.href;
-        if (!href) return false;
-        try {
-          const url = new URL(href, location.href);
-          return url.protocol === 'https:' && url.hostname === location.hostname;
-        } catch (error) { return false; }
-      });
-      if (anchor) break;
-    }
-    if (!anchor) return false;
-    location.href = anchor.href;
+    const hrefs = ${deepHrefsExpression(DEFAULT_DEEP_OPTIONS)};
+    const links = (${filterRouteShapes.toString()})(hrefs, ${JSON.stringify(shapes)}, {
+      hostname: location.hostname,
+      httpsOnly: true,
+    });
+    if (!links.length) return false;
+    location.href = links[0];
     return true;
   })();`, 3500));
 }
@@ -676,6 +695,15 @@ function selfTest() {
   check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: true, ctxDefaultPrevented: false, ctxShown: true }).status === 'failed', 'right-click menu hijack regression classification');
   check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: true, ctxDefaultPrevented: true }).status === 'failed', 'right-click preventDefault regression classification');
   check(assessSnapshot({ loaded: true, ob: true, adapter: true, runtime: { version: expectedVersion, build: expectedBuild }, bridge: { state: 'ready' }, gearCount: 1, titleGate: false, ai: { total: 5 }, ctxTargetFound: false, ctxDefaultPrevented: false }).status === 'blocked', 'right-click target absence classification');
+  // OB-MAINT-004：共享内容发现的路由形状匹配（人工合成标识，非真实页面 ID）。
+  check(filterRouteShapes(['https://www.bilibili.com/video/1SYNTH01A'], ROUTE_SHAPES.bilibili,
+    { hostname: 'www.bilibili.com' }).length === 1, 'route shape video discovery');
+  check(filterRouteShapes(['https://www.zhihu.com/question/111111111'], ROUTE_SHAPES.zhihu,
+    { hostname: 'www.zhihu.com' }).length === 1, 'route shape question discovery');
+  check(filterRouteShapes(['http://www.bilibili.com/video/1SYNTH01A'], ROUTE_SHAPES.bilibili,
+    { hostname: 'www.bilibili.com' }).length === 0, 'route shape https-only guard');
+  check(contentRouteShapes('bilibili').length === 1 && contentRouteShapes('weibo').length === 0,
+    'platform route shape config');
   return failures;
 }
 

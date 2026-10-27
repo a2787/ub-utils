@@ -1,6 +1,11 @@
 /* 其余平台的真实页面只读探针。
  * 不读取用户 Cookie、不执行平台写操作；用于记录当前未登录公开页的可验证边界。
  * 运行：node test/real-platform-probe.cjs
+ *
+ * 退出码：fatal 或任一目标 errors[] 非空时非零退出（blocked 也非零退出，
+ * 语义对齐 real-bilibili-probe.cjs）；结论分类仍以输出 JSON errors[] 前缀为准
+ * （`blocked：` 开头按证据阻断归类，`验证失败：` 及其他为硬失败），
+ * test/maintenance-check.cjs 的隔离探针分支即按该前缀解析。
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const { discoverTargets, redactTarget } = require('./discover.cjs');
@@ -692,4 +697,10 @@ async function pickWeiboDetailTarget(browser, candidates) {
     if (browser) await browser.close().catch(() => {});
   }
   console.log(JSON.stringify(report, null, 2));
+  // 外层括号保证整式求值为布尔、退出码恒为数字 1/0（report.fatal 是字符串，
+  // 直接 `report.fatal || (some ? 1 : 0)` 会把错误消息字符串传给 process.exit）。
+  // 用 process.exitCode 让进程自然退出、先排空 stdout：Windows 管道上紧接
+  // process.exit 属异步写，理论上可截断末尾 JSON（独立复核 2026-10-28 指出；
+  // maintenance-check 分类依赖更早的 'PROBE <id>:' 行，故此前仅是理论隐患）。
+  process.exitCode = (report.fatal || report.targets.some((target) => target.errors.length)) ? 1 : 0;
 })();
