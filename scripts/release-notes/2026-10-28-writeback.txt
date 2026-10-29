@@ -1,0 +1,65 @@
+docs(maintenance): write back 0.63.1 dedicated-Chrome drive and the data-incident rescue (OB-MAINT-004 consistency)
+
+CURRENT.md gains a dated entry for the v0.63.2 pre-release round that
+existing entries only referenced in passing:
+
+- real-site verified, data incident/rescue: the 2026-10-29T17:24 rescue
+  report facts (degraded bridge 8 attempts/8 rejections let a page start
+  empty with all write paths open - omniblock:backup:v1 was overwritten
+  by the initial empty snapshot with no recoverable ring source,
+  degraded-page event-log shards really landed through the degraded
+  bridge, data:v1 survived only because persist never fired; root cause
+  pinned read-only to the single-envelope ready response at ~9.1M chars
+  vs the main-world 8,388,608 limit) that led directly to OB-STORE-001
+  and OB-BRIDGE-001, both released with v0.63.2.
+- real-site verified, 0.63.1 functional drive: the data-safety candidate
+  0.63.1 (never released separately, merged into v0.63.2) ran as a
+  CDP-injected probe instance in the user's dedicated logged-in Chrome
+  on real pages (masked bilibili.com/video/...), local 2026-10-30
+  02:38-02:39: 30 interactive steps, 29 verified + 1 blocked (weibo
+  weibo.com/newlogin/... login wall), 0 page errors - settings five-group
+  nav, blocklist 3->4->3 rows with search/filter, undo toast 9573ms
+  natural dismissal (target 10000+/-2000), log clear 62->1, keyword rule
+  hit 2x auto-hide with auto blocklist add, inline edit live-effective,
+  sample-to-keyword (rules 0->2), hit reset; AI entirely on the local
+  loopback mock (127.0.0.1:8123) with connect 135ms and one analyze
+  request of 72 items/10,372 chars plus confirm+undo; dark-mode computed
+  colors both ways rgb(28,32,48) luminance 0.015 vs rgb(255,255,255)
+  luminance 1.000; zhihu public question page (masked zhihu.com/
+  question/...) quick scan with 3 collected records. All writes stayed in
+  the in-page GM stub: real Tampermonkey storage untouched, extension
+  instance untouched, zero platform write controls, no cookies
+  read/exported; stub state discarded with the tab and the stub exports
+  (3 synthetic persons / 1 rule) are round-local synthetic data. The only
+  planned fallback: a synthetic flat comment node had no .ob-quick entry
+  (quick-block scan does not cover [data-comment-id] flat nodes), so the
+  step ran on a real comment entry with stub-only identity undone in
+  place.
+- blocked, then-unfixed bridge parts: during the drive the persistent dev
+  extension was still 0.63.0/bridge=starting - the same degraded/
+  ready-timeout fault OB-MAINT-004 logged on 2026-10-28 - fixed later the
+  same round by OB-BRIDGE-001 and contrast-verified at release (0.63.0
+  degraded 8/8 -> 0.63.2 ready); standing boundaries unchanged (tieba/x
+  Target.getTargets timeouts, zhihu no probe-able entries, anonymous
+  zhihu wall/douyin captcha/X wall).
+- structure regression, degraded-storage assertions re-run in this
+  writeback round: node test/degraded-storage.cjs PASS 10 / FAIL 0
+  (exit 0, PageErrors 0) - STORE-1..4 degraded read-only byte-identity
+  and warning UI, CONTROL-1 ready pass-through control, BR-1..5 chunked
+  ready/seed readback/orphan-shard sweep; old-behavior baseline numbers
+  cited from the v0.63.2 entry (data:v1 SHA-256 6be1e28e... -> 4186f9d7...,
+  backup:v1 468 -> 2,365 bytes).
+
+To fit the 24 KiB CURRENT budget the 2026-10-27 dated entries moved
+verbatim to docs/maintenance/plans/2026-10-30-current-dated-archive.md
+(read-only archive; routing stub keeps the Mimosa hook-restore command).
+HISTORY_INDEX registers the new archive plus the same-day
+2026-10-30-plan-closure.md that earlier rounds missed. OB-MAINT-004
+(archived, read-only) stays consistent: its blocked bridge item is closed
+by OB-BRIDGE-001 and its 2026-10-28 real-site numbers remain the prior
+evidence chain for the same fault.
+
+Docs-only writeback: no userscript changes, no tag/Release movement, no
+platform writes. The queue message file name 2026-10-28-writeback.txt
+follows the tasking; the recorded round ran 2026-10-29/30. docs-check and
+git diff --check pass; privacy gate clean.

@@ -27,6 +27,13 @@
 - 边界：测试种子全部人工合成（`p_seed1/2`、`bili:uid:10001/10002` 形态占位）；未读取/导出 Cookie；`out/` 交互实测产物（含 2026-10-29 备份导出）本轮起由 `.gitignore` `/out/` 兜底不入库。
 - 发布执行（同轮，已完成）：功能提交 `5af465021a465ff071c588f22ac28536b2f46f99`，发布脚本 `scripts/release-0632.cjs`（工具性提交 `9df2370`/`5155f82` 仅发布脚本修复）创建附注 tag `v0.63.2` 指向功能提交并推送，GitHub Release [v0.63.2](https://github.com/a2787/ub-utils/releases/tag/v0.63.2) 已创建（说明见 `scripts/release-notes/v0.63.2-release.md`）；raw 核对通过（第 1 次尝试）：raw master 已服务 `@version 0.63.2` / 构建 `0.63.2-bridge-chunked-ready`。提交前封存深度扫描（MCP deep）：126 项（20 high + 106 medium，全部 `other-security`），均为 v0.58.0 已分诊两族（跨域请求告警、本地排序比较器误报，基线 `.mimosa/security-policy.json`），无新增族；扫描器 `runStatus=inconclusive`（partial coverage）如实记录；scanId `scan-2026-10-29T19-45-12.394Z-7a3d2c8d24dc`，seal `sha256:5db98c93…`。
 
+## 2026-10-30 v0.63.2 发布前实装轮：数据事故抢救回写与 0.63.1 专用 Chrome 登录态功能实测
+
+- `real-site verified`（数据事故与抢救）：2026-10-29T17:24 抢救报告（轮内记录、原文未入库，事实以本条与 [v0.63.2 条目](../changelog/v0.63.2.md) 引述为准）记录专用开发扩展桥接 degraded（ready 握手 8 尝试 8 拒绝，自 2026-09-12）时页面以默认空存储启动且写路径全部畅通——`omniblock:backup:v1` 被 initial 空快照覆盖且快照环内已无可恢复来源，降级页面事件日志分片经降级桥真实落盘，`omniblock:data:v1` 仅因未触发 persist 而幸存（主名单无用户可见丢失，但降级页面上任何改设置/确认拉黑/同步合并都会覆盖它）。同轮只读坐实根因为 ready-response 单信封载荷超限：真实存储 ≈9.1M 字符（单日最大事件日志分片 2.9M）> 主世界 8,388,608 上限。抢救结论直接立项 OB-STORE-001（fail-closed 只读降级）与 OB-BRIDGE-001（分块根因修复），两项同随 v0.63.2 发布（见上方条目）。
+- `real-site verified`（0.63.1 实装功能实测）：本地 2026-10-30 02:38–02:39（startedAt 2026-10-29T18:38Z），用户专用 Chrome 登录态真实页面（主舞台脱敏 `bilibili.com/video/...`），数据安全候选 `0.63.1`（最终未单独发布、与 OB-BRIDGE-001 合并为 v0.63.2）以探针实例实装运行 30 步交互功能链路：29 步 verified、1 步 blocked、pageErrors=0——设置五分组导航与日志诊断、「新增屏蔽」名单 3→4→3 行、搜索/平台筛选（"显示 1 / 共 4"）、撤销 toast 9573ms 自然消失（目标 10000±2000ms）、清空日志 62→1；关键词规则命中 2 次自动隐藏并自动写名单、就地编辑即时生效、样本转关键词（规则 0→2 条）、命中清零、临时规则全清；AI 全程指向本机 loopback mock（127.0.0.1:8123），测试连接 135ms、「分析本页」1 次请求 72 条 10372 字符、审核确认+撤销、用量计数一致；深色面板 rgb(28,32,48)（亮度 0.015）↔ 浅色 rgb(255,255,255)（亮度 1.000）双向；知乎公开问题页（脱敏 `zhihu.com/question/...`）快扫通过（collectAIRecords 3 条）。blocked：weibo 落 `weibo.com/newlogin/...` 登录墙。唯一预案内回退：合成平面评论节点无 `.ob-quick` 快捷入口（快捷拉黑扫描未覆盖 `[data-comment-id]` 平面节点），按预案改真实评论条目执行（身份脱敏、仅进页面内桩并当场撤销）。全程写入均在页面内 GM 存储桩：真实 Tampermonkey 存储零写入、扩展实例未触碰、平台写入控件 0 次、未读取/导出 Cookie；桩内轮末 4 人随标签页丢弃，桩内导出（3 合成人/1 条规则，`out/omniblock-*-2026-10-29.json`）均为轮内合成数据；驱动/报告按 `.gitignore` `/_drive_test*.cjs`、`/out/` 兜底不入库。
+- `blocked`（桥接当时未修复部分）：驱动期间持久扩展实例仍为 `0.63.0`/bridge=starting（即 2026-10-28 OB-MAINT-004 专用轮记录的同一 degraded/ready-timeout 故障），0.63.1 为探针实例注入运行并持运行锁——该部分随后由 OB-BRIDGE-001 同轮修复并经 v0.63.2 发布对照验证（0.63.0 degraded 8/8 → 0.63.2 ready，见上方 v0.63.2 条目）；既有另案边界不变：tieba/x `Target.getTargets` 超时、zhihu 无可探测条目、匿名链路知乎登录墙/抖音验证码/X 登录墙。
+- `structure regression`（degraded-storage 断言，本轮回写轮复跑）：`node test/degraded-storage.cjs` PASS 10 / FAIL 0（exit 0、PageErrors 0）——STORE-1..4 degraded 只读（data:v1/backup:v1 字节不变、警示 UI 且浮条关闭后面板保留）、CONTROL-1 ready 放行对照、BR-1..5 >8MiB 存储分块 ready/种子读回/degraded=false/孤儿分片清理/ready 放行；旧行为基线（HEAD 0.63.0）六项失败字节级留证（data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`、backup:v1 468→2,365 字节），对照见 [v0.63.2 条目](../changelog/v0.63.2.md)。
+
 ## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为，摘要）
 
 - 摘要：一次性探针 `_probe_diag4.cjs` 曾被 `b3fdbb1` 意外入库，本轮解除跟踪（本地保留）并以 `.gitignore` 根级锚定 `/_probe_diag*.cjs`、`/_probe_features.cjs`、`.mimosa/` 运行时子目录兜底；修复 `scripts/commit-pending.cjs`（多行提交信息经 `.git/OB_MSG` + `git commit -F`，杜绝字面 `\n` 主题行）、新增 `scripts/commit-worktree.cjs`（消息文件 + `--dry-run`，git 调用全部绕过 shell）。`omniblock.user.js` 零改动（SHA-256 前后一致）；`structure regression`：`node --check`（两个脚本）、docs-check、`git diff --check` 通过。详细边界见提交 `ec31217` 说明。
@@ -42,46 +49,9 @@
 
 - 摘要：新增 test/content-discovery.cjs（Shadow DOM 深度遍历 + 路由形状兜底），discover.cjs 与 dedicated-browser.cjs 内容发现统一走该实现；real-platform-probe.cjs 修复恒定退出 0；夹具 9/9（旧浅层 0 目标→新实现命中 /video/、/question/）。`blocked`：--dedicated-only 专用链路 6 平台桥接 degraded/ready-timeout，签名同 2026-09-12 已知故障（已于 2026-10-30 修复，见 OB-BRIDGE-001）。
 
-## 2026-10-27 dev-extension 遗留用例重构与扫描噪声治理（OB-MAINT-003，已关闭，无用户可见行为）
+## 2026-10-27 日期条目（已移出活动正文以守住 24 KiB 预算）
 
-- 摘要（完整事实见 [PLAN 收尾归档](plans/2026-10-27-plan-closure.md) 与当日交接）：dev-extension 的 loopback AI 网关失效用例降级为直连拒绝断言（11/11，重构前基线 9 过 2 失败）；Mimosa 封存扫描 + `.mimosa/security-policy.json` 基线流程写入 MAINTENANCE_WORKFLOW §5；门禁内置扫描器对约 1MB 单文件多次 ETIMEDOUT 记 inconclusive，原生钩子已卸载，恢复命令 `node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`。
-
-## 2026-10-27 自建界面深色模式（OB-UI-003，v0.63.0，已公开发布）
-
-- 范围：系统深色（`prefers-color-scheme: dark`）时全部自建 UI（设置面板、内容弹窗、审核/反馈浮层、关键词面板、确认气泡/浮层、批量范围面板、待审/后台浮条、行内入口）自动切换深色主题，无独立开关；浅色规则零改动，深色为样式表末尾纯追加媒体查询覆盖段（142 条规则 + `--ob-dark-*` 令牌 + `color-scheme: dark`），零 JS 行为改动。
-- `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级、DARK-1 浏览器级 emulateMedia 双向切换、DARK-3 浅色快捷拉黑链路回归，逐项数字见 [v0.63.0 条目](../changelog/v0.63.0.md)）；run 20/20、userscript-product 7/7、ui-settings 16 项、`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。已知限制见 [v0.63.0 条目](../changelog/v0.63.0.md)。v0.63.0 已公开发布。
-
-## 2026-10-27 已屏蔽内容样本库与规则提炼（OB-RULE-004，v0.62.0，已公开发布）
-
-- 范围：确认拉黑五类提交点（快捷/批量/作品/B站弹幕/AI 审核确认）把正文（截断 240 字）写入本机样本库 `RuleSamples`（独立 GM 键，按平台 LRU 200 条，仅本机，不进 Store 快照/同步/导出/日志）；关键词面板新增样本区（最近 50 条，逐条/批量「转为关键词」走 `DanmakuRules.add` 完整校验）与「AI 归纳提炼规则」（该平台最近 100 条样本发一次性直连请求，候选经人工确认才写入，重复/超限/危险正则被拒并显示原因）。`@version` 0.61.0→0.62.0，构建 `0.62.0-rule-samples`。
-- `structure regression`：新增 `test/rule-samples.cjs` 10/10（SOURCE-1 源码级隐私边界 + 入库/去重/LRU/转规则门控/AI 请求形态/失败零写入）；rule-manager 5、quickblock 38、danmaku-auto 8、run 20、product 7、ui-settings 16、work-block 3、comment-manager 3、adapters 28、content-ai 12、content-coverage 6、ai-screening 25、ai-auto-gate 11、ai-autoload 3、state、performance、douyin、real-bilibili-probe --verify-local 全绿；`node --check`、docs-check、隐私门禁通过，页面/控制台错误 0。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。已知限制见版本条目：个别锚点不在内容容器内的入口不产生样本；AI 候选仅内存缓存；样本只存正文，不含作者与身份键。v0.62.0 已公开发布。
-
-## 2026-10-27 v0.60.0/v0.61.0 事实路由（已公开发布，详细范围与证据见版本条目）
-
-- v0.61.0（OB-AI-016，ai-auto-gate 11/11 等）：自动分析持久缓存（TTL 7 天/LRU 2000，generation 失效）、自动模式每页最多 3 批 + 上限提示、「自动分析只看评论」开关；手动分析不碰缓存不受限。`blocked`：实页验证暂停。
-- v0.60.0（OB-UI-001，ui-settings 16 项等）：设置面板五分组导航、名单搜索/筛选/计数/空态、`undoToastSeconds`（默认 10s）、最近 20 条本地屏蔽操作（独立键，无正文）与自建确认浮层。`blocked`：实页验证暂停。
-- 两个版本均已公开发布（tag/Release/raw 已核验）；完整范围、逐项证据与边界见 [v0.61.0 条目](../changelog/v0.61.0.md) 与 [v0.60.0 条目](../changelog/v0.60.0.md)。
-
-## 2026-10-27 关键词/正则规则管理升级（OB-RULE-003，v0.59.0，已发布）
-
-- 规则就地编辑（类型/内容/备注/作用域，内容派生 id 并迁移命中计数）、每条规则本机持久命中计数（`omniblock:rule-hits:v1`，可清零、随删除清理）、规则包导出/导入（去重/上限/危险正则校验）、跨平台作用域；设置面板新增任意页面可达的规则管理按钮，删除旧自动规则死代码并修正 4 处失效文案。详细范围、证据与矩阵数字见 [v0.59.0 条目](../changelog/v0.59.0.md)。
-- `structure regression`：新增 `test/rule-manager.cjs` 5/5（旧源码上必然失败）；danmaku-auto 8/8、quickblock 38/38、run 20/20、userscript-product 7/7 等全量矩阵通过。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
-
-## 2026-10-27 AI 默认仅手动分析与待审浮条（OB-AI-015，v0.58.0，已发布）
-
-- 范围/文件：`omniblock.user.js` 新增 `aiAutoAnalyze` 设置（默认 `false`，随设置快照同步）；`scheduleAuto` 统一拦截自动分析；自动候选改「AI 待审建议」浮条（`#ob-ai-pending`，不再自动弹窗）；AI 面板新增自动开关与本机用量计数（`omniblock:ai-usage:v1`，仅请求/条数/字符，不入同步/导出）；手动分析取消页规则强制。详细范围与状态文案见 [v0.58.0 条目](../changelog/v0.58.0.md)。
-- `structure regression`：新增 `test/ai-auto-gate.cjs` 5 项全绿（默认 0 次自动请求、手动免页规则、浮条契约、用量计数与持久化；旧行为失败对照按源码路径推理记录，见该版本条目）；ai-screening 25/25 等全量矩阵通过，页面/控制台错误 0。
-- `blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；v0.58.0 已随后续发布。
-- 安全加固（同轮）：`window.OB` 调试句柄只在显式 `__OB_TEST_HOOKS__` 的测试/探针注入环境挂载，生产页面只有只读 `__OB_RUNTIME_INFO__`；此前恶意页面可改写 AI provider 地址外传本机 Key。Mimosa 深度扫描 125 项逐条分诊：20 个 high 为按设计跨域能力的静态污点告警（真实攻击面即上述句柄暴露，已修复），~90 条 mongo-sort/xss 链核实为误报；细节见 [v0.58.0 条目](../changelog/v0.58.0.md)。
-- 既有损坏（非本轮引入）：`test/dev-extension.cjs` 的 loopback AI 桥接用例写入的 `aiGatewayUrl` 在 v0.57.1 直连切换后已从源码移除，该用例结构性过时；修复另立 OB-MAINT-003。
-- 用户决策同步：自动候选不打断（并入 OB-AI-015）、名单搜索/筛选（并入 OB-UI-001）、深色模式（OB-UI-003）；否决平台主开关、全局快捷键、新手引导；"从已屏蔽内容提炼规则"立项为 OB-RULE-004。
-
-## 2026-10-27 接手调查与 AI 成本治理规划（无代码改动）
-
-- 用户重启维护，方向：降低 AI API 消费、优化操作体验、升级关键词/正则规则管理；仅源码调查与计划。审计结论（自动分析全开且重访重复计费、规则不可编辑/无计数/无导入导出、面板死代码无分组）由此立项并已全部落地；用户决策同步与否决清单见上一节。
-
+- OB-MAINT-003、OB-UI-003、OB-RULE-004、v0.60.0/v0.61.0 事实路由、OB-RULE-003、OB-AI-015 与接手调查的原始日期条目逐字保存在 [2026-10-30 移出存档](plans/2026-10-30-current-dated-archive.md)；各版本用户可见事实以对应版本 changelog（v0.58.0~v0.63.0）与 [PLAN 收尾归档](plans/2026-10-27-plan-closure.md) 为准。Mimosa 原生钩子当前为卸载状态，恢复命令 `node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`（详见存档 OB-MAINT-003 条目）。
 ## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
 
 - 完整日期条目（范围/改动/证据/发布状态）已移入 [2026-09-13 移出存档](plans/2026-09-13-current-dated-archive.md)；当前公开版本与发布状态以本页"当前版本"区为准。
