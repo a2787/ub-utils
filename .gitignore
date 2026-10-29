@@ -52,3 +52,14 @@ test/shot-*.png
 # 本地 AI 网关生成物；包含 API Key，不属于可交付源码。
 gateway/runtime/
 gateway/*.local.json
+
+# 2026-10-29 审计完善：.mimosa 运行时子目录（finding-ledger/history/hook-state/
+# hook-status/reports）是工具运行产物，不入库。已跟踪的 .mimosa/security-policy.json
+# 扫描基线不受影响——gitignore 只作用于未跟踪文件，已跟踪文件不因此解除跟踪。
+.mimosa/
+
+# 2026-10-29 审计完善：根级一次性 CDP 诊断/特征探针脚本仅供当轮排查，保留在磁盘不入库
+# （_probe_diag4.cjs 曾因 add -A + 白名单 reset 漏列被 b3fdbb1 误提交，2026-10-29 解除跟踪）。
+# 前导 / 锚定根目录，不影响 test/ 下按名登记的可交付探针脚本。
+/_probe_diag*.cjs
+/_probe_features.cjs

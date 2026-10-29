@@ -1,0 +1,40 @@
+chore(maintenance): land 2026-10-29 audit polish for repo hygiene and commit tooling
+
+Tooling-and-docs round only: omniblock.user.js is unchanged (SHA-256
+97d9d02b...763d verified identical before and after), no platform adapter,
+storage or user-visible behavior is touched, and no CHANGELOG entry is
+required.
+
+- scripts/commit-pending.cjs: multi-line commit messages are now written
+  to .git/OB_MSG and committed via git commit -F through execFileSync
+  (bypassing cmd.exe), fixing the literal-\n subject mangling observed in
+  b3fdbb1 and 446daa1 where JSON.stringify + execSync/cmd.exe serialized
+  real newlines into two-character \n sequences; a guard now rejects any
+  message containing a literal backslash-n. Staging switched from
+  git add -A plus a post-hoc reset whitelist to an explicit CHANGED_FILES
+  array (the real b3fdbb1 changeset) with a staged-set assertion, per the
+  AGENTS.md rule against git add . in a dirty worktree. Already-pushed
+  commits are left as-is (no history rewrite).
+- .gitignore: ignore the .mimosa/ runtime subdirs (finding-ledger,
+  history, hook-state, hook-status, reports) and root-anchored
+  /_probe_diag*.cjs and /_probe_features.cjs temp probes, which stay on
+  disk and out of the repo; the tracked .mimosa/security-policy.json scan
+  baseline is unaffected because gitignore does not apply to tracked
+  files.
+- untrack _probe_diag4.cjs: the one-off CDP diagnostic probe was
+  accidentally committed by b3fdbb1 because the add -A reset whitelist
+  listed only its first three siblings; git rm --cached removes it from
+  tracking while keeping the local file. Dated correction entries are
+  appended to docs/maintenance/CURRENT.md and docs/maintenance/PLAN.md
+  (original statements not rewritten).
+- new scripts/commit-worktree.cjs: general worktree commit tool
+  (node scripts/commit-worktree.cjs <message-file> [--dry-run]) running
+  git add -A, a reset of the known noise paths, git commit -F of the
+  message file, then git push origin master; every git call bypasses the
+  shell, the literal-\n message guard applies, and --dry-run performs no
+  mutating action.
+
+Affected surface: .gitignore, scripts/commit-pending.cjs,
+scripts/commit-worktree.cjs (new), scripts/release-notes/ (this note),
+docs/maintenance/CURRENT.md and docs/maintenance/PLAN.md (dated
+correction entries), and untracking of _probe_diag4.cjs.

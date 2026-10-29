@@ -15,6 +15,13 @@
 - 发布状态：v0.63.0 为最新公开版本；`v0.60.0`~`v0.63.0` 四个 tag 与 GitHub Release 均已创建，raw 更新地址已服务 `0.63.0`，发布回写提交 `6c9ef66` 仅改文档不改变功能 tag；未执行平台写入。
 - 当前公开 tag/Release：[v0.63.0](https://github.com/a2787/ub-utils/releases/tag/v0.63.0)。
 
+## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为）
+
+- 事实更正（按规则不改写 2026-10-28 条目原文）：该条目与 PLAN OB-MAINT-004 scope 中「临时探针脚本未提交/未入库」的表述不准确——一次性 CDP 诊断探针 `_probe_diag4.cjs` 实际已被提交 `b3fdbb1` 连带入库（`git add -A` + 白名单 reset 漏列第 4 个同名变体所致）。本轮已 `git rm --cached` 解除跟踪（本地文件保留），并以 `.gitignore` 新增 `.mimosa/` 运行时子目录与根级锚定 `/_probe_diag*.cjs`、`/_probe_features.cjs` 兜底；已跟踪的 `.mimosa/security-policy.json` 扫描基线不受影响。
+- `scripts/commit-pending.cjs` 修复：多行提交信息改写 `.git/OB_MSG` 后 `git commit -F`（execFileSync 绕过 cmd.exe，附「消息不含字面 \n」断言）——b3fdbb1/446daa1 主题行含字面 `\n` 的缺陷由 `JSON.stringify` + cmd.exe 路径导致，已入库提交不改写；暂存改显式路径数组 + 暂存区断言，移除 `git add -A` 与事后 reset。
+- 新增通用提交工具 `scripts/commit-worktree.cjs`（消息文件路径 + `--dry-run`；add -A 后 reset 上述噪声路径、`git commit -F` 消息文件、push origin master；本轮任务明确授权该工具保留 add -A + reset 形态，所有 git 调用绕过 shell，忽略规则同步兜底）。
+- 边界：`omniblock.user.js` 零改动（SHA-256 `97d9d02b…763d` 前后一致）；本轮仅仓库工具与维护文档，无用户可见行为，无 CHANGELOG 条目；`structure regression`：`node --check`（两个脚本）、docs-check、`git diff --check` 通过。
+
 ## 2026-10-28 专用登录态实装验证（v0.60.0~v0.63.0 实装回写）
 
 - `real-site verified`：2026-10-28，用户专用 Chrome 登录态（browser-harness profile，CDP 9222）开发扩展 `0.63.0`/`0.63.0-dark-mode` 实装，runtime 在真实页面确认：脱敏 `bilibili.com/page/...`（首页形态）AI content 记录 8 条、`byKind={"content":8}`、withIdentity=8/8、gearCount=1。基线 `node test/maintenance-check.cjs --dedicated-only`（完整运行约 25 分钟）：41 个检查节全部执行，40 项本地门禁通过（docs governance/userscript syntax/run/quickblock/adapters/performance 等含 `RESULT: … PASSED`），整体 `RESULT: MAINTENANCE SELF-CHECK FAILED`（exit 1）——唯一失败项为 dedicated Chrome login-state real-site probe（exit 1）；legacy dev-browser sync 单独记 `blocked`（退出码 2）。

@@ -33,7 +33,10 @@ blocked；OB-WEIBO-003 verified）。范围、证据、残留与恢复动作见
 原文均见 [2026-10-27 计划收尾归档](plans/2026-10-27-plan-closure.md)；对应事实已回写 `CURRENT.md`
 与版本 changelog。2026-10-28 更正：OB-UI-001/OB-AI-016（及归档中 OB-AI-015）evidence 里"本地候选交付
 （未 push/tag/Release）"的表述已被同日统一发布取代——v0.60.0~v0.63.0 四个 tag/Release 与 raw 均已核验，
-归档原文按只读规则不改写。
+归档原文按只读规则不改写。2026-10-29 更正：OB-MAINT-004 scope 里「未入库临时脚本
+_probe_features.cjs/_probe_diag*.cjs」的表述不准确——一次性探针 `_probe_diag4.cjs` 已被提交
+`b3fdbb1` 连带入库（add -A + 白名单 reset 漏列），本轮已解除跟踪（本地保留）并以 `.gitignore`
+根级锚定规则兜底；scope 原文按已验证项不改写，详见 `CURRENT.md` 同日条目。
 
 ## 活动项
 
