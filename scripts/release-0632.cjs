@@ -18,6 +18,10 @@ const { execFileSync } = require('node:child_process');
 
 const ROOT = process.cwd();
 const DRY = process.argv.includes('--dry-run');
+// 可选 --commit <sha>：tag 指向该提交（默认 HEAD）。用于功能提交之后另有小工具提交、
+// 而 tag 必须指向功能提交的场景（2026-10-30 授权语义：tag 指向功能提交）。
+const commitArgIdx = process.argv.indexOf('--commit');
+const COMMIT_ARG = commitArgIdx > -1 ? process.argv[commitArgIdx + 1] : '';
 const TAG = 'v0.63.2';
 const TITLE = 'OmniBlock v0.63.2 — 数据安全修复与桥接根因修复（合并发布）';
 const NOTES = 'scripts/release-notes/v0.63.2-release.md';
@@ -34,7 +38,8 @@ if (!/^raw\.githubusercontent\.com$/.test(host)) throw new Error('raw 核对域�
 const sh = (cmd, args, opts = {}) => {
   const printable = cmd + ' ' + args.join(' ');
   if (DRY && cmd !== 'git') { console.log('[dry-run] ' + printable); return ''; }
-  const out = execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+  // userscript ≈1MB：默认 1MiB maxBuffer 会 ERR_CHILD_PROCESS_STDIO_MAXBUFFER，放宽到 64MiB
+  const out = execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...opts });
   return String(out).trim();
 };
 const trySh = (cmd, args) => { try { return sh(cmd, args); } catch (e) { return ''; } };
@@ -45,8 +50,8 @@ if (!DRY && status) {
   console.error('工作区不干净，中止（发布脚本要求先由 commit-worktree 完成提交）:\n' + status);
   process.exit(1);
 }
-const head = sh('git', ['rev-parse', 'HEAD']);
-console.log('HEAD (功能提交):', head);
+const head = COMMIT_ARG ? sh('git', ['rev-parse', '--verify', COMMIT_ARG]) : sh('git', ['rev-parse', 'HEAD']);
+console.log('功能提交 (tag 目标):', head);
 const headVersion = sh('git', ['show', head + ':omniblock.user.js']).split('\n').find((l) => l.includes('@version'));
 if (!/@version\s+0\.63\.2/.test(headVersion || '')) {
   console.error('功能提交内 @version 不是 0.63.2: ' + headVersion);

@@ -1,0 +1,12 @@
+chore(release): fix release-0632 maxBuffer and add --commit target override
+
+The release script crashed on its pre-flight check: execFileSync's
+default 1MiB maxBuffer cannot hold the ~1MB omniblock.user.js fetched
+via `git show <commit>:omniblock.user.js` (ERR_CHILD_PROCESS_STDIO_
+MAXBUFFER). The check now runs with a 64MiB buffer. An optional
+`--commit <sha>` overrides the tag target so v0.63.2 keeps pointing at
+the feature commit 5af4650 when small tooling fixes follow it.
+
+- no userscript/test/doc behavior changes; tooling only
+- queued during the v0.63.2 release round (script fix before first run;
+  the crash happened pre-tag, leaving no tag/Release to clean up)
