@@ -65,7 +65,7 @@ gateway/*.local.json
 /_probe_features.cjs
 
 # 2026-10-30 交互实测驱动脚本；仅供当轮排查，不入库。
-/_drive_test.cjs
+/_drive_test*.cjs
 
 # 2026-10-30 交互实测产物目录（drive 截图、report 与含真实数据的备份导出）；
 # 仅供当轮排查，不入库（发布工具 add -A 的隐私兜底）。

@@ -1,0 +1,20 @@
+docs(release): record v0.63.2 post-release re-verification (dedicated Chrome)
+
+Post-release focused re-tests on the user's dedicated Chrome (logged-in,
+read-only + stubbed local writes), 8/8 green: dev-browser sync confirms
+extension 0.63.2 / 0.63.2-bridge-chunked-ready with the bridge ready on
+real pages (attempts 1-2, rejections 0, storageDegraded=false) - the
+2026-09-12 permanent degradation stays resolved after publication;
+undoToastSeconds 10->15->restore 10 survives each refresh via the real
+bridge and leaves zero residue (the round's only real-settings write,
+restored and re-verified); the blocklist add chain executes through
+Store->persist with writes landing in an in-page GM stub (real list
+byte-identical before/after - zero pollution control passed); the v0.62
+sample->convert-to-keyword chain completes end to end in the stub
+(sample seeded -> sample section -> convert -> rule 0->1). Zero platform
+write controls clicked; driver and report are round-local ignored files.
+
+CURRENT records the re-verification with evidence labels and narrows
+the next most-valuable verification to the orphan-shard convergence
+readout; the v0.63.2 entry and root CHANGELOG gain the same facts.
+Docs-only commit; does not move the feature tag or Release.

@@ -33,7 +33,8 @@ GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.2](https:
   全部 ready（1~2 尝试 0 拒绝），真实读取正常（脱敏 bilibili.com/page/... content=8、
   weibo.com/page/... content=6 users=6、douyin.com/jingxuan/... content=10），同轮捕获 0.63.0
   degraded（8/8）→0.63.2 ready 的前后对照；zhihu 无可探测条目 blocked、tieba/x 浏览器级 CDP
-  超时 failed 为既有另案边界。
+  超时 failed 为既有另案边界。发布后同日专项复测 8/8（真实页桥接 ready、设置跨刷新持久化并还原、
+  名单写入与样本→转关键词全链路落桩零污染）。
 
 详细变更、证据和边界：[v0.63.2 完整条目](docs/changelog/v0.63.2.md)。
 
