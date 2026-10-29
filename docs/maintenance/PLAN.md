@@ -1,6 +1,6 @@
 # OmniBlock 当前维护计划
 
-更新时间：2026-10-28
+更新时间：2026-10-30
 
 本文件是 OmniBlock 唯一的活动计划：记录问题、范围、依赖、验收和下一步；当前事实放在
 `CURRENT.md`，用户可见变化放在 README/版本 changelog，结束项移入历史索引。
@@ -38,39 +38,44 @@ _probe_features.cjs/_probe_diag*.cjs」的表述不准确——一次性探针 `
 `b3fdbb1` 连带入库（add -A + 白名单 reset 漏列），本轮已解除跟踪（本地保留）并以 `.gitignore`
 根级锚定规则兜底；scope 原文按已验证项不改写，详见 `CURRENT.md` 同日条目。
 
+2026-10-30 把已 verified 且事实已回写 CURRENT/版本 changelog 的 OB-RULE-004（v0.62.0）、
+OB-UI-003（v0.63.0）与 OB-MAINT-004（测试层）移出活动正文，原文见
+[2026-10-30 计划收尾归档](plans/2026-10-30-plan-closure.md)；同日立项 OB-STORE-001 与 OB-BRIDGE-001。
+
 ## 活动项
 
-### OB-RULE-004 — 已屏蔽内容样本库与规则提炼
+### OB-BRIDGE-001 — 桥接就绪快照分块与事件日志孤儿清理（永久 degraded 根因修复）
 
 - status: verified
-- priority: P2
-- scope: 把"已屏蔽内容"变成免费规则的原料（用户 2026-10-27 提出，含 AI 归纳设想）：用户确认拉黑（快捷/批量/弹幕组/评论管理器/AI 确认）时，把该条内容文本（截短、截断上限）写入本机"已屏蔽内容样本库"（按平台分桶、LRU 上限、独立 GM 键，本地 only，不入同步/导出/日志，可一键清空）；关键词面板提供从样本一键转关键词/正则规则的候选列表（全部经人工勾选确认后才写入 `DanmakuRules`）；提供"AI 归纳提炼规则"按钮：把有界样本（脱敏、限量）发给已配置 provider，请求输出候选关键词/正则与理由，结果同样只进人工确认列表，绝不自动写入；弹幕整条文本转关键词优先（重复度高），评论长文本默认不转整条关键词以免规则表被撑爆。
-- non-goals: 不自动写入任何规则（全部人工确认）；不调用平台写入；样本库不进入账户同步；不改变身份键规范；样本只在本机保存，不含 Cookie/凭证。
+- priority: P0
+- scope: OB-DEF-002 根因已实测坐实（H1 载荷超限）：ready-response 把全部白名单键打包单信封，真实存储 ≈9.1M 字符 > 主世界 verifyEnvelope 8,388,608 上限，2026-09-12 起六平台永久 degraded（8 尝试 8 拒绝）；叠加 OB-DEF-001 降级写链覆盖索引后老分片成为孤儿，rotate 索引口径永远清不掉，不可自愈。修复：①桥侧分块——build-dev-extension.cjs 两侧模板把就绪快照序列化后按 2MiB（READY_CHUNK_CHARS）分块为 ready-values-chunk 信封（每条仍受 8MiB/HMAC/单调序列保护，MAX_READY_CHUNKS=64；序列化失败/截断显式 snapshot-serialize-failed/snapshot-too-large 错误回包，错误原因透传 failReady），主世界按 requestId 聚齐→JSON.parse→白名单过滤→ready-ack 先行→readyResolve，任一分块缺失不 settle 由既有重试覆盖；②EventLog rotate() 增加日期口径孤儿清理 sweepOrphanShards（[today-365, today-30) 每日期键有界探测 ≤365 次、每本地日至多一次，凡存在且不在裁剪后索引里的分片删除），MAX_TOTAL_CHARS 维持 16MiB（分块后 ready 能力 64×2MiB 已高于日志预算）；③metrics 新增 orphanSweeps/orphanShardsDeleted。@version 0.63.0→0.63.2（与 OB-STORE-001 合并单一发布），构建 `0.63.2-bridge-chunked-ready`。
+- non-goals: 不手工删除真实存储的历史大分片（分诊 ① 为删除类写入，未获授权且分块修复后无必要——孤儿清理会按保留期自动收敛）；不改动存储键白名单、身份规范、同步协议与平台写入红线；不把 OB-STORE-001 的只读降级语义改为可写。
 - dependencies: none
 - acceptance: required
-  - [x] 确认拉黑后样本进入样本库，含平台、截短文本与时间；达到上限时按 LRU 淘汰并可清空（`test/rule-samples.cjs` SAMPLE-1a/1b/1c：批量确认入库且不进名单导出、重复文本去重并移队首、每平台 LRU 200 淘汰最旧且持久化一致、样本区可一键清空）。
-  - [x] 样本转规则候选经人工勾选确认后才写入规则表；重复/超限/危险正则被拒并给可理解原因（SAMPLE-CONV-1 勾选 + 「把选中转为关键词」/行内「转为关键词」走 `DanmakuRules.add` 完整校验且样本保留；SAMPLE-AI-1b 候选写入时重复被去重、`(a+)+` 被 `assessDanmakuRegexRisk` 拒绝）。
-  - [x] AI 归纳请求不含身份键/URL/Cookie，候选只进确认列表；失败给可理解原因，无 provider 配置时按钮不可用（SAMPLE-AI-1：请求正文仅样本数组、系统提示词受约束、关键词默认勾选/正则默认不勾选；CONV-1b 门控 title；SAMPLE-AI-ERR-1 provider 500 → 可读失败提示、候选清空、零写入）。
-  - [x] 隐私门禁通过；`test/quickblock.cjs`、`test/danmaku-auto.cjs`、docs-check 通过（另见 SOURCE-1 源码级断言：样本 GM 键字面量全源码 1 处，快照/AccountSync/导出不引用 RuleSamples，样本/归纳事件日志只含平台与计数）。
-- evidence: `structure regression`：新增 `test/rule-samples.cjs` 10/10（前置依赖 OB-RULE-003 已于同日 verified 并移入收尾归档）；rule-manager 5/5、quickblock 38/38、danmaku-auto 8/8、run 20/20、userscript-product 7/7、ui-settings 16 项、work-block 3/3、comment-manager 3/3、adapters 28/28、content-ai 12/12、content-coverage 6/6、ai-screening 25/25、ai-auto-gate 11/11、ai-autoload 3/3、state、performance、douyin、real-bilibili-probe --verify-local（含 --verify-danmaku-tool --verify-floating-danmaku）通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。已随 v0.62.0 公开发布（tag/Release/raw 已核验）。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）。
-- next: 已实现并随 v0.62.0 公开发布；实页验证（确认拉黑 → 样本出现 → 转规则、AI 归纳真实 provider 请求形态）待用户恢复授权后补齐。样本按入口锚点回溯正文，个别锚点不在内容容器内的入口不产生样本；AI 候选仅内存缓存——已知限制记录在版本条目。
-- updated: 2026-10-27
+  - [x] >8MiB 夹具断言分块后 ready 成功而旧单信封路径 ready-timeout（degraded-storage BR-1：旧行为基线 state=degraded/attempts=8/reason=ready-timeout，修复后 ready）。
+  - [x] 索引缺失的大日期分片按日期被清理（BR-4：40 天前孤儿分片旧代码残留、修复后删除）；dev-extension.cjs 新增分块协议两侧同步源码级守卫（旧模板上失败）。
+  - [x] ready 放行对照（OB-DEF-001 在 ready 状态解除）：setSetting 落盘且种子名单未被覆盖（BR-5）；fallback degraded 只读降级回归保留（STORE-1..4）。
+  - [x] `test/degraded-storage.cjs` 10/10、`test/dev-extension.cjs` 13/13、`test/run.cjs` 20/20、`test/dark-mode.cjs`、`test/product-extension.cjs` 3/3、`node --check`（源码+生成桥接文件）通过；README/CHANGELOG/v0.63.2/CURRENT/知识树同步；@version 0.63.0→0.63.2（合并发布）、构建 `0.63.2-bridge-chunked-ready`。
+- evidence: `structure regression`：2026-10-30 旧行为基线（HEAD 0.63.0，git worktree 隔离运行）degraded-storage FAIL 8（BR-1..5、STORE-1..3，BR-1 输出生产同签名 degraded/8/ready-timeout，BR-5 空态覆盖种子 hasSeed=false）+ dev-extension 两守卫失败；修复后 degraded-storage 10/10（exit 0）、dev-extension 13/13、run 20/20、dark-mode 通过、product-extension 3/3。`real-site verified`：2026-10-30 专用 Chrome 登录态只读探针（--dedicated-only）：扩展刷新到 0.63.2 后四可达平台桥接全部 ready（bilibili/douyin/weibo 1 尝试 0 拒绝、zhihu 2 尝试 0 拒绝），真实读取脱敏 bilibili.com/page/... content=8（withIdentity 8/8）、douyin.com/jingxuan/... content=10、weibo.com/page/... content=6 users=6（withIdentity 6/6）、zhihu.com/hot/... 加载但 0 条（既有 blocked）；同轮刷新环节先捕获 0.63.0 degraded（8/8/ready-timeout）再捕获 0.63.2 ready（attempts=2），修复前后直接对照；2026-09-12 起六平台永久 degraded 在真实存储上解除。整体 FAILED 仅由既有分类构成（zhihu 无可探测条目 blocked、tieba/x 浏览器级 Target.getTargets 超时 failed）。发布合并更正（2026-10-30）：本项与 OB-STORE-001 同工作区叠加实现并同轮验证，按发布决定合并为 v0.63.2 单一发布（两项同随 v0.63.2 发布，tag/Release/raw 核对见 CURRENT 发布回写）；中间数据安全候选未单独创建 tag/Release。
+- next: 已关闭；孤儿清理对真实存储的收敛效果可用 EventLog.status().orphanSweeps/orphanShardsDeleted 在后续只读会话复核；tieba/x CDP 超时与 zhihu 条目缺失为既有另案边界。
+- updated: 2026-10-30
 - supersedes: none
 
-### OB-UI-003 — 深色模式
+### OB-STORE-001 — degraded 存储只读降级（桥接未就绪时禁止一切写路径）
 
 - status: verified
-- priority: P3
-- scope: 用户 2026-10-27 采纳：为 userscript 全部自建 UI（设置面板、内容弹窗、审核浮层、确认气泡、toast、浮条）增加 `prefers-color-scheme: dark` 适配，深色下保持对比度与触控/悬停反馈；提供"跟随系统"默认即可，不加独立开关（若需要再加）。
-- non-goals: 不改布局与交互；不做主题自定义；不改动平台页面本身。
+- priority: P0
+- scope: 专用开发扩展桥接 degraded（ready 握手被全量拒绝）时，页面以默认空存储启动但旧写路径全部畅通：persist() 会把空态写回 `omniblock:data:v1` 覆盖真实名单，首载/外部变更快照会把空快照写进 `omniblock:backup:v1` 快照环（2026-10-29 抢救报告的 backup:v1 覆盖即同一链路的实际损害）。双层 fail-closed + UI 警示：层 1（userscript）ready 被拒后置 `storageBridgeDegraded`，`persist()`/`writeBackupRecords()` 拒写、`ensureLocalBackup()` 提前返回、`storageStatus()` 暴露 `degraded`，设置面板顶部与右下浮条持续警示（浮条可关闭、面板警示保留）；层 2（build-dev-extension.cjs 桥接模板）主世界 ready 后先发 `ready-ack`、GM 写入在 `!ready` 时拒绝并计数，隔离世界锁存 `ready-ack` 后才放行 `set`/`remove`。新建 `test/degraded-storage.cjs`（生产同款载荷超限退化夹具）断言 data:v1/backup:v1 字节不变、面板警示出现，三项核心断言在旧行为上失败。
+- non-goals: 不修复桥接永久 degraded/ready-timeout 本身（载荷超限根因与唤醒/重试仍按 OB-DEF-002 另行专项）；不改变 Tampermonkey 正常路径（无栅栏时恒 false）；不做 degraded 期间的写队列/补写（恢复后以刷新重读为准）；不改动身份键规范、同步协议与平台写入红线。
 - dependencies: none
 - acceptance: required
-  - [x] 深色系统偏好下自建 UI 可读，无浅色残留死块（DARK-2 静态断言样式表末尾深色覆盖段 142 条规则 + `color-scheme: dark`，逐面覆盖设置面板/内容弹窗/审核/关键词/确认/toast/浮条/行内入口；DARK-1 在合成 B站夹具上用 `emulateMedia` 断言面板/内容弹窗/确认气泡/确认浮层深底浅字与输入框深色，浅色切换后逐项复原）。
-  - [x] 浅色行为与现状一致（DARK-1 同批元素浅色下恢复白底深字且 `color-scheme` 计算值回 `normal`；DARK-3 快捷拉黑 → 确认 → 名单 → toast 链路回归；浅色规则源码零改动、全样式表仅 1 处 `@media (prefers-color-scheme`）。
-  - [x] `test/run.cjs` 20/20、`test/userscript-product.cjs` 7/7、docs-check 通过。
-- evidence: `structure regression`：新增 `test/dark-mode.cjs` 18/18（DARK-2 源码级、DARK-1 浏览器级双向 emulateMedia、DARK-3 浅色行为回归；深色正文亮度 0.824 > 0.7、背景亮度 0.015 < 0.25）；run 20/20、userscript-product 7/7、ui-settings 16 项通过，页面/控制台错误 0；`node --check`、docs-check、隐私门禁通过。已随 v0.63.0 公开发布（tag/Release/raw 已核验）。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；深色为纯 CSS 媒体查询，无平台结构依赖。
-- next: 已随 v0.63.0 公开发布；实页恢复授权后可在系统深色浏览器中抽查一次真实页面观感（无新增 DOM 断言需求）。后续如需用户手动主题开关，另立计划项。
-- updated: 2026-10-27
+  - [x] degraded 页面上 persist 触发后 `chrome.storage.local` 的 `omniblock:data:v1` 字节不变（CORE-1）；`omniblock:backup:v1` 不新增空快照（CORE-3）；面板顶部与存储状态行出现只读降级警示且浮条可关闭而面板警示保留（CORE-2）——三项在旧行为上实测失败（data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`、backup:v1 468→2,365 字节、无警示 UI）。
+  - [x] 层 2 门控字面量进入两个桥接模板并有源码级守卫（dev-extension 新增"桥接双层写入门控存在"用例）；ready 页共享存储、伪造消息拒绝、抖音自动加载、缺隔离桥有界降级等既有用例全部保留并通过（ready 路径行为不变）。
+  - [x] `test/degraded-storage.cjs` 8/8（含 CONTROL-1 ready 放行对照与 FIX-0a/0b 夹具健全性）、`test/dev-extension.cjs` 12/12、`test/run.cjs` 20/20、`node --check`（源码与生成桥接文件）通过。
+  - [x] README、根 CHANGELOG、`docs/changelog/v0.63.2.md`（合并条目）、CURRENT、知识树同步；`@version` 0.63.0→0.63.2、构建 `0.63.2-bridge-chunked-ready`（与 OB-BRIDGE-001 合并单一发布，中间构建标识未单独发布）。
+- evidence: `structure regression`：2026-10-30 修复前基线 `node test/degraded-storage.cjs` FAIL 5（CORE-1/2/3+EXTRA-1/2，CONTROL/FIX 通过，旧行为字节级复现空态覆盖，data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`）；修复后同夹具 PASS 8（exit 0）；dev-extension 12/12、run 20/20、`node --check` 通过；生成产物 `test/_dev-extension/` 重新构建。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；degraded 根因（ready-response 载荷超限）由 OB-BRIDGE-001 于 2026-10-30 修复。发布合并更正（2026-10-30）：本项与 OB-BRIDGE-001 合并为 v0.63.2 单一发布（两项同随 v0.63.2 发布），数据安全修复先行完成，发布态以 CURRENT 发布回写为准。
+- next: 已关闭；专用 Chrome 桥接恢复或复现 degraded 时，可用生产只读 `__OB_RUNTIME_INFO__.storageDegraded` 与面板警示做一次登录态只读核对；桥接唤醒/重试与载荷超限治理另立计划项。
+- updated: 2026-10-30
 - supersedes: none
 
 ### OB-TM-001 — Tampermonkey 移动端适配、API 直连与账户级加密同步
@@ -125,23 +130,6 @@ _probe_features.cjs/_probe_diag*.cjs」的表述不准确——一次性探针 `
 - evidence: `structure regression`：2026-10-27 重构前基线 dev-extension 9 过 2 失败（loopback AI 网关与事实核查往返，`mode: direct`、`providerConfigured: false`、0 请求，与立项证据一致）。选择降级路径：开发扩展内恢复直连往返需同时改 build-dev-extension.cjs 三处桥接协议（设备 Key 入存储白名单、Authorization 头白名单、service worker direct-ai 取回处理器；该处理器现属正式扩展 `extension/service-worker-extra.js` 产品路径），超出本轮非目标；两个往返降级为直连拒绝断言（配置合法 loopback provider 后 analyzePage 因缺设备 Key 有界失败、零 provider 请求离开页面、`setApiKey` 被桥接存储白名单丢弃，旧行为上会失败），保留全部其余用例并新增“内嵌源码无 aiGatewayUrl”形态守卫，降级原因写入测试头注释；重构后 dev-extension 11/11、product-extension 3/3、`node --check` 通过，`omniblock.user.js` SHA-256 前后一致。扫描治理：流程落 `docs/MAINTENANCE_WORKFLOW.md` §5（提交前封存深度扫描 + `.mimosa/security-policy.json` 基线 + 门禁 ETIMEDOUT 时如实记 inconclusive），钩子卸载/恢复命令与 ETIMEDOUT 证据记录于 `docs/maintenance/CURRENT.md` 当日条目；docs-check、`git diff --check` 通过。`blocked`：真实站点验证未执行（2026-09-12 起实页验证暂停）；本项为测试与文档治理，无用户可见行为。
 - next: 已关闭；常规提交的扫描噪声按 `docs/MAINTENANCE_WORKFLOW.md` §5 流程处理。若未来要在开发扩展内恢复直连往返，需先另立计划评审 build-dev-extension.cjs 的三处协议变更。
 - updated: 2026-10-27
-- supersedes: none
-
-### OB-MAINT-004 — 探针内容发现的 Shadow DOM 深度遍历与路由形状兜底
-
-- status: verified
-- priority: P2
-- scope: 2026 版 B 站 SPA 首页把内容详情链接渲染进嵌套 open shadow root，test/discover.cjs（隔离匿名证据链）与 test/dedicated-browser.cjs navigateToContent（专用登录态证据链）的浅层 querySelectorAll 均发现失败，2026-10-28 专用登录态验证只能依赖未入库临时脚本 _probe_features.cjs/_probe_diag*.cjs 的深度遍历兜底。新建共享模块 test/content-discovery.cjs（open shadowRoot 深度遍历，40 层/2000 锚点有界 + ^/video/、^/question/ 等 href 路由形状匹配，自包含纯函数可在页面上下文与 Node 运行），两条证据链的发现路径统一改用它；新增人工合成 SPA 夹具（浅层无 `<a>`、目标链接位于嵌套 open shadow root，并内嵌旧浅层实现逐字复刻）证明旧行为失败、新实现通过。同轮修复 test/real-platform-probe.cjs 恒定退出 0：fatal 或任一目标 errors 非空时退出 1，语义对齐 real-bilibili-probe.cjs:1730。
-- non-goals: 不改动 omniblock.user.js 与任何用户可见行为；不改动 PLATFORM_CONFIG.contentSelectors 在 readSnapshot 右键兜底中的既有用途；不给微博增加入口→详情导航（contentRouteShapes 保持空、沿用"不导航"语义）；不改动 maintenance-check 与 dedicated-browser-probe 既有 blocked/failed 分类行为；不修复专用扩展桥接的 degraded/ready-timeout（仍是 CURRENT.md 中的另立专项）；真实页面标识（BV 号/uid 等）不入库，夹具全部使用人工合成标识。
-- dependencies: none
-- acceptance: required
-  - [x] test/discover.cjs 与 test/dedicated-browser.cjs 的内容发现改用 test/content-discovery.cjs 同一实现（夹具 DISC-7 调用点级接线断言：require/page.evaluate/模板插值调用形态 + dedicated-browser selfTest 新增 4 条路由形状断言，--self-test 零失败）。
-  - [x] 合成 SPA 夹具（人工合成，结构来自 2026-10-28 专用会话捕获形态）上旧浅层复刻发现 0 目标（DISC-1 旧 discover 收集 0 条、DISC-2 旧 navigateToContent video=false/question=false，旧行为上确认失败），共享实现在同页发现 /video/ 与 /question/ 各 1 个目标（DISC-3 深度遍历 4 个 open shadow 链接、DISC-4 形状匹配各命中 1），closed root 不可见、http/跨主机被排除、深度/数量界值生效（DISC-3/5/6），SVG 锚点与旧收集面净等价（DISC-8：querySelectorAll 匹配 tagName 小写的 SVG 锚点，其 SVGAnimatedString href 在旧下游 URL 解析与新的路由过滤中同样被拒，深度结果不含该锚点）；夹具 9/9 并已接线进 maintenance-check 本地矩阵。
-  - [x] test/real-platform-probe.cjs fatal 或 errors 非空时退出 1（实测 `node test/real-platform-probe.cjs x --verify-local` goto 阻断 → exit 1），全净时退出 0（:157-197 分类仿真 A/B/C/D：blocked 前缀 + 非零退出归类 blocked 不误判硬失败）；头注释写明 blocked 也非零退出、分类以 errors[] 前缀为准；maintenance-check 既有分类逻辑未改动。
-  - [x] omniblock.user.js SHA-256 前后一致（97d9d02b…763d）；real-bilibili-probe --verify-local（exit 0、errors []、0 pageerror，其 B 站目标发现已走共享深度收集）、docs-check、`git diff --check`、maintenance-check 本地全套（含 content discovery fixtures 9/9）通过。
-- evidence: `structure regression`：新增 test/content-discovery.cjs 夹具 9/9（2026-10-28，真实 headless Chromium 合成页，旧实现失败→新实现通过逐条见 acceptance）；real-bilibili-probe --verify-local 通过；dedicated-browser-probe --self-test 通过；real-platform-probe x 匿名会话 exit 1 为 goto 阻断证据（退出码经 process.exitCode 自然排空 stdout 后设置，管道输出完整）。`real-site verified`：2026-10-28 用户专用 Chrome 登录态只读探针（9222）在 bridge degraded 状态下仍读到 bilibili.com/page/... 8 条、douyin.com/jingxuan/... 49 条、weibo.com/page/... 6 条内容（页面世界读取，不含 AI/存储链路），证明专用会话本身可用；内容详情导航路径本轮未能在专用会话完成验证。`blocked`：maintenance-check --dedicated-only 的专用链路两项复跑（含扩展自动重载后）均失败——6 平台桥接 degraded/ready-timeout（8 尝试 8 拒绝）+ tieba/x `Target.getTargets` 超时，签名与 2026-09-12 已知桥接故障一致且先于本轮任何改动路径（sync 阶段在导航前已 degraded；contentRouteShapes 为空的微博同样 failed）；按既有分类落 failed 使维护总检 FAILED，桥接唤醒/重试修复仍按 CURRENT.md 另立专项。
-- next: 已关闭；专用 Chrome 桥接恢复（手动重载无效时重启专用 Chrome 或实施 bridge 唤醒/重试专项）后，用 `node test/maintenance-check.cjs --dedicated-only` 复跑，即可在真实登录态会话上完成发现路径的端到端复核。
-- updated: 2026-10-28
 - supersedes: none
 
 ## 关闭规则

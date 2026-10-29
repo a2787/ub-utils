@@ -1,44 +1,49 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-10-28
-状态来源：v0.63.0（OB-UI-003 自建界面深色模式）为当前公开版本；v0.60.0（OB-UI-001 设置面板信息架构）、v0.61.0（OB-AI-016 AI 已分析持久缓存与自动批量上限）与 v0.62.0（OB-RULE-004 已屏蔽内容样本库与规则提炼）已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+更新时间：2026-10-30
+状态来源：v0.63.2（OB-STORE-001 degraded 存储只读降级 + OB-BRIDGE-001 桥接就绪快照分块与事件日志孤儿清理，两项合并单一发布）为本轮发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 对象库与 `refs/` 丢失（工作区无损失），经用户同意从远端重建，v0.55.0~v0.57.2 全部 tag 恢复；唯一无法恢复的未推送提交 `c025d8b`（v0.57.3）的代码内容已随提交 `b83003a` 落库。细节见当时交接与 [v0.57.3 条目](../changelog/v0.57.3.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.63.0`（当前公开版本，已公开发布）
-- 构建：`0.63.0-dark-mode`
-- 当前公开版本/功能提交：`0.63.0` / `d808e82faa95a9a3b333a2a463a5562b23ed7c28`
-- 最近验证的源码快照：`d808e82faa95a9a3b333a2a463a5562b23ed7c28`（v0.63.0 功能提交）
-- 当前候选源码 SHA-256：`97d9d02b28d9fa0188e2d1242a69e964c19f96c78b975aeffbc9d74586f9763d`（即 v0.63.0 发布快照）
-- 发布状态：v0.63.0 为最新公开版本；`v0.60.0`~`v0.63.0` 四个 tag 与 GitHub Release 均已创建，raw 更新地址已服务 `0.63.0`，发布回写提交 `6c9ef66` 仅改文档不改变功能 tag；未执行平台写入。
-- 当前公开 tag/Release：[v0.63.0](https://github.com/a2787/ub-utils/releases/tag/v0.63.0)。
+- 当前 userscript：`0.63.2`（本轮合并发布：degraded 存储只读降级 + 桥接就绪快照分块；tag/Release/raw 核对随发布脚本同轮执行，发布回写条目登记提交/tag/Release/raw 结果）
+- 构建：`0.63.2-bridge-chunked-ready`
+- 上一公开版本/功能提交：`0.63.0` / `d808e82faa95a9a3b333a2a463a5562b23ed7c28`
+- 最近验证的源码快照：`d808e82faa95a9a3b333a2a463a5562b23ed7c28`（v0.63.0 功能提交；v0.63.2 功能提交于发布回写时登记）
+- 当前候选源码 SHA-256：`d2bf5c0a7f3650b58a2e98dfe305ce72e0a674118bd1c305d619d4671682cf28`（v0.63.2 工作区快照，2026-10-30 复核一致）
+- 发布状态：v0.63.0 为上一公开版本（`v0.60.0`~`v0.63.0` 四个 tag 与 GitHub Release 均已创建，raw 更新地址已服务 `0.63.0`，发布回写提交 `6c9ef66` 仅改文档）；v0.63.2 为数据安全修复与桥接根因修复的合并发布（两项同随 v0.63.2 发布），发布中；未执行平台写入。
+- 当前公开 tag/Release：[v0.63.0](https://github.com/a2787/ub-utils/releases/tag/v0.63.0)（v0.63.2 于发布回写时登记）。
 
-## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为）
+## 2026-10-30 v0.63.2 合并发布：degraded 存储只读降级（OB-STORE-001，数据安全）+ 桥接就绪快照分块与孤儿清理（OB-BRIDGE-001）
 
-- 事实更正（按规则不改写 2026-10-28 条目原文）：该条目与 PLAN OB-MAINT-004 scope 中「临时探针脚本未提交/未入库」的表述不准确——一次性 CDP 诊断探针 `_probe_diag4.cjs` 实际已被提交 `b3fdbb1` 连带入库（`git add -A` + 白名单 reset 漏列第 4 个同名变体所致）。本轮已 `git rm --cached` 解除跟踪（本地文件保留），并以 `.gitignore` 新增 `.mimosa/` 运行时子目录与根级锚定 `/_probe_diag*.cjs`、`/_probe_features.cjs` 兜底；已跟踪的 `.mimosa/security-policy.json` 扫描基线不受影响。
-- `scripts/commit-pending.cjs` 修复：多行提交信息改写 `.git/OB_MSG` 后 `git commit -F`（execFileSync 绕过 cmd.exe，附「消息不含字面 \n」断言）——b3fdbb1/446daa1 主题行含字面 `\n` 的缺陷由 `JSON.stringify` + cmd.exe 路径导致，已入库提交不改写；暂存改显式路径数组 + 暂存区断言，移除 `git add -A` 与事后 reset。
-- 新增通用提交工具 `scripts/commit-worktree.cjs`（消息文件路径 + `--dry-run`；add -A 后 reset 上述噪声路径、`git commit -F` 消息文件、push origin master；本轮任务明确授权该工具保留 add -A + reset 形态，所有 git 调用绕过 shell，忽略规则同步兜底）。
-- 边界：`omniblock.user.js` 零改动（SHA-256 `97d9d02b…763d` 前后一致）；本轮仅仓库工具与维护文档，无用户可见行为，无 CHANGELOG 条目；`structure regression`：`node --check`（两个脚本）、docs-check、`git diff --check` 通过。
+- 发布决定：数据安全修复与桥接根因修复合并为 v0.63.2 单一发布——tag 必须与 userscript `@version` 一致，两项在同一工作区叠加实现并同轮验证；中间数据安全候选未单独创建 tag/Release，`@version` 实际跨越 0.63.0→0.63.2。两项计划各自保留 `verified`，均"同随 v0.63.2 发布"。
+- 数据安全（OB-STORE-001，critical）：专用开发扩展桥接 degraded（ready 握手被全量拒绝）时页面以默认空存储启动且写路径全部畅通（2026-10-29 抢救报告中 `backup:v1` 被空 initial 快照覆盖即同一链路的实际损害）。层 1（userscript）：ready 被拒后整页只读降级——`persist()` 拒写（`lastError='storage-degraded-readonly'`、`degradedRefusals` 计数、不置 pendingLocalWrite）、`writeBackupRecords()` 拒写、`ensureLocalBackup()` 提前返回、`storageStatus()` 暴露 `degraded`，面板顶部横幅 + 存储状态行 + 右下浮条持续警示「存储桥接未就绪，本页为只读降级模式：名单与设置变更不会保存」（浮条可关闭、面板警示保留）；`__OB_RUNTIME_INFO__`/`window.OB.runtime` 暴露 `storageDegraded`。层 2（`test/build-dev-extension.cjs` 模板，产物重新生成）：主世界 ready 后先发 `ready-ack`，`GM_setValue`/`GM_deleteValue` 在 `!ready` 时拒绝并计 `blockedWrites`；隔离世界锁存 `ready-ack` 后才放行 `set`/`remove`——即使上层误调用，degraded 下也不落盘。
+- 桥接根因（OB-BRIDGE-001，high）：OB-DEF-002 永久 degraded 的 H1 根因——ready-response 单信封超主世界 8MiB 校验上限（真实存储 ≈9.1M 字符、事件日志分片为主，8 尝试 8 拒绝自 2026-09-12 起）。桥侧（build-dev-extension.cjs 两侧模板）：就绪快照按 2MiB 分块为 `ready-values-chunk` 信封（HMAC/单调序列/8MiB 校验逐条保留，MAX_READY_CHUNKS=64，序列化失败/截断显式错误回包并透传 failReady 原因），主世界聚齐后 ready-ack 先行 + readyResolve，任一分块缺失不 settle。日志侧：`rotate()` 新增 `sweepOrphanShards()` 日期口径清理（[today-365, today-30) 有界探测、每本地日至多一次，索引外的过期孤儿分片删除），`MAX_TOTAL_CHARS` 维持 16MiB（分块后 ready 能力已高于日志预算）；metrics 新增 orphanSweeps/orphanShardsDeleted。手工删除历史大分片（分诊 ①）为删除类写入未获授权、亦无必要。构建 `0.63.2-bridge-chunked-ready`。
+- `structure regression`：`test/degraded-storage.cjs` 两阶段 10/10——Phase A（BR-1..5）在 >8MiB 存储夹具上断言分块 ready（BR-1）、读回 2 个种子人物（BR-2）、degraded===false（BR-3）、40 天孤儿分片被清理（BR-4）、ready 放行对照 setSetting 落盘且种子未被覆盖（BR-5）；Phase B（STORE-1..4）用 http:// 页面（适配器按 hostname 匹配、扩展 content script 仅 https）构造有 UI 无隔离桥的 degraded 场景，断言 data:v1/backup:v1 字节不变与警示 UI。旧行为基线以 git worktree 运行 HEAD（0.63.0）实测失败并字节级留证：data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`（2 人合成种子被 1 人空态覆盖）、backup:v1 468→2,365 字节（新增空快照）、无警示 UI、setSetting/addIdentities 均"成功"、BR-1 生产同签名 degraded/8/ready-timeout；修复后全绿。dev-extension 13/13（"就绪快照分块协议两侧同步"与"桥接双层写入门控存在"源码级守卫，旧模板上失败）、run 20/20、dark-mode 通过、product-extension 3/3、`node --check`（源码+生成桥接文件）通过。PLAN 移出已验证的 OB-RULE-004/OB-UI-003（原文见 [2026-10-30 计划收尾归档](plans/2026-10-30-plan-closure.md)）。
+- `real-site verified`：2026-10-30 专用 Chrome 登录态只读探针（`node test/maintenance-check.cjs --dedicated-only`，CDP 9222）：扩展刷新到 `0.63.2` 后四可达平台桥接全部 ready（bilibili 1/0、douyin 1/0、weibo 1/0、zhihu 2/0 attempts/rejections），真实读取 bilibili.com/page/... content=8（withIdentity 8/8）、douyin.com/jingxuan/... content=10、weibo.com/page/... content=6 users=6（withIdentity 6/6）、zhihu.com/hot/... 加载但 0 条（既有 blocked）；同轮刷新环节先捕获 `0.63.0` degraded（8 尝试 8 拒绝 ready-timeout）再捕获 `0.63.2` ready（attempts=2），修复前后直接对照。本轮本地门禁（docs governance/userscript syntax/结构回归等）全过；整体 FAILED 仅由既有分类构成——zhihu 无可探测条目 blocked、tieba/x 浏览器级 `Target.getTargets` 超时 failed（entry=null，与桥接无关），签名与 2026-10-28 基线相同。
+- 孤儿清理对真实存储的首次生效是用户浏览器加载新构建后自身 `rotate()` 的既有保留期语义（非探针写入）；真实收敛效果可用 `EventLog.status().orphanSweeps/orphanShardsDeleted` 复核，留作下一步验证。
+- 边界：测试种子全部人工合成（`p_seed1/2`、`bili:uid:10001/10002` 形态占位）；未读取/导出 Cookie；`out/` 交互实测产物（含 2026-10-29 备份导出）本轮起由 `.gitignore` `/out/` 兜底不入库。
+- 发布执行（同轮）：提交信息与 Release 说明见 `scripts/release-notes/v0.63.2-commit.txt`/`v0.63.2-release.md`；`scripts/release-0632.cjs` 创建 tag v0.63.2（指向功能提交）、推送并创建 GitHub Release，随后 curl 核对 raw master 服务 0.63.2；发布回写条目登记 SHA/URL/核对结果。提交前封存深度扫描（MCP `security_scan_start`，deep，聚焦 userscript 与桥接模板/测试）：126 项（20 high + 106 medium，全部 `other-security`），均为既有已分诊两族（userscript 按设计跨域请求告警、本地内存排序比较器误报族，见 v0.58.0 逐条分诊与 `.mimosa/security-policy.json`），无新增族；扫描器 `runStatus=inconclusive`（partial coverage），按流程 §5.3 如实记 inconclusive；scanId `scan-2026-10-29T19-45-12.394Z-7a3d2c8d24dc`，seal `sha256:5db98c93…`。
+
+## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为，摘要）
+
+- 摘要：一次性探针 `_probe_diag4.cjs` 曾被 `b3fdbb1` 意外入库，本轮解除跟踪（本地保留）并以 `.gitignore` 根级锚定 `/_probe_diag*.cjs`、`/_probe_features.cjs`、`.mimosa/` 运行时子目录兜底；修复 `scripts/commit-pending.cjs`（多行提交信息经 `.git/OB_MSG` + `git commit -F`，杜绝字面 `\n` 主题行）、新增 `scripts/commit-worktree.cjs`（消息文件 + `--dry-run`，git 调用全部绕过 shell）。`omniblock.user.js` 零改动（SHA-256 前后一致）；`structure regression`：`node --check`（两个脚本）、docs-check、`git diff --check` 通过。详细边界见提交 `ec31217` 说明。
 
 ## 2026-10-28 专用登录态实装验证（v0.60.0~v0.63.0 实装回写）
 
 - `real-site verified`：2026-10-28，用户专用 Chrome 登录态（browser-harness profile，CDP 9222）开发扩展 `0.63.0`/`0.63.0-dark-mode` 实装，runtime 在真实页面确认：脱敏 `bilibili.com/page/...`（首页形态）AI content 记录 8 条、`byKind={"content":8}`、withIdentity=8/8、gearCount=1。基线 `node test/maintenance-check.cjs --dedicated-only`（完整运行约 25 分钟）：41 个检查节全部执行，40 项本地门禁通过（docs governance/userscript syntax/run/quickblock/adapters/performance 等含 `RESULT: … PASSED`），整体 `RESULT: MAINTENANCE SELF-CHECK FAILED`（exit 1）——唯一失败项为 dedicated Chrome login-state real-site probe（exit 1）；legacy dev-browser sync 单独记 `blocked`（退出码 2）。
-- 登录态基线读取（页面世界，按平台）：`bilibili.com/page/...` content=8（verified；bridge degraded/ready-timeout → AI/存储链路记 failed、内容页导航 blocked）；`douyin.com/jingxuan/...` content=49、withIdentity=0/49（verified 内容读取；页面命中登录/安全验证文案门禁，导航 blocked）；weibo 页面加载但 content=0、gate=login-or-security（failed；2026-09-12 曾同 profile 读到 6 条，本轮会话不可用或门禁变化；同日更早的 OB-MAINT-004 专用会话曾读到 6 条，见 [PLAN](PLAN.md)）；`zhihu.com/hot/...` 加载成功但 content=0（failed，导航 blocked）；tieba/x 两条均 `CDP timeout: Target.getTargets`（浏览器级 CDP 对这两个目标超时，与 2026-09-12 记录的故障一致，未取得任何页面证据）。四达平台（bilibili/douyin/weibo/zhihu）桥接均 degraded/ready-timeout（8 attempts/8 rejections）。
-- 分步实装（临时探针 `node _probe_features.cjs`，未入库；存储桩与 test/adapters.cjs shim 同构）：A（v0.60.0）真实视频页（脱敏 `bilibili.com/video/...`）设置面板导航恰 5 个分组且顺序 [屏蔽与名单, 规则, 备份与同步, 更新与关于, 日志诊断]、末位 `data-ob-nav-target=ob-group-logs`；名单搜索输入『合成名单A』后列表 3→1 行、计数「显示 1 / 共 3」、清空恢复 3 行；「最近本地屏蔽操作」区块（#ob-recent-actions）存在。B（v0.61.0）AI 面板存在「自动分析新内容」(#ob-ai-auto) 与「自动分析只看评论」(#ob-ai-auto-comments-only) 两开关且默认 checked=false/false，状态栏 #ob-ai-status 含「自动分析已关闭」文案；探针全程惰性传输桩记录出页请求 0 次（未触碰分析按钮，未消耗配额，xhrCalls=0）。C（v0.62.0）先确认脚本使用测试存储桩（`__OB_RUNTIME_GUARD__` 由探针实例持有 duplicate=0、GM 桩已读 `omniblock:data:v1` reads=12）后，在真实评论区条目执行快捷拉黑链路：`.ob-quick` 点击→自建确认浮层 `.ob-ok`→isBlocked=true、桩内名单含该身份、RuleSamples +1（GM 键 `omniblock:rule-samples:v1`）、最近操作 +1；再用设置面板「最近本地屏蔽操作」撤销按钮恢复：isBlocked=false、最近操作回 0、桩内名单移除该身份、计数「显示 3 / 共 3」；全程未点击平台举报/拉黑等官方写入控件。D（v0.63.0）CDP `Emulation.setEmulatedMedia colorScheme=dark` 后设置面板 `.ob-box` 计算背景 rgb(28,32,48)、相对亮度 0.015<0.25、color-scheme=dark；切回 light 恢复 rgb(255,255,255)、亮度 1.000、color-scheme=normal。
-- 全轮边界：未读取/导出 Cookie；探针标签页已关闭（CDP 目标列表仅剩用户原有标签页）；git 跟踪文件零改动（仅新增未跟踪临时探针脚本 `_probe_features.cjs`/`_probe_diag*.cjs`，未提交）。
+- 登录态基线读取（页面世界，按平台，2026-10-28 时桥接均 degraded/ready-timeout 8/8，该故障已于 2026-10-30 由 OB-BRIDGE-001 修复）：`bilibili.com/page/...` content=8（verified）；`douyin.com/jingxuan/...` content=49、withIdentity=0/49（verified 内容读取；页面级登录/安全门禁，导航 blocked）；weibo 页面加载但 content=0（failed；2026-09-12 与 2026-10-30 同 profile 均读到 6 条）；`zhihu.com/hot/...` content=0（failed，导航 blocked）；tieba/x 均 `CDP timeout: Target.getTargets`（浏览器级，未取得页面证据）。
+- 分步实装细节（v0.60 五分组/名单搜索/最近操作、v0.61 自动分析默认关闭 0 请求、v0.62 快捷拉黑→样本→撤销、v0.63 深色双向断言的逐步探针记录）已回写各版本条目「实装验证」节，本页不再重复；全轮边界：未读取/导出 Cookie；探针标签页已关闭（CDP 目标列表仅剩用户原有标签页）。
 - `blocked`：专用扩展桥接 degraded/ready-timeout（历轮既有，诊断见 2026-09-12 条目）；匿名链路知乎登录墙、抖音验证码、X 登录墙、贴吧。新功能逐版本回写见 v0.60.0~v0.63.0 条目「实装验证」节。`structure regression`：本轮测试层修复（OB-MAINT-004，见上节）。
 
 ## 2026-10-28 探针发现共享化（OB-MAINT-004，测试层）
 
-- 新增 test/content-discovery.cjs；discover.cjs 与 dedicated-browser.cjs 内容发现改用同一实现；real-platform-probe.cjs 修复恒定退出 0。夹具 9/9：旧浅层复刻 0 目标→新实现发现 /video/、/question/ 各 1；omniblock.user.js SHA-256 不变；real-bilibili-probe --verify-local、docs-check、maintenance-check 本地全套通过。`blocked`：--dedicated-only 专用链路 6 平台桥接 degraded/ready-timeout，签名同 2026-09-12 已知故障，专项另立。
+- 摘要：新增 test/content-discovery.cjs（Shadow DOM 深度遍历 + 路由形状兜底），discover.cjs 与 dedicated-browser.cjs 内容发现统一走该实现；real-platform-probe.cjs 修复恒定退出 0；夹具 9/9（旧浅层 0 目标→新实现命中 /video/、/question/）。`blocked`：--dedicated-only 专用链路 6 平台桥接 degraded/ready-timeout，签名同 2026-09-12 已知故障（已于 2026-10-30 修复，见 OB-BRIDGE-001）。
 
-## 2026-10-27 dev-extension 遗留用例重构与扫描噪声治理（OB-MAINT-003，无用户可见行为）
+## 2026-10-27 dev-extension 遗留用例重构与扫描噪声治理（OB-MAINT-003，已关闭，无用户可见行为）
 
-- `test/dev-extension.cjs`：v0.57.1 直连切换后结构性失效的 loopback AI 网关/事实核查往返用例降级为直连拒绝断言——在开发扩展内恢复直连往返需改 build-dev-extension.cjs 桥接协议（设备 Key 入存储白名单、放行 Authorization 头、service worker 增加 direct-ai 处理器；direct-ai 取回现属正式扩展 `extension/service-worker-extra.js` 产品路径），超出维护非目标。现断言：配置合法 loopback provider 后 analyzePage 因缺设备 Key 有界失败、零 provider 请求离开页面、`setApiKey` 被桥接存储白名单丢弃，并新增“内嵌源码无 aiGatewayUrl”形态守卫；三层白名单静态断言与页面加载/存储共享/伪造消息/有界降级用例全部保留，降级原因写入测试头注释。
-- `structure regression`：重构前基线 9 过 2 失败（两个失效往返，`mode: direct`、0 请求）；重构后 dev-extension 11/11、product-extension 3/3、`node --check` 通过；`omniblock.user.js` SHA-256 前后一致（`97d9d02b…763d`），页面/控制台错误 0。`blocked`：实页验证暂停（2026-09-12 起）；本项为测试与文档治理，无用户可见行为，无 CHANGELOG 条目。
-- Mimosa 扫描噪声治理：封存深度扫描 + `.mimosa/security-policy.json` 基线流程写入 `docs/MAINTENANCE_WORKFLOW.md` §5。已知限制：门禁内置扫描器对约 1MB 单文件 `omniblock.user.js` 多次 ETIMEDOUT（证据：`.mimosa/finding-ledger/v1/events/*` 中 `scanner_failed…ETIMEDOUT`、`runStatus: inconclusive`），原生钩子已于 2026-10-27 以 `mimosa git-gate uninstall` 卸载；恢复命令：`node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`。inconclusive 结果不得写成通过。
+- 摘要（完整事实见 [PLAN 收尾归档](plans/2026-10-27-plan-closure.md) 与当日交接）：dev-extension 的 loopback AI 网关失效用例降级为直连拒绝断言（11/11，重构前基线 9 过 2 失败）；Mimosa 封存扫描 + `.mimosa/security-policy.json` 基线流程写入 MAINTENANCE_WORKFLOW §5；门禁内置扫描器对约 1MB 单文件多次 ETIMEDOUT 记 inconclusive，原生钩子已卸载，恢复命令 `node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`。
 
 ## 2026-10-27 自建界面深色模式（OB-UI-003，v0.63.0，已公开发布）
 
@@ -129,10 +134,8 @@
 
 ## 下一项最有价值的验证
 
-v0.60.0~v0.63.0 已于 2026-10-28 公开发布，并在专用登录态完成实装验证（v0.60 五分组/名单搜索/最近操作与撤销、
-v0.61 自动分析默认关闭 0 请求、v0.62 快捷拉黑→样本→撤销链路、v0.63 深色双向断言，见 2026-10-28 条目；
-v0.61 重访同页 0 重复请求与上限提示、v0.62 AI 归纳真实 provider 请求形态仍未验证）。下一项最有价值的验证：
-专用 Chrome 桥接 degraded/ready-timeout 唤醒/重试专项（先试重启专用 Chrome，再按 2026-09-12 诊断修
-`test/dedicated-browser.cjs`），恢复后复跑 `node test/maintenance-check.cjs --dedicated-only` 六平台基线
-（当前 tieba/x 仍 `Target.getTargets` 超时、weibo 基线本轮 content=0）；匿名链路的知乎登录墙/抖音验证码/
-X 登录墙、贴吧右键证据仍为 `blocked`。
+v0.63.2 合并发布进行中（见 2026-10-30 条目）。下一项最有价值的验证：发布完成后用修好的桥接做
+登录态只读复测（`node test/dev-browser.cjs sync` 后 `node test/maintenance-check.cjs --dedicated-only`
+应达 ready、不再 degraded），并核对孤儿分片真实收敛（`EventLog.status().orphanSweeps/orphanShardsDeleted`
+与白名单总字符应从 ≈9.1M 回落）；tieba/x `Target.getTargets`
+超时与 zhihu 无可探测条目仍为既有另案边界；匿名链路的知乎登录墙/抖音验证码/X 登录墙、贴吧右键证据仍为 `blocked`。

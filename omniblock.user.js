@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.63.0
+// @version       0.63.2
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.63.0-dark-mode';
+  const RUNTIME_BUILD = '0.63.2-bridge-chunked-ready';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -74,9 +74,19 @@
   // 专用开发扩展在真正初始化 GM 存储前会暴露这个异步栅栏；Tampermonkey
   // 和本地夹具没有该桥接时保持原有同步启动路径。这样新标签页不会在存储
   // 尚未恢复时先扫描并把默认状态写回去。
+  // OB-STORE-001：栅栏被拒＝开发扩展存储未恢复（degraded）。此时页面只能看到
+  // 默认空存储，任何写回都会用空态覆盖用户真实名单，因此整页进入只读降级：
+  // persist/备份全部拒写（见 Store），面板与浮条持续警示。Tampermonkey 与本地
+  // 夹具没有该栅栏，storageBridgeDegraded 恒为 false，行为不变。
+  let storageBridgeDegraded = false;
   const extensionReady = window.__OB_EXTENSION_READY__;
   if (typeof extensionReady === 'function') {
-    try { await extensionReady(); } catch (error) { /* 降级到当前运行时的默认存储 */ }
+    try {
+      await extensionReady();
+    } catch (error) {
+      storageBridgeDegraded = true;
+      runtimeGuard.storageDegraded = true;
+    }
   }
 
   runtimeGuard.state = 'active';
@@ -1243,6 +1253,10 @@
     aiRules: [],                 // AI 预设自然语言规则；不直接执行屏蔽
   };
 
+  // OB-STORE-001：degraded 只读降级警示的统一文案（面板横幅、存储状态行、
+  // 浮条共用同一句，便于用户识别，也便于回归断言）。
+  const STORAGE_DEGRADED_NOTICE = '存储桥接未就绪，本页为只读降级模式：名单与设置变更不会保存';
+
   const Store = (function () {
     let data = null;             // { version, persons:{}, settings:{} }
     const listeners = [];
@@ -1262,6 +1276,7 @@
       lastDurationMs: 0,
       maxDurationMs: 0,
       lastPayloadChars: 0,
+      degradedRefusals: 0, // OB-STORE-001：degraded 只读降级期间被拒的 persist 次数
     };
     // key → 归属人物集合。名单通常很小，但批量导入/作品屏蔽会连续调用多个
     // addIdentities；缓存避免每组都重新遍历全部人物和身份数组。直接改动名单的
@@ -1451,6 +1466,12 @@
     }
 
     function writeBackupRecords(records) {
+      // OB-STORE-001：degraded 时内存里是默认空态，绝不把它写进快照环——
+      // initial/external-change 空快照覆盖真实恢复来源正是本轮实测过的损害路径。
+      if (storageBridgeDegraded) {
+        backupError = '存储桥未就绪：本页只读降级，快照未写入';
+        return false;
+      }
       const payload = JSON.stringify({ format: BACKUP_FORMAT, schema: BACKUP_SCHEMA, snapshots: records });
       if (payload.length > BACKUP_TOTAL_MAX_BYTES) {
         backupError = '本地快照超出存储上限';
@@ -1493,6 +1514,18 @@
     }
 
     function persist(reason) {
+      // OB-STORE-001：degraded fail-closed。桥接 ready 被拒后页面只有默认空存储，
+      // 任何 persist 都会用空态覆盖 omniblock:data:v1 的真实名单。此处一律拒写：
+      // 不落盘、不置 pendingLocalWrite（避免外部变更被误报为冲突），内存状态照常
+      // 通知界面刷新（本页生效但不保存），并把拒绝原因暴露给 storageStatus/面板。
+      if (storageBridgeDegraded) {
+        persistMetrics.failures++;
+        persistMetrics.lastOk = false;
+        persistMetrics.lastError = 'storage-degraded-readonly';
+        persistMetrics.degradedRefusals++;
+        listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+        return { ok: false, error: persistMetrics.lastError };
+      }
       const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
       let payload = '';
       let writeError = '';
@@ -1573,6 +1606,8 @@
         identities,
         chars,
         level,
+        // OB-STORE-001：true＝桥接 ready 被拒，页面处于只读降级（见 persist）。
+        degraded: storageBridgeDegraded,
         warningChars: MAIN_STORAGE_WARNING_CHARS,
         criticalChars: MAIN_STORAGE_CRITICAL_CHARS,
         devBridgeMaxChars: DEV_BRIDGE_VALUE_MAX_CHARS,
@@ -1816,6 +1851,9 @@
     }
 
     function ensureLocalBackup() {
+      // OB-STORE-001：degraded 时不做首载 initial 快照——快照环里已有真实恢复
+      // 来源，用空态去“补环”只会覆盖它（readBackupRecords 等读取仍然安全）。
+      if (storageBridgeDegraded) return backupStatus();
       if (!getSetting('localBackupEnabled')) return backupStatus();
       const records = readBackupRecords();
       if (!records.length) {
@@ -2105,6 +2143,8 @@
       maxFlushDurationMs: 0,
       storageWrites: 0,
       storageCharsWritten: 0,
+      orphanSweeps: 0,
+      orphanShardsDeleted: 0,
     };
     let context = { platform: 'unknown', route: 'unknown' };
     let loggingEnabled = Store.getSetting('logEnabled') !== false;
@@ -2395,6 +2435,34 @@
       if (!writeShard(day, shard)) throw new Error('event log storage unavailable');
     }
 
+    // OB-BRIDGE-001：按日期口径清理“孤儿分片”。桥接降级时代（OB-DEF-001）空态
+    // 运行时仍能覆盖索引并追加当日小分片，老的大分片因此不再出现在索引里，
+    // 上面的索引裁剪永远碰不到它们——对 ready 快照与 16MiB 总预算都是死重且
+    // 不可自愈。这里对 [today-365, today-RETENTION_DAYS) 的每个日期键做一次有界
+    // 探测（≤365 次空读），凡存在且不在（裁剪后）索引里的分片一律按过期删除；
+    // 每个本地日只执行一次，与索引裁剪共同保证日志存储可收敛。事件日志按设计
+    // 是本机可丢弃诊断数据，只删除本脚本自己的分片键。
+    let orphanSweepDay = '';
+    function sweepOrphanShards(indexDays) {
+      const today = localDay(Date.now());
+      if (orphanSweepDay === today) return;
+      orphanSweepDay = today;
+      const indexed = new Set(indexDays);
+      let deleted = 0;
+      for (let offset = 365; offset >= RETENTION_DAYS; offset--) {
+        const day = localDay(Date.now() - offset * 24 * 60 * 60 * 1000);
+        if (indexed.has(day)) continue;
+        const key = DAY_KEY_PREFIX + day;
+        if (readValue(key, null) == null) continue;
+        deleteValue(key);
+        shardCache.delete(day);
+        shardCharCache.delete(day);
+        deleted++;
+      }
+      metrics.orphanSweeps++;
+      metrics.orphanShardsDeleted += deleted;
+    }
+
     function rotate() {
       const index = readIndex();
       index.days = Array.from(new Set(index.days.filter(validDay))).sort().reverse();
@@ -2409,6 +2477,7 @@
         shardCache.delete(oldest);
         shardCharCache.delete(oldest);
       }
+      sweepOrphanShards(index.days);
       // 超过总容量时优先从最旧日期的开头裁剪，保留该日最近事件；只有连一条
       // 事件都放不下时才删除整日。这样“事无巨细”不会因为某天事件较多而把
       // 当天全部日志一次性清空。
@@ -4076,6 +4145,25 @@
     }
     #ob-gear:hover { background: #41414a; }
 
+    /* ---- OB-STORE-001 degraded 只读降级警示（面板横幅 + 可关闭浮条） ---- */
+    #ob-panel #ob-degraded-banner {
+      box-sizing: border-box; margin: 8px 0 0; padding: 8px 10px;
+      border: 1px solid #e2a39c; border-radius: 6px; background: #fdecea; color: #c62828;
+      font-size: 12px; line-height: 1.55; word-break: break-word;
+    }
+    #ob-degraded-float {
+      position: fixed; right: max(14px, env(safe-area-inset-right)); bottom: 64px; z-index: 2147483643;
+      box-sizing: border-box; display: flex; gap: 8px; align-items: flex-start;
+      max-width: min(330px, calc(100vw - 28px)); padding: 9px 10px;
+      border: 1px solid #e2a39c; border-radius: 7px; background: rgba(253, 236, 234, 0.97); color: #c62828;
+      box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 12px; line-height: 1.55; word-break: break-word;
+    }
+    #ob-degraded-float .ob-degraded-float-close {
+      flex: 0 0 auto; border: 0; background: transparent; color: #c62828;
+      font-size: 14px; line-height: 1.4; cursor: pointer; padding: 0 2px;
+    }
+    #ob-degraded-float .ob-degraded-float-close:hover { color: #8e1f14; }
+
     /* ===================== 深色模式（OB-UI-003） =====================
        跟随系统 prefers-color-scheme: dark 自动启用，无用户开关。上方浅色
        规则全部保持原样，本段是纯追加的覆盖层：变量只在深色媒体查询内
@@ -4472,6 +4560,16 @@
         border-color: var(--ob-dark-border) !important; background: var(--ob-dark-bg-soft) !important;
         color: var(--ob-dark-text-disabled) !important;
       }
+      /* ---- OB-STORE-001 degraded 只读降级警示（深色） ---- */
+      #ob-panel #ob-degraded-banner {
+        border-color: #6a4a48; background: rgba(74, 42, 40, 0.6); color: #f0a29a;
+      }
+      #ob-degraded-float {
+        border-color: #6a4a48; background: rgba(58, 34, 32, 0.95); color: #f0a29a;
+        box-shadow: 0 4px 18px rgba(0,0,0,.4);
+      }
+      #ob-degraded-float .ob-degraded-float-close { color: #f0a29a; }
+      #ob-degraded-float .ob-degraded-float-close:hover { color: #ffc9c2; }
       /* ---- 深色下的键盘焦点可见性 ---- */
       #ob-panel :focus-visible, #ob-content-manager :focus-visible,
       #ob-comment-manager :focus-visible, #ob-dm-manager :focus-visible,
@@ -21529,6 +21627,26 @@
     return () => { stopAIWatch(); stopPromptWatch(); };
   }
 
+  // OB-STORE-001：degraded 只读降级的可关闭浮条。浮条只降低打扰度——关闭它
+  // 不影响任何存储语义；设置面板顶部的警示（#ob-degraded-banner）始终保留。
+  function mountDegradedNotice() {
+    if (!document.body || document.getElementById('ob-degraded-float')) return;
+    const chip = document.createElement('div');
+    chip.id = 'ob-degraded-float';
+    chip.setAttribute('role', 'alert');
+    chip.setAttribute('data-ob-runtime', RUNTIME_MARKER);
+    const text = document.createElement('span');
+    text.textContent = STORAGE_DEGRADED_NOTICE;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'ob-degraded-float-close';
+    close.setAttribute('aria-label', '关闭降级提醒');
+    close.textContent = '×';
+    close.onclick = () => { chip.remove(); };
+    chip.append(text, close);
+    document.body.appendChild(chip);
+  }
+
   function openOptions() {
     let panel = $('#ob-panel');
     if (panel) {
@@ -21551,6 +21669,7 @@
         <h2>OmniBlock 设置（拉黑不上限）</h2>
         <div class="ob-meta">当前屏蔽身份数：<b id="ob-count">0</b> · 平台：B站/微博/知乎/贴吧/X/抖音</div>
         <p id="ob-runtime-build" style="color:#777;font-size:11px;margin:5px 0 0;word-break:break-all"></p>
+        <div id="ob-degraded-banner" role="alert" style="display:none"></div>
 
         <nav class="ob-nav" id="ob-nav" aria-label="设置分组导航">
           <button type="button" data-ob-nav-target="ob-group-block">屏蔽与名单</button>
@@ -22126,14 +22245,27 @@
       const backupStatus = panel.querySelector('#ob-backup-status');
       const storage = Store.storageStatus();
       const storageStatus = panel.querySelector('#ob-storage-status');
+      const degradedBanner = panel.querySelector('#ob-degraded-banner');
+      // OB-STORE-001：degraded 警示在面板顶部持续显示（面板每次打开都重建，
+      // 不能被关闭；可关闭的浮条在 mountDegradedNotice，两者语义不同）。
+      if (degradedBanner) {
+        degradedBanner.style.display = storage.degraded ? '' : 'none';
+        if (storage.degraded) {
+          degradedBanner.textContent = STORAGE_DEGRADED_NOTICE
+            + '。存储恢复后刷新页面即可读回真实名单与设置。';
+        }
+      }
       backupToggle.checked = s.localBackupEnabled;
       restoreBackup.disabled = backup.count < 2;
       backupStatus.textContent = backup.error
         || (backup.count ? ('已保留 ' + backup.count + '/' + backup.retention + ' 份本地快照，最新：' + new Date(backup.latestAt).toLocaleString()) : '尚无本地快照，将在下一次名单变更时建立');
-      storageStatus.dataset.level = storage.level;
-      storageStatus.style.color = storage.persist && (storage.persist.lastOk === false || storage.persist.externalConflict)
+      storageStatus.dataset.level = storage.degraded ? 'critical' : storage.level;
+      storageStatus.style.color = storage.degraded || (storage.persist && (storage.persist.lastOk === false || storage.persist.externalConflict))
         ? '#c62828' : (storage.level === 'critical' ? '#c62828' : (storage.level === 'warning' ? '#b26a00' : '#999'));
-      storageStatus.textContent = '主名单：' + storage.persons + ' 人、' + storage.identities + ' 个身份，序列化约 '
+      // degraded 时不再展示“主名单：0 人”之类的空态统计（那不是用户真实名单），
+      // 只展示降级警示本身。
+      storageStatus.textContent = storage.degraded ? STORAGE_DEGRADED_NOTICE + '。'
+        : '主名单：' + storage.persons + ' 人、' + storage.identities + ' 个身份，序列化约 '
         + (storage.chars / (1024 * 1024)).toFixed(2) + ' MiB。'
         + (storage.persist && storage.persist.externalConflict
           ? ' 检测到其他标签页变更；本页有未确认写入，已保留当前内存状态，请先导出并重试。'
@@ -22287,8 +22419,13 @@
       document.body.appendChild(gear);
       FloatingDock.mount();
     }
-    if (document.body) mountGear();
-    else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountGear, { once: true });
+    const mountEntryPoints = () => {
+      mountGear();
+      // OB-STORE-001：degraded 时同时挂可关闭浮条（面板警示在 openOptions 内）。
+      if (storageBridgeDegraded) mountDegradedNotice();
+    };
+    if (document.body) mountEntryPoints();
+    else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountEntryPoints, { once: true });
   }
 
   // 调试句柄不再无条件挂到 window。本脚本在 document-start 运行，此时页面
@@ -22311,7 +22448,7 @@
       danmakuRules: DanmakuRules,
       danmakuExemptions: DanmakuExemptions,
       ruleSamples: RuleSamples,
-      runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER },
+      runtime: { version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER, storageDegraded: storageBridgeDegraded },
       lifecycle: {
         pageStatus: () => PageLifecycle.status(),
         resourceStatus: () => RuntimeResources.status(),
@@ -22322,7 +22459,7 @@
   } else {
     try {
       Object.defineProperty(window, '__OB_RUNTIME_INFO__', {
-        value: Object.freeze({ version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER }),
+        value: Object.freeze({ version: RUNTIME_VERSION, build: RUNTIME_BUILD, marker: RUNTIME_MARKER, storageDegraded: storageBridgeDegraded }),
         writable: false,
         configurable: false,
         enumerable: true,

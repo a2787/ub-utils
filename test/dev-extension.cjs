@@ -101,6 +101,37 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   } else {
     report.fail.push('内嵌源码 AI 传输形态与预期不符（应无 aiGatewayUrl，含直连设置与设备 GM 键）');
   }
+  // OB-STORE-001 degraded 双层防御源码级守卫：主世界 ready 后先发 ready-ack、
+  // GM 写入在 !ready 时拒绝并计数；隔离世界锁存 ready-ack，'set'/'remove' 在
+  // 未锁存时拒绝转发。缺失任一字面量说明门控被移除，degraded 页面可能再次
+  // 用空态覆盖真实名单（test/degraded-storage.cjs 负责浏览器级行为断言）。
+  const readyAckGateOk = /post\(\{ type: 'ready-ack' \}\)/.test(bridgeSources[0])
+    && (bridgeSources[0].match(/if \(!ready\) \{ bridgeStatus\.blockedWrites\+\+; return; \}/g) || []).length >= 2
+    && bridgeSources[0].includes('blockedWrites: 0');
+  const isolatedGateOk = /let mainReadySeen = false;/.test(bridgeSources[1])
+    && /if \(message\.type === 'ready-ack'\)/.test(bridgeSources[1])
+    && /mainReadySeen = true;/.test(bridgeSources[1])
+    && (bridgeSources[1].match(/if \(!mainReadySeen\) \{ gatedWrites\+\+; return; \}/g) || []).length >= 2;
+  if (readyAckGateOk && isolatedGateOk) {
+    report.pass.push('桥接双层写入门控存在：主世界 ready-ack 先行 + !ready 拒写计数，隔离世界锁存后放行 set/remove');
+  } else {
+    report.fail.push('桥接 degraded 写入门控缺失：' + JSON.stringify({ readyAckGateOk, isolatedGateOk }));
+  }
+  // OB-BRIDGE-001 就绪快照分块守卫：'ready-values-chunk' 字面量必须同时存在于
+  // 主世界（聚合）与隔离世界（分块发送）两个模板，且两侧分块参数一致。缺失
+  // 任一侧说明分块协议被移除，白名单总量超过 8MiB 的真实存储会再次永久 degraded。
+  const chunkGateOk = (bridgeSources[0].match(/ready-values-chunk/g) || []).length >= 1
+    && /const MAX_READY_CHUNKS = 64;/.test(bridgeSources[0])
+    && /const readyChunks = new Map\(\);/.test(bridgeSources[0])
+    && /readyChunks\.clear\(\)/.test(bridgeSources[0])
+    && bridgeSources[1].includes('ready-values-chunk')
+    && /const READY_CHUNK_CHARS = 2 \* 1024 \* 1024;/.test(bridgeSources[1])
+    && /const MAX_READY_CHUNKS = 64;/.test(bridgeSources[1]);
+  if (chunkGateOk) {
+    report.pass.push('就绪快照分块协议两侧同步：主世界 ready-values-chunk 聚合 + 隔离世界 2MiB 分块发送，MAX_READY_CHUNKS=64 一致');
+  } else {
+    report.fail.push('就绪快照分块协议缺失或两侧不同步：' + JSON.stringify({ chunkGateOk }));
+  }
   // loopback mock provider：直连形态下预期零请求到达；计数同时覆盖
   // 页面级（context.route）与 service worker fetch（本地 HTTP）两条可能路径。
   let providerRequests = 0;

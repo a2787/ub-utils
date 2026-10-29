@@ -2,6 +2,39 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.63.2 - degraded 存储只读降级（数据安全修复）与桥接就绪快照分块 - 2026-10-30（发布中）
+
+数据安全修复与桥接根因修复合并为 v0.63.2 单一发布（中间数据安全候选未单独创建 tag/Release）。
+
+- 修复（critical，OB-STORE-001）：专用开发扩展桥接 degraded（ready 握手被全量拒绝）时，页面以
+  默认空存储启动且写路径全部畅通——改设置/确认拉黑会把空态写回 `omniblock:data:v1` 覆盖真实
+  名单，首载/外部变更也会把空快照写进 `omniblock:backup:v1` 快照环（旧行为已在夹具中字节级
+  复现）。现在桥接 ready 被拒后整页进入只读降级：主名单 persist 与本地快照一律拒写，设置面板
+  顶部与右下浮条持续警示「存储桥接未就绪，本页为只读降级模式：名单与设置变更不会保存」（浮条
+  可关闭，面板警示保留）；存储恢复后刷新页面即可读回真实名单。Tampermonkey 正常路径行为不变。
+  隔离桥双层防御（`test/build-dev-extension.cjs`）：主世界 ready 后先发 `ready-ack` 再放行用户
+  脚本，GM 写入在 `!ready` 时拒绝并计数；隔离世界锁存 `ready-ack` 后才转发 `set`/`remove`——
+  即使上层误调用，degraded 下也不落盘。
+- 修复（high，OB-BRIDGE-001/OB-DEF-002）：专用开发扩展桥接因 ready-response 单信封超过主世界
+  8MiB 校验上限而永久 degraded（2026-09-12 起六平台 8 尝试 8 拒绝，根因已实测坐实为事件日志
+  分片撑爆载荷）。就绪快照现按 2MiB 分块投递、主世界聚齐后再就绪，每条信封仍受 HMAC/单调序列
+  与 8MiB 校验保护——此前永久 degraded 的页面恢复 ready 并能读回真实名单。事件日志保留期补上
+  日期口径：不在索引里、超过 30 天保留期的历史分片（含降级时代产生的孤儿大分片）在 `rotate()`
+  中被自动清理（≤365 次有界空读，每本地日至多一次），日志总量重新可收敛；`EventLog.status()`
+  新增 `orphanSweeps`/`orphanShardsDeleted` 计数。
+- `structure regression`：`test/degraded-storage.cjs` 两阶段 10 项——>8MiB 夹具断言分块后 ready
+  成功、种子名单读回、孤儿分片被清理、ready 放行对照（六项在旧行为上失败，基线以 git worktree
+  运行 HEAD 留证），fallback degraded 只读降级断言（data:v1 被空态覆盖、backup:v1 新增空快照、
+  无警示 UI 三项核心断言在旧行为上字节级失败）；修复后 10/10。dev-extension 13/13（新增分块协议
+  与桥接门控源码级守卫）；run 20/20、dark-mode、product-extension 3/3。`real-site verified`：
+  2026-10-30 专用 Chrome 登录态只读探针（--dedicated-only）扩展刷新到 0.63.2 后四可达平台桥接
+  全部 ready（1~2 尝试 0 拒绝），真实读取正常（脱敏 bilibili.com/page/... content=8、
+  weibo.com/page/... content=6 users=6、douyin.com/jingxuan/... content=10），同轮捕获 0.63.0
+  degraded（8/8）→0.63.2 ready 的前后对照；zhihu 无可探测条目 blocked、tieba/x 浏览器级 CDP
+  超时 failed 为既有另案边界。
+
+详细变更、证据和边界：[v0.63.2 完整条目](docs/changelog/v0.63.2.md)。
+
 ## v0.63.0 - 自建界面深色模式 - 2026-10-27（已公开发布）
 
 GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.0](https://github.com/a2787/ub-utils/releases/tag/v0.63.0)。
@@ -9,240 +42,19 @@ GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.0](https:
 - 系统深色（`prefers-color-scheme: dark`）时脚本自建界面自动切换深色主题：设置面板、内容弹窗、
   AI 审核/反馈浮层、关键词面板、确认气泡与确认浮层、作品确认、批量范围面板、AI 待审/后台状态
   浮条等全部可读，原生表单控件与滚动条经 `color-scheme: dark` 随主题变暗；无独立开关，不改动
-  平台页面配色。
-- 浅色主题规则零改动：深色是样式表末尾纯追加的媒体查询覆盖段（142 条规则 + 深色设计令牌），
-  零 JS 行为改动，布局/尺寸/z-index 不变；深色下补 `:focus-visible` 焦点描边。
+  平台页面配色。浅色主题规则零改动：深色是样式表末尾纯追加的媒体查询覆盖段，零 JS 行为改动。
 - `structure regression`：新增 `test/dark-mode.cjs` 18 项（DARK-2 源码级覆盖段断言；DARK-1 浏览器
   级 emulateMedia 双向切换断言深底浅字/浅底深字；DARK-3 浅色行为回归）；run 20/20、product 7/7、
   ui-settings 16 项全绿。`blocked`：实页验证暂停（2026-09-12 起）。
 
 详细变更、证据和边界：[v0.63.0 完整条目](docs/changelog/v0.63.0.md)。
 
-## v0.62.0 - 已屏蔽内容样本库与规则提炼 - 2026-10-27（已公开发布）
-
-GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.62.0](https://github.com/a2787/ub-utils/releases/tag/v0.62.0)。
-
-- 确认拉黑（快捷/批量/作品/弹幕/AI 审核确认）时，该条内容正文（截断 240 字）进入本机「已屏蔽内容样本库」（按平台分桶、每平台 LRU 200 条、独立 GM 键，仅本机，不进同步/导出/日志/备份）；关键词自动规则写入与后台 UID 增强不产生样本。
-- 关键词面板新增「已屏蔽内容样本」区：最近 50 条样本逐条或勾选批量「转为关键词」（免费路径，走规则完整校验，转换不删样本），可刷新与清空。
-- 新增「AI 归纳提炼规则」（可选增强、需二次确认）：把该平台最近 100 条样本发给已配置 provider 换取候选关键词/正则（≤10+≤6 条、模式 ≤80 字、要求可泛化），候选只进人工确认列表——关键词默认勾选、正则默认不勾选，点「把选中加入规则」才写入；重复/超限/危险正则被拒并显示原因；请求正文只含样本文本，无身份键/URL；未配置或失败时按钮禁用/报错且零写入。
-- `structure regression`：新增 `test/rule-samples.cjs` 10 项（含源码级隐私边界 SOURCE-1）；rule-manager 5、quickblock 38、danmaku-auto 8、run 20、product 7、ui-settings 16、work-block 3、adapters 28、content-ai 12、ai-screening 25、ai-auto-gate 11 等全量矩阵全绿。`blocked`：实页验证暂停（2026-09-12 起）。
-
-详细变更、证据和边界：[v0.62.0 完整条目](docs/changelog/v0.62.0.md)。
-
-## v0.61.0 - AI 已分析持久缓存、自动批量上限与只看评论 - 2026-10-27（已公开发布）
-
-GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.61.0](https://github.com/a2787/ub-utils/releases/tag/v0.61.0)。
-
-- 自动模式新增本机已分析缓存（独立 GM 键，只存记录 ID 与时间戳，TTL 7 天 / LRU 2000，不入同步/导出）：重访同页不再重复产生 AI 请求；规则、提示词、provider 或模型变化时整体失效。
-- 自动模式每页最多发送 3 批，超出部分状态栏提示用「分析本页」手动处理；新增「自动分析只看评论」开关（弹幕仅手动分析）。手动「分析本页」不碰缓存、不受上限，行为不变。
-- `structure regression`：新增 ai-auto-gate 4 项（CACHE-1/CACHE-INV-1/CAP-1/ONLY-COMMENTS-1，旧行为上失败）；ai-screening 25、content-ai 12、ai-platforms 7、run 20、quickblock 38、product 7 等全量矩阵全绿。`blocked`：实页验证暂停（2026-09-12 起）。
-
-详细变更、证据和边界：[v0.61.0 完整条目](docs/changelog/v0.61.0.md)。
-
-## v0.60.0 - 设置面板信息架构与操作一致性 - 2026-10-27（已公开发布）
-
-GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.60.0](https://github.com/a2787/ub-utils/releases/tag/v0.60.0)。
-
-- 设置面板重组为「屏蔽与名单 / 规则 / 备份与同步 / 更新与关于 / 日志诊断」五个分组，顶部新增分组导航按钮（点击滚动到对应分组）；「反馈与日志」移到最后。
-- 名单（点击删除）新增搜索框（备注/身份键，不区分大小写）、平台筛选下拉与「显示 X / 共 Y」计数行，空结果给出可读空态。
-- 撤销 toast 停留时长可配置（`undoToastSeconds`，默认 10 秒，范围 5–30）；新增「最近本地屏蔽操作」列表：最近 20 条快捷/批量/作品/弹幕/AI 确认的本地拉黑（独立本机存储键、不入同步/导出/备份、不含正文），每条可撤销，撤销路径与原有一致。
-- 退出本机账户、清空日志、恢复上一份快照、导入失败提示改用自建确认浮层，不再混用原生 `confirm/alert`；AI API Key 输入保留原生输入框（刻意的秘密输入路径）。
-- `structure regression`：新增 `test/ui-settings.cjs` 16 项（旧行为上失败）；run 20/20、quickblock 38/38、userscript-product 7/7、danmaku-auto 8/8、work-block 3/3、product 7/7 全绿。`blocked`：实页验证暂停（2026-09-12 起）。
-
-详细变更、证据和边界：[v0.60.0 完整条目](docs/changelog/v0.60.0.md)。
-
-## v0.59.0 - 关键词/正则规则管理升级 - 2026-10-27（已公开发布）
-
-- 规则可就地编辑（类型/内容/备注/作用域），不再删除重建；每条规则可选备注与"两个平台通用"跨平台作用域（旧规则按原平台继续生效）。
-- 每条规则本机持久命中计数（编辑迁移、可清零、随删除清理）；关键词面板新增规则包导出/导入；设置面板新增任意页面可达的规则管理入口。
-- 清理设置面板死代码（旧自动规则区块）与"请在设置中…"失效指引。
-- `structure regression`：新增 rule-manager 5 项（旧行为上失败）；danmaku-auto 8、quickblock 38、run 20、adapters 28、product 7、content-ai 12、ai-screening 25 等全量矩阵全绿。
-
-详细变更、证据和边界：[v0.59.0 完整条目](docs/changelog/v0.59.0.md)。
-
-GitHub Release：[v0.59.0](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
-
-## v0.58.0 - AI 默认仅手动分析与待审浮条 - 2026-10-27（已公开发布）
-
-- 新增独立的「自动分析新内容」开关（默认关闭）：启用 AI 后仅点击「分析本页」才请求 API，页面加载/内容变化不再自动请求；手动分析不再强制填写页面附加规则。
-- 自动模式的候选不再自动弹窗，等在屏幕右侧「AI 待审建议」浮条，点击才进入审核；确认前不写名单。
-- AI 面板新增本机用量计数（请求/条数/字符，仅本地）与"本地名单/关键词已先行处理 N 条"提示；关键词与名单命中继续零 API 消耗。
-- `structure regression`：新增 ai-auto-gate 5 项（默认 0 次自动请求、手动免页规则、浮条契约、用量计数，旧行为上失败）；ai-screening 25、content-ai 12、run 20、quickblock 38、product 7 等全量矩阵全绿。
-
-详细变更、证据和边界：[v0.58.0 完整条目](docs/changelog/v0.58.0.md)。
-
-GitHub Release：[v0.58.0](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
-
-## v0.57.4 - 撤销接管右键的本地拉黑菜单 - 2026-09-13（已公开发布）
-
-- **右键交还页面**：删除“命中评论/帖子条目时接管右键”的整套实现（`contextmenu` 捕获监听、`buildContextMenu`、`findItem`、`#ob-ctx` 样式）；此前这些位置右键被 `preventDefault`，平台原生菜单失效。
-- 本地拉黑链路不受影响：平台原生菜单旁「🚫 本地拉黑」、确认气泡、撤销、B站弹幕工具、批量与作品级屏蔽全部保留。
-- `structure regression`：run 20/20（新增“右键保持原生”断言，旧源码上失败）、adapters 28/28、quickblock 38/38、product 7/7；`real-site verified`：2026-09-13 匿名 B站/微博真实条目右键均保持原生，专用登录态 Chrome 的知乎/抖音/X 同样；`blocked`：贴吧 CDP 渲染进程卡死。
-
-详细变更、证据和边界：[v0.57.4 完整条目](docs/changelog/v0.57.4.md)。
-
-GitHub Release：[v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
-
-## v0.57.3 - AI 连接测试与瞬态重试 - 2026-09-12（未单独发布；内容随 v0.57.4 收口）
-
-- 「测试连接」（`max_tokens=1` 最小请求）与直连 429/5xx/超时自动重试一次（1.5s 退避）；适配任意 OpenAI-compatible provider。证据与细节见 [v0.57.3 完整条目](docs/changelog/v0.57.3.md)。
-
-## v0.57.2 - 自动弹幕正则安全边界 - 2026-09-12（已发布）
-
-- B站/抖音关键词规则保存时，明显可能引发灾难性回溯的高风险正则（如 `(a+)+`）被拒绝保存并给出原因；合法正则、已保存规则和导入兼容不受影响。
-- `structure regression`：自动弹幕 8/8（新用例旧行为上失败）、quickblock 38/38、适配器 28/28、通用 20/20。
-
-详细变更、证据和边界：[v0.57.2 完整条目](docs/changelog/v0.57.2.md)。
-
-## v0.57.1 - 无 hover 触控入口补齐 - 2026-09-11（已发布）
-
-- 无 hover 设备页面级“内容屏蔽/弹幕屏蔽”入口常驻可见，齿轮直接打开设置；主要控件补齐 44px 触控目标；抖音/B站弹幕增加点按入口路径，桌面悬停不变，不触发平台写入。
-- `structure regression`：product 6/6、通用 20/20、quickblock 38/38、适配器 28/28；`real-site verified`：2026-09-11 匿名 B站只读候选加载无错误；`blocked`：平板触控实机与抖音验证码未完成。
-
-详细变更、证据和边界：[v0.57.1 完整条目](docs/changelog/v0.57.1.md)。
-
-## v0.57.0 - Tampermonkey 移动端适配、API 直连与账户级加密同步 - 2026-09-11（已发布）
-
-- 电脑与平板共用 `omniblock.user.js`（窄屏/触控适配），AI 收敛为设备直连 API，新增账户注册/登录与客户端加密“立即同步（合并）”。目标平板实机与真实 provider/双设备同步当时为 `blocked`（详见完整条目）。
-
-详细变更、证据和边界：[v0.57.0 完整条目](docs/changelog/v0.57.0.md)。
-
-## v0.56.0 - 作品语境 AI 请求压缩与 OB-AI-014 收口 - 2026-09-10（已发布）
-
-- loopback AI 请求升级为 context schema v2（同批次共享默认语境、弹幕时间与父评论紧凑表示），开发扩展三层桥同步校验 v2 字段并继续拒绝 UID/hash/URL/Cookie/Token。评测总输入增长 `16.95%`、聚合 p95 比值 `1.0014`；真实内容长期精度与字幕/音频/画面语义无可验证输入，作远期预留。详细数字见完整条目。
-
-详细变更、证据和边界：[v0.56.0 完整条目](docs/changelog/v0.56.0.md)。
-
-发布状态：功能提交 `3f94c1bb7cfa75f2a5f223387492ee90b18b1de3` 已推送到 `origin/master`，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建；无登记部署链，未执行平台写入。
-
-## v0.55.0 - 作品语境感知的 AI 屏蔽 - 2026-09-10（已发布）
-
-- B站视频详情页 AI 记录加入作品标题/简介、分 P、真实回复父评论和弹幕进度，语境不足或未知 rule ID 统一延期；AI 审核默认按当前作品作用域确认，显式选“全局作者”且身份可靠才进全局名单。`structure regression` 与匿名 B站只读探针通过；线上模型精度、字幕/音频理解和成本基线按 `blocked` 记录。
-
-详细变更、证据和限制：[v0.55.0 完整条目](docs/changelog/v0.55.0.md)。
-
-发布状态：功能提交 `b865d4261e8f9fb27303d0c14dd22192e84f1544` 已推送到 `origin/master`，`v0.55.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.55.0) 已创建；无登记部署链，未执行平台写入。
-
-## v0.54.0 - 独立 AI 评测与受控事实核查 - 2026-09-10（已发布）
-
-- 新增 24 条人工合成/脱敏评测集与 mock-oracle 指标 runner（不把 mock 结果冒充真实精度），以及 loopback-only 事实 broker + 显式来源 allowlist；无来源、冲突、过期或证据不足统一保守延后。事实核查默认关闭，`shadow`/`canary` 均不自动屏蔽、不扩身份关联、不触发平台写入；真实来源 allowlist、线上精度与成本基线为 `blocked`。
-
-详细变更、测试证据和限制：[v0.54.0 完整条目](docs/changelog/v0.54.0.md)。
-
-## v0.53.1 - B站 AI 后台屏蔽生命周期与 UID 缓存 - 2026-09-10（已发布）
-
-- B站 AI 审核确认后立即关闭浮层并先写基础 hash/已有 UID，状态条显示后台 UID 进度与撤销入口；hidden、换路由/换视频、停用、撤销、运行时销毁均取消旧任务，迟到 UID 不写入新会话。UID 卡片缓存有界 TTL/LRU + 失败退避，仅唯一正向校验才关联 UID，碰撞/失败保留 hash-only。`structure regression`：AI screening 23 项、B站 quickblock 38/38。
-
-详细用户变化和证据：[v0.53.1 完整条目](docs/changelog/v0.53.1.md)。
-
-发布状态：功能提交 `e372bea97bf70ebbc873d60b4d060ae477e0307c` 已推送到 `origin/master`，`v0.53.1` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.53.1) 已创建；构建为 `0.53.1-ai-background-lifecycle-cache`。没有登记的生产部署链，未执行平台写入。
-
-## v0.53.0 - 事实核查与屏蔽决策分离 - 2026-09-09（已发布）
-
-- AI 现在区分规则违规、事实性主张、观点和核查状态；缺少引用、尚未核查或语境不足不再单独构成“虚假/谣言”的屏蔽候选；理由仅为“未经证实/无可核实依据”的旧式 block 保守降为延后。
-- B站 AI 弹幕确认后审核弹窗立即关闭；基础 hash/已有 UID 先写入本地名单，UID 关联由最多 2 个并发任务在后台补充；唯一校验失败或歧义仍安全保留 hash。
-- AI 分析日志补充 runId 与分阶段耗时；`structure regression`：AI 提示词/离线评测、AI screening 21/21 及既有 AI/内容回归通过。
-
-详细用户变化、验证证据、未接入检索的限制和发布边界：[v0.53.0 完整条目](docs/changelog/v0.53.0.md)。
-
-发布状态：v0.53.0 构建 `0.53.0-ai-background-bili-commit`，提交/tag/Release 已完成；当前公开版本已推进到 v0.53.1。
-
-## v0.52.0 - 多平台内容入口与可学习 AI 提示词反馈 - 2026-09-09（已创建 GitHub Release）
-
-- 微博、知乎、贴吧详情页接入右下「内容屏蔽（评论/AI）」入口；贴吧现代主题帖/评论进入 AI/评论管理器，视频主题缺少正文 DOM 时使用已捕获 Vue 文本字段。
-- 六平台统一补齐作者作品内容的 AI 读取记录（B站/抖音/微博/知乎/贴吧/X）；只读语义正文，平台操作文案不进入 AI，身份缺失时不生成可执行拉黑入口。
-- 反馈账本和个性化偏好只保存在本机；正/负/未知反馈不会训练模型或直接生成屏蔽规则，达到阈值后也只生成待确认提案。
-- 审核弹窗的「不屏蔽」改为可撤销切换；扩展桥同步放行作品载荷与反馈样例，AI 错误不再统一伪装成“网关请求失败”。
-- `structure regression` 内容覆盖 6/6、内容 AI 12/12、AI screening 19/19、持久化扩展 8/8；2026-09-09 专用 Chrome 候选只读验证覆盖 B站、抖音、微博、知乎、贴吧，X 空壳阻断；详细数量、登录状态和限制见 [v0.52.0 工作区条目](docs/changelog/v0.52.0.md)。
-
-发布状态：v0.52.0 源码已 commit、推送并创建 tag/Release；未执行部署或平台写入；当前公开版本为 [OmniBlock v0.52.0](https://github.com/a2787/ub-utils/releases/tag/v0.52.0)。
-
-## v0.51.1 - B站新增内容累计增量 AI 分析 - 2026-09-08（源码已推送，未创建 Release）
-
-- B站滚动评论、展开楼中楼和后续 `seg.so` 弹幕数据段新增内容会进入有界 AI 增量分析；同一稳定记录不重复发送。
-- AI 状态的“已分析数量”改为当前页面累计数；每批最多 80 条的协议和人工审核/关键词优先级保持不变。
-- `structure regression`：AI screening 18/18，覆盖评论与弹幕增量触发、累计计数和无重复请求；无页面/控制台错误。真实站点结果、阻断和当前候选边界见完整条目。
-
-详细用户变化、验证标签、限制和发布边界：[v0.51.1 完整条目](docs/changelog/v0.51.1.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.51.1-content-ai-incremental`，提交 `910d2def` 已推送，未创建 tag/Release。
-
-## v0.51.0 - 平台关键词屏蔽与评论 AI 建议提醒 - 2026-09-08（本地候选，未推送）
-
-- B站/抖音关键词和正则规则迁移到各自「内容屏蔽」弹窗的「关键词屏蔽」标签；可靠身份命中后直接本地屏蔽，不消耗 AI token，旧设置键继续兼容。
-- AI 分析前先排除关键词和本地名单命中；微博/知乎接入评论 AI 采集和同一人工审核弹窗。
-- `structure regression`：内容规则 8/8、AI screening 14/14、AI 多平台 7/7、quickblock 37/37 等通过；`real-site verified`：2026-09-08 B站 4 标签与微博评论/AI 两标签；抖音验证码、知乎登录页按 `blocked` 记录。
-
-详细用户变化、验证标签、限制和发布边界：[v0.51.0 完整条目](docs/changelog/v0.51.0.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.51.0-content-rules-ai-alerts`，未 push、未创建 tag/Release。
-
-## v0.50.0 - B站入口统一、列表正文清理与弹幕 UID 按需关联 - 2026-09-07（本地候选，未推送）
-
-- B站「内容屏蔽（评论/弹幕）」入口固定到右下角，与设置齿轮同侧；评论管理器、AI 候选和原生弹幕列表只保留正文，排除平台操作组件文字。
-- 单条、批量、悬浮、原生列表和 AI 已确认的 B站弹幕目标才按需做 hash→UID 候选反查与匿名用户卡片校验；唯一且完整校验才同时保存 hash/UID，不做初始全量反查；AI 仍保留人工审核写入门槛。
-
-详细用户变化、验证标签、限制和发布边界：[v0.50.0 完整条目](docs/changelog/v0.50.0.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.50.0-bili-lazy-uid-body-cleanup`，未 push、未创建 tag/Release。
-
-## v0.49.0 - 统一内容屏蔽标签弹窗与抖音一键 AI 分析 - 2026-09-07（已推送源码，未创建 tag/Release）
-
-- B站和抖音把评论/弹幕入口合并为「内容屏蔽（评论/弹幕）」弹窗，内含「屏蔽评论」「屏蔽弹幕」「AI 屏蔽」三个标签；AI 配置和分析入口从设置页迁移到第三个标签。
-- 抖音「加载并分析本页」一次点击依次加载评论、扫描弹幕时间轴，再按批分析实际观察到的全部记录并进入人工审核；进度可见可取消，不调用抖音私有接口。
-- 专用 Chrome 登录态只读验证：`douyin.com/video/...` 单会话 5 批完成 365/365 条、28 条候选审核、错误 0；匿名 B站入口与 3 标签通过；抖音匿名入口仍被验证码阻断。
-
-详细用户变化、验证标签、限制和发布边界：[v0.49.0 完整条目](docs/changelog/v0.49.0.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.49.0-content-manager-tabs`，源码已推送，未创建 tag/Release。
-
-## v0.48.0 - AI 多平台采集与一键网关启动 - 2026-09-07（已推送候选，未公开发布）
-
-- B站 AI 评论/弹幕采集与人工审核保留，并接入抖音当前页面已观察到的评论和弹幕；抖音弹幕正文按活动视频会话隔离，同 URL 换片清理旧 AI 记录。
-- AI 把当前已观察内容按每批最多 80 条顺序送入网关并合并结果，不再只分析前 80 条；设置页显示批次进度；请求仍只含规则、临时项目编号、类型和截短正文。
-- 根目录新增 [`启动网关.cmd`](启动网关.cmd)（调用 `gateway\start.ps1`，不含 API Key）；userscript 与扩展桥统一 60 秒请求上限并保留无回调 watchdog。
-
-详细用户变化、验证标签、限制和发布边界：[v0.48.0 完整条目](docs/changelog/v0.48.0.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.48.0-ai-batched-content-cleanup`，源码已推送（`be6e653`），未创建 tag/Release。
-
-## v0.47.0 - AI 智能屏蔽第一阶段 - 2026-09-06（历史本地候选，未公开发布）
-
-- 设置面板新增默认关闭的「启用 AI 智能屏蔽」；第一阶段只分析 B站当前页已观察到的评论/弹幕，命中结果进入可多选的本地审核框，确认后才复用现有名单写入链路。
-- 只向用户配置的 loopback OpenAI 兼容网关发送截断正文、内容类型、临时项目编号和规则，不发送 UID、弹幕 hash、URL、Cookie 或 API Key；无可靠身份的候选不可执行。
-- provider 多配置、限流和记忆由外部 LiteLLM 网关负责；官方 DeepSeek provider 已完成本地真实页面联调，商汤 provider 与额度记忆仍为 `blocked`。
-
-详细用户变化、验证标签和限制：[v0.47.0 完整条目](docs/changelog/v0.47.0.md)。
-
-发布状态：当前公开版本仍为 v0.46.2；候选构建 `0.47.0-ai-screening-phase1`，未 push、未创建 tag/Release。
-
-## v0.46.2 - B站子评论菜单与楼回复入口修复 - 2026-09-05（已发布）
-
-- 将 B站主评论菜单中的楼操作显示为四字短文案「🧵 屏蔽回复」，保持菜单单行；完整功能语义保留在 title/aria-label「屏蔽该楼回复」。
-- 识别真实 `BILI-COMMENT-ACTION-BUTTONS-RENDERER` 内的 `#more`/更多图标触发器，使子评论三点菜单打开后能及时补扫并插入「🚫 本地拉黑」。
-- 子评论只插入本地拉黑，不插入只适用于主评论的楼回复入口；弹幕举报的 `mid_hash` 安全边界和评论 `bili:uid` 解析保持不变。
-
-详细用户变化、验证标签和限制：[v0.46.2 完整条目](docs/changelog/v0.46.2.md)。
-
-发布状态：`v0.46.2` tag 与 GitHub Release 已创建并推送至 `origin`；当前公开版本为
-[OmniBlock v0.46.2](https://github.com/a2787/ub-utils/releases/tag/v0.46.2)。构建为
-`0.46.2-bili-subcomment-menu-layout`；当前源码版本/构建和真实站点边界见
-[当前维护状态](docs/maintenance/CURRENT.md)。
-
-## v0.46.1 - B站评论举报菜单本地入口回归修复 - 2026-09-05（历史本地候选，未公开发布）
-
-- 修复 B站视频评论菜单中「硬核会员举报」被误判为弹幕举报，导致没有浮动弹幕身份时提前返回、本地入口不再插入的问题。
-- 评论菜单继续按当前评论节点解析规范 `bili:uid`；只有非评论菜单的 B站弹幕举报仍要求唯一、未过期的 `mid_hash` 身份。
-- 新增人工合成回归覆盖“仅有硬核会员举报”的 `bili-comment-menu`，避免后续菜单文案变体再次绕过本地入口。
-
-详细用户变化、验证标签和限制：[v0.46.1 完整条目](docs/changelog/v0.46.1.md)。
-
-发布状态：`v0.46.1` 仅为本地候选，未 push、未创建 tag 或 GitHub Release；当前公开版本仍为
-[OmniBlock 0.46.0](https://github.com/a2787/ub-utils/releases/tag/v0.46.0)。候选构建为
-`0.46.1-bili-comment-menu-report`；当前源码版本/构建和未完成的真实站点边界见
-[当前维护状态](docs/maintenance/CURRENT.md)。
-
-## 历史版本
-
-上一候选版本 [v0.46.1](docs/changelog/v0.46.1.md)，上一公开版本 [v0.46.0](docs/changelog/v0.46.0.md)；更早条目已移至
-[变更日志索引](docs/changelog/INDEX.md) 和只读归档；旧条目中的候选/发布状态只代表当时事实。
+## 历史版本（完整内容以各条目为准）
+
+- v0.62.0 已屏蔽内容样本库与规则提炼（2026-10-27 发布）：[完整条目](docs/changelog/v0.62.0.md)、[Release](https://github.com/a2787/ub-utils/releases/tag/v0.62.0)。
+- v0.61.0 AI 已分析持久缓存、自动批量上限与只看评论（2026-10-27 发布）：[完整条目](docs/changelog/v0.61.0.md)、[Release](https://github.com/a2787/ub-utils/releases/tag/v0.61.0)。
+- v0.60.0 设置面板信息架构与操作一致性（2026-10-27 发布）：[完整条目](docs/changelog/v0.60.0.md)、[Release](https://github.com/a2787/ub-utils/releases/tag/v0.60.0)。
+- v0.59.0 关键词/正则规则管理升级（2026-10-27 发布）：[完整条目](docs/changelog/v0.59.0.md)、[Release](https://github.com/a2787/ub-utils/releases/tag/v0.59.0)。
+- v0.58.0 AI 默认仅手动分析与待审浮条（2026-10-27 发布）：[完整条目](docs/changelog/v0.58.0.md)、[Release](https://github.com/a2787/ub-utils/releases/tag/v0.58.0)。
+- v0.57.0~v0.57.4 移动端适配/API 直连/账户加密同步、无 hover 触控入口、自动弹幕正则安全边界、撤销接管右键（2026-09-11~13 发布）：完整条目 [v0.57.4](docs/changelog/v0.57.4.md)、[v0.57.3](docs/changelog/v0.57.3.md)、[v0.57.2](docs/changelog/v0.57.2.md)、[v0.57.1](docs/changelog/v0.57.1.md)、[v0.57.0](docs/changelog/v0.57.0.md)；Release 入口见 [v0.57.4](https://github.com/a2787/ub-utils/releases/tag/v0.57.4)。
+- v0.46.0~v0.56.0 AI 屏蔽各阶段、多平台内容入口与作品语境（2026-09-05~10）：完整条目与当时发布状态见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md) 与只读归档；旧条目中的候选/发布状态只代表当时事实。

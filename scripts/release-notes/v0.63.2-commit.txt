@@ -1,0 +1,60 @@
+fix(storage): fail-closed degraded storage and chunked bridge ready snapshot (v0.63.2)
+
+Two merged fixes ship as one release (the intermediate data-safety
+candidate never created its own tag/Release; @version moves 0.63.0 ->
+0.63.2, build 0.63.2-bridge-chunked-ready).
+
+Data safety (critical, OB-STORE-001): when the dev-extension storage
+bridge is degraded (ready handshake fully rejected), the page used to
+boot with an empty default store and every write path stayed open -
+settings changes or confirmed blocks would overwrite the real blocklist
+(omniblock:data:v1) and empty snapshots entered the backup ring
+(omniblock:backup:v1; the 2026-10-29 rescue report documented exactly
+this overwrite). The page now enters read-only degraded mode: persist()
+and backup writes refuse (persistMetrics.degradedRefusals,
+lastError='storage-degraded-readonly'), a persistent panel banner and a
+dismissible bottom-right toast warn that changes will not be saved;
+storage recovery restores the real list after refresh. Tampermonkey's
+normal path is unchanged. Layer 2 (bridge templates): the main world
+sends ready-ack before readyResolve, GM writes are refused while !ready
+(blockedWrites counter), and the isolated world forwards set/remove
+only after latching ready-ack - even a mis-call above the gate cannot
+touch disk while degraded.
+
+Bridge root cause (high, OB-BRIDGE-001/OB-DEF-002): the ready-response
+packed all whitelisted storage keys into one envelope (real store
+~9.1M chars vs the 8,388,608-char main-world cap; event-log shards
+dominate), leaving every page permanently degraded since 2026-09-12 (8
+attempts / 8 rejections). The ready snapshot is now delivered in 2MiB
+ready-values-chunk envelopes (per-chunk HMAC/monotonic-sequence/8MiB
+checks, MAX_READY_CHUNKS=64, explicit serialize/too-large error
+replies); the main world reassembles by requestId before ready-ack +
+readyResolve. EventLog rotate() gains sweepOrphanShards(): a date-keyed
+bounded probe ([today-365, today-30)) deletes expired shards missing
+from the rotated index, including degraded-era orphans; metrics add
+orphanSweeps/orphanShardsDeleted.
+
+Affected platforms: all six dev-extension pages share the bridge; the
+fixes are storage-layer, not adapter-specific. Dedicated-Chrome
+logged-in read-only probe (2026-10-30): after refresh to 0.63.2 all
+four reachable platforms went ready (bilibili/douyin/weibo 1 attempt 0
+rejections, zhihu 2/0) with real reads (bilibili.com/page/... content=8
+withIdentity 8/8; weibo.com/page/... content=6 users=6; douyin.com/
+jingxuan/... content=10), and the same run captured 0.63.0 degraded
+(8/8 ready-timeout) before 0.63.2 ready - a direct before/after
+contrast. zhihu has no probeable entries (blocked); tieba/x fail on
+browser-level Target.getTargets timeouts (pre-existing,
+bridge-independent).
+
+- structure regression: test/degraded-storage.cjs two-phase 10/10 (>8MiB
+  fixture asserts chunked ready, seed read-back, orphan cleanup and the
+  ready passthrough control; http-page fallback asserts degraded
+  read-only: data:v1/backup:v1 byte-identical, warning UI; six core
+  assertions failed on the old behavior, baseline kept via git worktree
+  at HEAD 0.63.0); dev-extension 13/13 (chunking-protocol and dual-layer
+  write-gate source guards fail on old templates); run 20/20, dark-mode,
+  product-extension 3/3; node --check on source and generated bridge
+  files; docs-check and the privacy gate pass.
+
+Plan: OB-STORE-001 and OB-BRIDGE-001 verified (both shipped with
+v0.63.2).

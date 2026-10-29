@@ -65,11 +65,22 @@ const isolatedBridge = String.raw`(() => {
   const SOURCE = 'omniblock-isolated';
   const EXPECTED_SOURCE = 'omniblock-main';
   const MAX_VALUE_CHARS = 4 * 1024 * 1024;
+  // OB-BRIDGE-001：ready 快照分块参数。单信封 ready-response 在白名单总量超过
+  // 主世界 verifyEnvelope 的 8MiB 上限（MAX_VALUE_CHARS*2）时会被永久拒收
+  // （2026-09-12 起六平台 degraded 的 H1 根因），这里把整个快照序列化后按
+  // 2MiB 分块发送，主世界聚齐再就绪；每条信封仍受同一 8MiB 校验保护。
+  const READY_CHUNK_CHARS = 2 * 1024 * 1024;
+  const MAX_READY_CHUNKS = 64;
   const MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
   const MAX_AI_REQUEST_CHARS = 256 * 1024;
   const MAX_AI_REQUEST_TIMEOUT_MS = 60000;
   const AI_CONTENT_TYPES = new Set(['comment', 'danmaku', 'video', 'answer', 'post', 'pin', 'column', 'tweet', 'thread', 'question', 'content']);
   const ownWrites = new Map();
+  // OB-STORE-001 双层防御（隔离侧）：只有主世界确认收到存储快照（ready-ack）
+  // 之后，'set'/'remove' 才可信。degraded（ready 从未完成）时主世界永远不发
+  // ready-ack，这里对写入一律拒绝——即使上层误调用也不能把空态写进 chrome.storage。
+  let mainReadySeen = false;
+  let gatedWrites = 0;
   const encoder = new TextEncoder();
   const subtle = globalThis.crypto && globalThis.crypto.subtle;
   const importKey = subtle && subtle.importKey.bind(subtle);
@@ -385,15 +396,40 @@ const isolatedBridge = String.raw`(() => {
 
   async function handleMessage(message) {
     if (!message || typeof message !== 'object') return;
+    if (message.type === 'ready-ack') {
+      // OB-STORE-001：主世界已收到存储快照并放行用户脚本；post 链与 receiveChain
+      // 都是 FIFO，ready-ack 必然先于任何 'set'/'remove' 到达这里。
+      mainReadySeen = true;
+      return;
+    }
     if (message.type === 'ready-request') {
       chrome.storage.local.get(null).then((values) => {
-        post({ type: 'ready-response', requestId: String(message.requestId || ''), values: allowedStorageValues(values) });
+        const requestId = String(message.requestId || '');
+        // OB-BRIDGE-001：ready 快照分块（见上方 READY_CHUNK_CHARS 注释）。
+        let text = null;
+        try { text = JSON.stringify(allowedStorageValues(values)); } catch (error) {}
+        if (text == null) {
+          post({ type: 'ready-response', requestId, values: {}, error: 'snapshot-serialize-failed' }).catch(() => {});
+          return;
+        }
+        const rawTotal = Math.max(1, Math.ceil(text.length / READY_CHUNK_CHARS));
+        const total = Math.min(MAX_READY_CHUNKS, rawTotal);
+        for (let index = 0; index < total; index++) {
+          const piece = text.slice(index * READY_CHUNK_CHARS, (index + 1) * READY_CHUNK_CHARS);
+          if (!piece && index) break;
+          post({ type: 'ready-values-chunk', requestId, index, total, piece }).catch(() => {});
+        }
+        if (rawTotal > MAX_READY_CHUNKS) {
+          // 截断后的快照在主世界必然无法聚齐，显式声明失败而不是假装就绪。
+          post({ type: 'ready-response', requestId, values: {}, error: 'snapshot-too-large' }).catch(() => {});
+        }
       }).catch((error) => {
         post({ type: 'ready-response', requestId: String(message.requestId || ''), values: {}, error: 'storage-unavailable' });
       });
       return;
     }
     if (message.type === 'set') {
+      if (!mainReadySeen) { gatedWrites++; return; }
       const key = String(message.key || '');
       let serialized = '';
       try { serialized = JSON.stringify(message.value); } catch (error) { return; }
@@ -404,6 +440,7 @@ const isolatedBridge = String.raw`(() => {
       return;
     }
     if (message.type === 'remove') {
+      if (!mainReadySeen) { gatedWrites++; return; }
       const key = String(message.key || '');
       if (!isAllowedStorageKey(key)) return;
       const own = { removed: true };
@@ -732,11 +769,15 @@ const mainBridge = String.raw`(() => {
   const EXPECTED_SOURCE = 'omniblock-isolated';
   const MAX_READY_ATTEMPTS = 8;
   const MAX_VALUE_CHARS = 4 * 1024 * 1024;
+  // OB-BRIDGE-001：ready 快照分块的接收上限，与隔离世界 MAX_READY_CHUNKS 一致
+  // （64 × 2MiB ≫ chrome.storage.local 配额，仅作滥用界）。
+  const MAX_READY_CHUNKS = 64;
   const AI_CONTENT_TYPES = new Set(['comment', 'danmaku', 'video', 'answer', 'post', 'pin', 'column', 'tweet', 'thread', 'question', 'content']);
   const values = Object.create(null);
   const listeners = new Map();
   const xhrCallbacks = new Map();
   const readyRequests = new Set();
+  const readyChunks = new Map();
   const encoder = new TextEncoder();
   const subtle = globalThis.crypto && globalThis.crypto.subtle;
   const importKey = subtle && subtle.importKey.bind(subtle);
@@ -756,7 +797,7 @@ const mainBridge = String.raw`(() => {
   let incomingSequence = 0;
   let postChain = Promise.resolve();
   let receiveChain = Promise.resolve();
-  const bridgeStatus = { state: 'starting', attempts: 0, rejectedMessages: 0, reason: '' };
+  const bridgeStatus = { state: 'starting', attempts: 0, rejectedMessages: 0, blockedWrites: 0, reason: '' };
   const readyPromise = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
   const keyBytes = Uint8Array.from(BRIDGE_SECRET.match(/../g) || [], (value) => parseInt(value, 16));
   const keyPromise = importKey
@@ -1039,6 +1080,7 @@ const mainBridge = String.raw`(() => {
     bridgeStatus.state = 'degraded';
     bridgeStatus.reason = String(reason || 'ready-timeout');
     if (readyTimer) { clearTimer(readyTimer); readyTimer = 0; }
+    readyChunks.clear();
     readyReject(new Error('OmniBlock extension bridge unavailable: ' + bridgeStatus.reason));
   }
   function requestReady() {
@@ -1064,17 +1106,57 @@ const mainBridge = String.raw`(() => {
 
   async function handleMessage(message) {
     if (!message || typeof message !== 'object') return;
+    if (message.type === 'ready-values-chunk') {
+      // OB-BRIDGE-001：聚齐隔离世界的分块快照后再进入就绪。任何一块缺失都
+      // 不 settle——ready-request 的既有 8 次重试会带来全新的完整分块集。
+      if (readySettled) return;
+      const chunkRequestId = String(message.requestId || '');
+      if (!readyRequests.has(chunkRequestId)) return;
+      const total = Number(message.total);
+      const chunkIndex = Number(message.index);
+      const piece = typeof message.piece === 'string' ? message.piece : '';
+      if (!Number.isInteger(total) || total < 1 || total > MAX_READY_CHUNKS
+        || !Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= total) return;
+      let state = readyChunks.get(chunkRequestId);
+      if (!state || state.total !== total) { state = { total, pieces: new Map() }; readyChunks.set(chunkRequestId, state); }
+      if (state.pieces.has(chunkIndex)) return;
+      state.pieces.set(chunkIndex, piece);
+      if (state.pieces.size < state.total) return;
+      readyChunks.delete(chunkRequestId);
+      readyRequests.clear();
+      let snapshot = null;
+      try { snapshot = JSON.parse(Array.from({ length: state.total }, (_, i) => state.pieces.get(i) || '').join('')); }
+      catch (error) { return; }
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return;
+      Object.keys(values).forEach((key) => delete values[key]);
+      for (const key of Object.keys(snapshot)) if (isAllowedStorageKey(key)) values[key] = snapshot[key];
+      ready = true;
+      readySettled = true;
+      readyChunks.clear();
+      bridgeStatus.state = 'ready';
+      bridgeStatus.reason = '';
+      if (readyTimer) { clearTimer(readyTimer); readyTimer = 0; }
+      // OB-STORE-001：先让隔离世界锁存 ready-ack，再放行用户脚本（FIFO 保证
+      // 隔离世界的 set/remove 门控在存储快照投递完成后才解锁）。
+      post({ type: 'ready-ack' }).catch(() => {});
+      readyResolve();
+      return;
+    }
     if (message.type === 'ready-response') {
       if (!readyRequests.has(String(message.requestId || '')) || readySettled) return;
       readyRequests.clear();
       Object.keys(values).forEach((key) => delete values[key]);
       for (const key of Object.keys(message.values || {})) if (isAllowedStorageKey(key)) values[key] = message.values[key];
-      if (message.error) { failReady('storage-unavailable'); return; }
+      if (message.error) { failReady(String(message.error || 'storage-unavailable')); return; }
       ready = true;
       readySettled = true;
       bridgeStatus.state = 'ready';
       bridgeStatus.reason = '';
       if (readyTimer) { clearTimer(readyTimer); readyTimer = 0; }
+      // OB-STORE-001：先让隔离世界锁存 ready-ack，再放行用户脚本。post 链是
+      // FIFO：ready-ack 先入队，用户脚本最早也只能在 extensionReady 落定后才发
+      // 'set'/'remove'，因此隔离世界一定先看到 ready-ack 再放行写入。
+      post({ type: 'ready-ack' }).catch(() => {});
       readyResolve();
       return;
     }
@@ -1112,6 +1194,9 @@ const mainBridge = String.raw`(() => {
     && Object.prototype.hasOwnProperty.call(values, key) ? values[key] : fallback;
   const GM_setValue = (key, value) => {
     const normalized = String(key || '');
+    // OB-STORE-001：桥接未就绪（degraded）时拒绝一切写入并计数——此时页面只有
+    // 默认空存储，写入会用空态覆盖真实名单；即使上层误调用也不得 post 'set'。
+    if (!ready) { bridgeStatus.blockedWrites++; return; }
     let serialized = '';
     try { serialized = JSON.stringify(value); } catch (error) { return; }
     if (!isAllowedStorageKey(normalized) || serialized.length > MAX_VALUE_CHARS) return;
@@ -1120,6 +1205,7 @@ const mainBridge = String.raw`(() => {
   };
   const GM_deleteValue = (key) => {
     const normalized = String(key || '');
+    if (!ready) { bridgeStatus.blockedWrites++; return; }
     if (!isAllowedStorageKey(normalized)) return;
     delete values[normalized];
     post({ type: 'remove', key: normalized });
