@@ -2,7 +2,9 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.63.2 - degraded 存储只读降级（数据安全修复）与桥接就绪快照分块 - 2026-10-30（发布中）
+## v0.63.2 - degraded 存储只读降级（数据安全修复）与桥接就绪快照分块 - 2026-10-30（已公开发布）
+
+GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.2](https://github.com/a2787/ub-utils/releases/tag/v0.63.2)。
 
 数据安全修复与桥接根因修复合并为 v0.63.2 单一发布（中间数据安全候选未单独创建 tag/Release）。
 

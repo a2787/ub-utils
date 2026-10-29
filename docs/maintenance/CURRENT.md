@@ -7,24 +7,24 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.63.2`（本轮合并发布：degraded 存储只读降级 + 桥接就绪快照分块；tag/Release/raw 核对随发布脚本同轮执行，发布回写条目登记提交/tag/Release/raw 结果）
+- 当前 userscript：`0.63.2`（已公开发布：degraded 存储只读降级 + 桥接就绪快照分块，两项合并发布）
 - 构建：`0.63.2-bridge-chunked-ready`
-- 上一公开版本/功能提交：`0.63.0` / `d808e82faa95a9a3b333a2a463a5562b23ed7c28`
-- 最近验证的源码快照：`d808e82faa95a9a3b333a2a463a5562b23ed7c28`（v0.63.0 功能提交；v0.63.2 功能提交于发布回写时登记）
-- 当前候选源码 SHA-256：`d2bf5c0a7f3650b58a2e98dfe305ce72e0a674118bd1c305d619d4671682cf28`（v0.63.2 工作区快照，2026-10-30 复核一致）
-- 发布状态：v0.63.0 为上一公开版本（`v0.60.0`~`v0.63.0` 四个 tag 与 GitHub Release 均已创建，raw 更新地址已服务 `0.63.0`，发布回写提交 `6c9ef66` 仅改文档）；v0.63.2 为数据安全修复与桥接根因修复的合并发布（两项同随 v0.63.2 发布），发布中；未执行平台写入。
-- 当前公开 tag/Release：[v0.63.0](https://github.com/a2787/ub-utils/releases/tag/v0.63.0)（v0.63.2 于发布回写时登记）。
+- 当前公开版本/功能提交：`0.63.2` / `5af465021a465ff071c588f22ac28536b2f46f99`
+- 最近验证的源码快照：`5af465021a465ff071c588f22ac28536b2f46f99`（v0.63.2 功能提交）
+- 当前候选源码 SHA-256：`d2bf5c0a7f3650b58a2e98dfe305ce72e0a674118bd1c305d619d4671682cf28`（v0.63.2 功能提交内 userscript 快照，2026-10-30 复核一致）
+- 发布状态：v0.63.2 已公开发布（tag/Release/raw 详情见下方发布执行条目；工具性提交 `9df2370`/`5155f82` 仅发布脚本修复）；未执行平台写入。
+- 当前公开 tag/Release：[v0.63.2](https://github.com/a2787/ub-utils/releases/tag/v0.63.2)。
 
 ## 2026-10-30 v0.63.2 合并发布：degraded 存储只读降级（OB-STORE-001，数据安全）+ 桥接就绪快照分块与孤儿清理（OB-BRIDGE-001）
 
-- 发布决定：数据安全修复与桥接根因修复合并为 v0.63.2 单一发布——tag 必须与 userscript `@version` 一致，两项在同一工作区叠加实现并同轮验证；中间数据安全候选未单独创建 tag/Release，`@version` 实际跨越 0.63.0→0.63.2。两项计划各自保留 `verified`，均"同随 v0.63.2 发布"。
-- 数据安全（OB-STORE-001，critical）：专用开发扩展桥接 degraded（ready 握手被全量拒绝）时页面以默认空存储启动且写路径全部畅通（2026-10-29 抢救报告中 `backup:v1` 被空 initial 快照覆盖即同一链路的实际损害）。层 1（userscript）：ready 被拒后整页只读降级——`persist()` 拒写（`lastError='storage-degraded-readonly'`、`degradedRefusals` 计数、不置 pendingLocalWrite）、`writeBackupRecords()` 拒写、`ensureLocalBackup()` 提前返回、`storageStatus()` 暴露 `degraded`，面板顶部横幅 + 存储状态行 + 右下浮条持续警示「存储桥接未就绪，本页为只读降级模式：名单与设置变更不会保存」（浮条可关闭、面板警示保留）；`__OB_RUNTIME_INFO__`/`window.OB.runtime` 暴露 `storageDegraded`。层 2（`test/build-dev-extension.cjs` 模板，产物重新生成）：主世界 ready 后先发 `ready-ack`，`GM_setValue`/`GM_deleteValue` 在 `!ready` 时拒绝并计 `blockedWrites`；隔离世界锁存 `ready-ack` 后才放行 `set`/`remove`——即使上层误调用，degraded 下也不落盘。
+- 发布决定：两项修复合并为 v0.63.2 单一发布（tag 与 `@version` 一致；中间数据安全候选未单独创建 tag/Release，`@version` 实际跨越 0.63.0→0.63.2）；两项计划各自保留 `verified`，均"同随 v0.63.2 发布"。
+- 数据安全（OB-STORE-001，critical）：专用开发扩展桥接 degraded（ready 握手被全量拒绝）时页面以默认空存储启动且写路径全部畅通（2026-10-29 抢救报告中 `backup:v1` 被空 initial 快照覆盖即同一链路的实际损害）。层 1（userscript）：ready 被拒后整页只读降级——`persist()` 拒写（`lastError='storage-degraded-readonly'`、`degradedRefusals` 计数）、`writeBackupRecords()` 拒写、`ensureLocalBackup()` 提前返回、`storageStatus()` 暴露 `degraded`，面板顶部横幅 + 存储状态行 + 右下浮条持续警示（浮条可关闭、面板警示保留）；`__OB_RUNTIME_INFO__`/`window.OB.runtime` 暴露 `storageDegraded`。层 2（`test/build-dev-extension.cjs` 模板，产物重新生成）：主世界 ready 后先发 `ready-ack`，`GM_setValue`/`GM_deleteValue` 在 `!ready` 时拒绝并计 `blockedWrites`；隔离世界锁存 `ready-ack` 后才放行 `set`/`remove`——即使上层误调用，degraded 下也不落盘。
 - 桥接根因（OB-BRIDGE-001，high）：OB-DEF-002 永久 degraded 的 H1 根因——ready-response 单信封超主世界 8MiB 校验上限（真实存储 ≈9.1M 字符、事件日志分片为主，8 尝试 8 拒绝自 2026-09-12 起）。桥侧（build-dev-extension.cjs 两侧模板）：就绪快照按 2MiB 分块为 `ready-values-chunk` 信封（HMAC/单调序列/8MiB 校验逐条保留，MAX_READY_CHUNKS=64，序列化失败/截断显式错误回包并透传 failReady 原因），主世界聚齐后 ready-ack 先行 + readyResolve，任一分块缺失不 settle。日志侧：`rotate()` 新增 `sweepOrphanShards()` 日期口径清理（[today-365, today-30) 有界探测、每本地日至多一次，索引外的过期孤儿分片删除），`MAX_TOTAL_CHARS` 维持 16MiB（分块后 ready 能力已高于日志预算）；metrics 新增 orphanSweeps/orphanShardsDeleted。手工删除历史大分片（分诊 ①）为删除类写入未获授权、亦无必要。构建 `0.63.2-bridge-chunked-ready`。
 - `structure regression`：`test/degraded-storage.cjs` 两阶段 10/10——Phase A（BR-1..5）在 >8MiB 存储夹具上断言分块 ready（BR-1）、读回 2 个种子人物（BR-2）、degraded===false（BR-3）、40 天孤儿分片被清理（BR-4）、ready 放行对照 setSetting 落盘且种子未被覆盖（BR-5）；Phase B（STORE-1..4）用 http:// 页面（适配器按 hostname 匹配、扩展 content script 仅 https）构造有 UI 无隔离桥的 degraded 场景，断言 data:v1/backup:v1 字节不变与警示 UI。旧行为基线以 git worktree 运行 HEAD（0.63.0）实测失败并字节级留证：data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`（2 人合成种子被 1 人空态覆盖）、backup:v1 468→2,365 字节（新增空快照）、无警示 UI、setSetting/addIdentities 均"成功"、BR-1 生产同签名 degraded/8/ready-timeout；修复后全绿。dev-extension 13/13（"就绪快照分块协议两侧同步"与"桥接双层写入门控存在"源码级守卫，旧模板上失败）、run 20/20、dark-mode 通过、product-extension 3/3、`node --check`（源码+生成桥接文件）通过。PLAN 移出已验证的 OB-RULE-004/OB-UI-003（原文见 [2026-10-30 计划收尾归档](plans/2026-10-30-plan-closure.md)）。
 - `real-site verified`：2026-10-30 专用 Chrome 登录态只读探针（`node test/maintenance-check.cjs --dedicated-only`，CDP 9222）：扩展刷新到 `0.63.2` 后四可达平台桥接全部 ready（bilibili 1/0、douyin 1/0、weibo 1/0、zhihu 2/0 attempts/rejections），真实读取 bilibili.com/page/... content=8（withIdentity 8/8）、douyin.com/jingxuan/... content=10、weibo.com/page/... content=6 users=6（withIdentity 6/6）、zhihu.com/hot/... 加载但 0 条（既有 blocked）；同轮刷新环节先捕获 `0.63.0` degraded（8 尝试 8 拒绝 ready-timeout）再捕获 `0.63.2` ready（attempts=2），修复前后直接对照。本轮本地门禁（docs governance/userscript syntax/结构回归等）全过；整体 FAILED 仅由既有分类构成——zhihu 无可探测条目 blocked、tieba/x 浏览器级 `Target.getTargets` 超时 failed（entry=null，与桥接无关），签名与 2026-10-28 基线相同。
 - 孤儿清理对真实存储的首次生效是用户浏览器加载新构建后自身 `rotate()` 的既有保留期语义（非探针写入）；真实收敛效果可用 `EventLog.status().orphanSweeps/orphanShardsDeleted` 复核，留作下一步验证。
 - 边界：测试种子全部人工合成（`p_seed1/2`、`bili:uid:10001/10002` 形态占位）；未读取/导出 Cookie；`out/` 交互实测产物（含 2026-10-29 备份导出）本轮起由 `.gitignore` `/out/` 兜底不入库。
-- 发布执行（同轮）：提交信息与 Release 说明见 `scripts/release-notes/v0.63.2-commit.txt`/`v0.63.2-release.md`；`scripts/release-0632.cjs` 创建 tag v0.63.2（指向功能提交）、推送并创建 GitHub Release，随后 curl 核对 raw master 服务 0.63.2；发布回写条目登记 SHA/URL/核对结果。提交前封存深度扫描（MCP `security_scan_start`，deep，聚焦 userscript 与桥接模板/测试）：126 项（20 high + 106 medium，全部 `other-security`），均为既有已分诊两族（userscript 按设计跨域请求告警、本地内存排序比较器误报族，见 v0.58.0 逐条分诊与 `.mimosa/security-policy.json`），无新增族；扫描器 `runStatus=inconclusive`（partial coverage），按流程 §5.3 如实记 inconclusive；scanId `scan-2026-10-29T19-45-12.394Z-7a3d2c8d24dc`，seal `sha256:5db98c93…`。
+- 发布执行（同轮，已完成）：功能提交 `5af465021a465ff071c588f22ac28536b2f46f99`（提交信息见 `scripts/release-notes/v0.63.2-commit.txt`），发布脚本 `scripts/release-0632.cjs`（工具性修复提交 `9df2370`/`5155f82`：maxBuffer 与 gh release view not-found 处理）创建附注 tag `v0.63.2` 指向功能提交并推送，GitHub Release [v0.63.2](https://github.com/a2787/ub-utils/releases/tag/v0.63.2) 已创建（说明见 `scripts/release-notes/v0.63.2-release.md`）；raw 核对通过（第 1 次尝试）：[raw master](https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js) 已服务 `@version 0.63.2` / 构建 `0.63.2-bridge-chunked-ready`。提交前封存深度扫描（MCP `security_scan_start`，deep）：126 项（20 high + 106 medium，全部 `other-security`），均为既有已分诊两族（userscript 按设计跨域请求告警、本地内存排序比较器误报族，见 v0.58.0 逐条分诊与 `.mimosa/security-policy.json`），无新增族；扫描器 `runStatus=inconclusive`（partial coverage），按流程 §5.3 如实记 inconclusive；scanId `scan-2026-10-29T19-45-12.394Z-7a3d2c8d24dc`，seal `sha256:5db98c93…`。
 
 ## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为，摘要）
 
@@ -134,7 +134,7 @@
 
 ## 下一项最有价值的验证
 
-v0.63.2 合并发布进行中（见 2026-10-30 条目）。下一项最有价值的验证：发布完成后用修好的桥接做
+v0.63.2 已公开发布（见 2026-10-30 条目）。下一项最有价值的验证：用修好的桥接做
 登录态只读复测（`node test/dev-browser.cjs sync` 后 `node test/maintenance-check.cjs --dedicated-only`
 应达 ready、不再 degraded），并核对孤儿分片真实收敛（`EventLog.status().orphanSweeps/orphanShardsDeleted`
 与白名单总字符应从 ≈9.1M 回落）；tieba/x `Target.getTargets`

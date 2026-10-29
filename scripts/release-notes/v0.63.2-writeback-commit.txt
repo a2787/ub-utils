@@ -1,0 +1,14 @@
+docs(release): write back v0.63.2 published state
+
+v0.63.2 (merged data-safety fix + bridge root-cause fix) is now public:
+annotated tag v0.63.2 -> feature commit 5af4650, GitHub Release created
+with evidence split into real-site verified / structure regression /
+blocked, and the raw update URL verified serving @version 0.63.2 /
+build 0.63.2-bridge-chunked-ready on the first check. CURRENT's version
+block and the 2026-10-30 entry record the commit/tag/Release/raw
+results and the pre-commit sealed deep scan (126 findings, all within
+the two triaged baseline families; scanner runStatus inconclusive,
+recorded as such); changelog/INDEX/knowledge-tree flip the release
+status to published; docs-only commit, does not move the feature tag.
+
+- no userscript changes; docs governance and diff checks pass
