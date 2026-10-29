@@ -1,0 +1,11 @@
+chore(release): treat gh release view not-found as absent in release-0632
+
+`gh release view <tag>` exits non-zero with "release not found" when the
+release does not exist yet; the release-existence probe used the throwing
+sh() wrapper and crashed the script after tag creation/push. Route the
+probe through trySh (empty string = absent), matching the idempotent
+finish-autonomous-releases pattern.
+
+- no userscript/test/doc behavior changes; tooling only
+- queued during the v0.63.2 release round; local tag v0.63.2 already
+  points at the feature commit 5af4650 and awaits push + Release

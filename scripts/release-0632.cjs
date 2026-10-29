@@ -77,7 +77,7 @@ else {
 }
 
 // 4. GitHub Release
-const existingRelease = DRY ? '' : sh('gh', ['release', 'view', TAG, '--repo', 'a2787/ub-utils', '--json', 'tagName', '-q', '.tagName']).trim();
+const existingRelease = DRY ? '' : trySh('gh', ['release', 'view', TAG, '--repo', 'a2787/ub-utils', '--json', 'tagName', '-q', '.tagName']).trim();
 if (existingRelease === TAG) {
   console.log('Release 已存在，跳过创建');
 } else if (DRY) {
