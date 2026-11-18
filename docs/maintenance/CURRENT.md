@@ -5,19 +5,22 @@
 
 ## 当前版本
 
-- 当前 userscript：`0.63.4`（本地候选，尚未公开发布，桌面控制坞入口可见性修复；公开版仍为 0.63.3）
-- 构建：`0.63.4-dock-visible`
+- 当前 userscript：`0.63.4`（本地候选，尚未公开发布，三项可发现性改进合并单一候选；公开版仍为 0.63.3）
+- 构建：`0.63.4-discovery-fixes`
 - 当前公开版本：`0.63.3`（最近公开发布），公开功能提交 `f6fb3cd7e078989f63be960646f791f699bb319c`
-- 最近验证的源码快照：`695366b21fb6b64929d8bf6dfd2bf6a0d4ac5cc1`（当前 HEAD，入口可见性修复提交）
-- 当前候选源码 SHA-256：`1db150709d7924e4cfd84cf8ef9fc8d99ec6c9145b794ef5b4c30c5c22d63c21`（当前工作区 userscript 快照，2026-11-19 核对一致）
+- 最近验证的源码快照：`607d04faf68c6077429081f0dec17f83968ef11e`（当前 HEAD，0.63.4 三项可发现性改进提交）
+- 当前候选源码 SHA-256：`c05340aa7c74853b171a89861092b7d8426553cf8607473bbfe077738bed33be`（当前工作区 userscript 快照，2026-11-19 核对一致）
 - 发布状态：v0.63.4 为本地候选，尚未公开发布（未 push、未打 tag、未建 Release）；当前公开版本仍为 v0.63.3（tag/Release 已建、raw 已更新返回 0.63.3）；未执行平台写入。
 - 当前公开 tag/Release：[v0.63.3](https://github.com/a2787/ub-utils/releases/tag/v0.63.3)。
 
-## 2026-11-19 v0.63.4 桌面控制坞设置入口可见性修复（本地候选，未公开发布）
+## 2026-11-19 v0.63.4 三项可发现性改进（本地候选，未公开发布）
 
-- 根因：桌面端控制坞（FloatingDock）收起态下，设置齿轮 `#ob-gear` 被 CSS `transform: translateX(32px)` 推出可视边缘只露一条边，且产品内无首次引导；2026-11-18 B站/微博/知乎/贴吧四平台桌面实测截图全部看不到齿轮，仅靠 DOM 中 `aria-label="打开 OmniBlock 设置"` 确认其存在。
-- 修复：`#ob-gear` 收起态改为 `transform: translateX(0); opacity: .55`（常驻可见但刻意低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其余不变——其他工具按钮仍悬停展开、1800ms 自动收起保留、触控端（本就常驻展开）完全未动。
-- `structure regression`：`test/run.cjs` 20/20（E4 控制坞用例通过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7；computed style 实测收起态 0.55 / 展开态 1 / 触控态 1。本轮无真实站点验证（仅本地夹具验证），亦未公开发布（未 push/tag/Release；当前公开版本仍为 v0.63.3）。详见 [v0.63.4 完整条目](../changelog/v0.63.4.md)。
+三项同属可发现性改进，合并为 0.63.4 单一未发布候选：
+
+- 控制坞收起态齿轮常驻可见：桌面端控制坞（FloatingDock）收起态下设置齿轮 `#ob-gear` 原被 `transform: translateX(32px)` 推出可视边缘只露一条边（2026-11-18 B站/微博/知乎/贴吧四平台桌面实测截图全部看不到，仅靠 DOM `aria-label="打开 OmniBlock 设置"` 确认存在）。改为 `transform: translateX(0); opacity: .55`（常驻可见但刻意低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其余不变——其他工具按钮仍悬停展开、1800ms 自动收起保留、触控端完全未动。
+- 设置面板「规则」分组填实：该分组原本只有两段指路文字、零控件，用户按导航点进去扑空。现加入 B站/抖音规则管理两个按钮（`#ob-rules-bili` / `#ob-rules-douyin`），复用 `openKeywordManager`；分组 1 原按钮保留（`test/rule-manager.cjs:171-172` 依赖 `#ob-open-rules-*` 选择器）。该函数用硬编码 adapter，不读当前平台——实测在微博页点击也能打开对应平台管理界面。
+- 首次访问一次性提示：新用户首次在某站点挂载后，齿轮左侧显示两行浮条「OmniBlock 已启用 / 本地内容屏蔽工具，点右下角 ⚙ 设置」，可点 × 关闭。标志位存独立键 `omniblock:ui-hint:v1`，直走 `GM_getValue`/`GM_setValue`，不经 Store/persist/键白名单（避开 v0.63.3 数据层闸门最敏感路径的高频写）；读失败按"没提示过"处理；降级态可显示但零写入（以 HEAD 基线对照 `writesByKey` 证实）；点齿轮也算已知入口。
+- `structure regression`：完整 24 脚本矩阵 23 通过——`test/run.cjs` 20/20（E/E2/E3/E4/E5 全过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7、`test/adapters.cjs` 28/28、`test/quickblock.cjs` 38/38、`test/degraded-storage.cjs` 15/15（确认存储层未被 UI 改动影响）。本轮无真实站点验证（仅本地夹具），亦未公开发布（未 push/tag/Release；当前公开版本仍为 v0.63.3）。详见 [v0.63.4 完整条目](../changelog/v0.63.4.md)。
 
 ## 2026-11-18 v0.63.3 数据层空态覆盖拒绝（已公开发布）
 

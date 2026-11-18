@@ -2,13 +2,17 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.63.4 - 桌面控制坞设置入口可见性修复 - 2026-11-19（本地候选，未公开发布；结构回归，未做真实站点验证）
+## v0.63.4 - 三项可发现性改进 - 2026-11-19（本地候选，未公开发布；结构回归，未做真实站点验证）
 
 本地候选，未 push、未打 tag、未建 Release；当前公开版本仍为 v0.63.3，公开安装地址未提供本修复。
 
-桌面端控制坞（FloatingDock）收起态下，设置齿轮 `#ob-gear` 被 `transform: translateX(32px)` 推出可视边缘只露一条边，且产品内无首次引导；2026-11-18 四平台桌面截图全部看不到齿轮，仅靠 DOM 的 `aria-label="打开 OmniBlock 设置"` 确认其存在。本轮改为 `transform: translateX(0); opacity: .55`（常驻可见但低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其他按钮悬停展开、1800ms 自动收起与触控端均不变。
+三项同属"让已有功能能被用户找到"的可发现性改进，合并为 0.63.4 单一未发布候选：
 
-`structure regression`：`test/run.cjs` 20/20（E4 控制坞用例通过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7；computed style 收起态 0.55 / 展开态 1 / 触控态 1。仅本地夹具验证，未做真实站点验证。详细变更、证据和边界：[v0.63.4 完整条目](docs/changelog/v0.63.4.md)。
+- 控制坞收起态齿轮常驻可见：桌面端控制坞（FloatingDock）收起态下设置齿轮 `#ob-gear` 被 `transform: translateX(32px)` 推出可视边缘只露一条边，且产品内无首次引导；2026-11-18 四平台桌面截图全部看不到齿轮，仅靠 DOM 的 `aria-label="打开 OmniBlock 设置"` 确认其存在。改为 `transform: translateX(0); opacity: .55`（常驻可见但低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其他按钮悬停展开、1800ms 自动收起与触控端均不变。
+- 设置面板「规则」分组填实：该分组原本只有两段指路文字、零控件，按导航点进去扑空；现加入 B站/抖音规则管理两个按钮（`#ob-rules-bili` / `#ob-rules-douyin`），复用 `openKeywordManager`；分组 1 原按钮保留。该函数用硬编码 adapter、不读当前平台，实测在微博页点击也能打开对应平台管理界面。
+- 首次访问一次性提示：新用户首次在某站点挂载后，齿轮左侧显示两行浮条「OmniBlock 已启用 / 本地内容屏蔽工具，点右下角 ⚙ 设置」，可点 × 关闭。标志位存独立键 `omniblock:ui-hint:v1`，直走 `GM_getValue`/`GM_setValue`，不经 Store/persist/键白名单；读失败按未提示处理，降级态可显示但零写入，点齿轮也算已知入口。
+
+`structure regression`：完整 24 脚本矩阵 23 通过——`test/run.cjs` 20/20（E/E2/E3/E4/E5 全过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7、`test/adapters.cjs` 28/28、`test/quickblock.cjs` 38/38、`test/degraded-storage.cjs` 15/15；computed style 收起态 0.55 / 展开态 1 / 触控态 1。仅本地夹具验证，未做真实站点验证。详细变更、证据和边界：[v0.63.4 完整条目](docs/changelog/v0.63.4.md)。
 
 ## v0.63.3 - 存储空态防护加固 - 2026-11-18（已公开发布）
 
