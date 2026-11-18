@@ -2,7 +2,9 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
-## v0.63.3 - 存储空态防护加固 - 2026-11-18（本地候选，未公开发布；结构回归，未做真实站点验证）
+## v0.63.3 - 存储空态防护加固 - 2026-11-18（已公开发布）
+
+GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.3](https://github.com/a2787/ub-utils/releases/tag/v0.63.3)。
 
 承接 v0.63.2 的 degraded 只读降级，为 `persist()` 补上数据层空值校验：`countIdentityKeys`/`isDefaultState`
 判定 + `EXPLICIT_EMPTY_REASONS` 白名单 + `lastPersistedIdentityCount` 基线跟踪 + `emptyOverwriteRefusals`
