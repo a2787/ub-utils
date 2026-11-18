@@ -1,19 +1,28 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-10-30
-状态来源：v0.63.2（OB-STORE-001 degraded 存储只读降级 + OB-BRIDGE-001 桥接就绪快照分块与事件日志孤儿清理，两项合并单一发布）为本轮发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+更新时间：2026-11-18
+状态来源：v0.63.2（OB-STORE-001 degraded 存储只读降级 + OB-BRIDGE-001 桥接就绪快照分块与事件日志孤儿清理，两项合并单一发布）为最近公开发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 > 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 对象库与 `refs/` 丢失（工作区无损失），经用户同意从远端重建，v0.55.0~v0.57.2 全部 tag 恢复；唯一无法恢复的未推送提交 `c025d8b`（v0.57.3）的代码内容已随提交 `b83003a` 落库。细节见当时交接与 [v0.57.3 条目](../changelog/v0.57.3.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.63.2`（已公开发布：degraded 存储只读降级 + 桥接就绪快照分块，两项合并发布）
-- 构建：`0.63.2-bridge-chunked-ready`
-- 当前公开版本/功能提交：`0.63.2` / `5af465021a465ff071c588f22ac28536b2f46f99`
-- 最近验证的源码快照：`5af465021a465ff071c588f22ac28536b2f46f99`（v0.63.2 功能提交）
-- 当前候选源码 SHA-256：`d2bf5c0a7f3650b58a2e98dfe305ce72e0a674118bd1c305d619d4671682cf28`（v0.63.2 功能提交内 userscript 快照，2026-10-30 复核一致）
-- 发布状态：v0.63.2 已公开发布（tag/Release/raw 详情见下方发布执行条目）；未执行平台写入。
+- 当前 userscript：`0.63.3`（工作版本/候选，数据层空态覆盖拒绝；尚未公开发布，公开版仍为 0.63.2）
+- 构建：`0.63.3-empty-state-guard`
+- 当前公开版本：`0.63.2`（最近公开发布），公开功能提交 `5af465021a465ff071c588f22ac28536b2f46f99`
+- 最近验证的源码快照：`f6fb3cd7e078989f63be960646f791f699bb319c`（当前 HEAD，v0.63.3 空态覆盖拒绝修复提交）
+- 当前候选源码 SHA-256：`52a0401782209e24deaa57fd73e3ccaf67861a18dc6980c9f5e908fa60b30b71`（当前工作区 userscript 快照，2026-11-18 核对一致）
+- 发布状态：v0.63.3 尚未公开发布（未建 tag/Release、raw 未更新）；当前公开版 v0.63.2，未执行平台写入。
 - 当前公开 tag/Release：[v0.63.2](https://github.com/a2787/ub-utils/releases/tag/v0.63.2)。
+
+## 2026-11-18 v0.63.3 数据层空态覆盖拒绝（未发布候选）
+
+- 改动：`Store.persist()` 新增数据层空态覆盖拒绝——内存身份键数归零、上次成功落盘仍有真实名单时，除 5 类显式动作（`remove-person`/`remove-identities`/`import`/`restore`/`undo-identity-link`）外一律拒写；新增 `countIdentityKeys`、`isDefaultState`、`EXPLICIT_EMPTY_REASONS` 白名单、`lastPersistedIdentityCount` 基线、`emptyOverwriteRefusals` 指标。补 v0.63.2 缺口：其 degraded 闸门为一次性布尔、永不重算，"桥接健康+内存空态"仍可能覆盖真实名单。
+- `structure regression`：`test/degraded-storage.cjs` 新增 C-1/C-2a/C-2b/C-3/C-2c，15/15（C-1 唯一旧代码必失败（旧代码把磁盘 2 个身份清成 0）；C-2c 在无闸门旧代码上靠 `undefined===undefined` 通过，锁定"闸门已加、undo 回调漏配白名单 reason"半成品态，防本轮不完整实现误伤合法撤销，均留证）；`test/run.cjs` 20/20；`node --check`、`git diff --check` 通过。**本轮无真实站点验证**。
+- 限制：未改 degraded 状态机；纯 Tampermonkey 路径仍无层 2 兜底；新拒绝计入 `persistMetrics.failures` 并置 `lastOk=false`，面板通用写入失败提示覆盖该错误码（未定制文案）；其余 8 个测试脚本 pageerror 判定仍未修。
+- 已知限制（有意取舍）：`sync-merge` 的 reason 不在白名单，远端下发空名单（他设备删光所有人）时本机拒写，合法跨设备清空无法经同步完成；宁可拦一次合法清空也不许空态覆盖真实名单（被拦可本机手动删除补回，被覆盖不可恢复）。账户级加密同步尚无真实站点验证（OB-SYNC-001 三项验收为空），该取舍当前无线上影响。
+- 工作区状态：本轮回写时仍有未提交文档改动（README/CHANGELOG/MAINTENANCE/PLAN/INDEX/HISTORY_INDEX 六改 + 两新增），非干净。
+- 门禁变化（AGENTS.md:97-99 要求，该文件仅余 312 字节按冲突记此）：`docs-check.cjs` 删恒假"工作区干净"检查，新增 README 公开版本不得超前于 `@version`、PLAN 活动区不得残留 `status: verified` 两条（README 声明找不到时报错而非静默跳过，防措辞漂移使检查失效）；`run.cjs` 退出码由"只看断言"改为"断言+pageErrors+console.error"，FAILED 打印 FAIL CATEGORY。
 
 ## 2026-10-30 v0.63.2 合并发布：degraded 存储只读降级（OB-STORE-001，数据安全）+ 桥接就绪快照分块与孤儿清理（OB-BRIDGE-001）
 

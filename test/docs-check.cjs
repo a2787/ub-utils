@@ -156,7 +156,9 @@ validatePlan(plan);
 const readme = exists('README.md') ? read('README.md') : '';
 const readmeVersionMatch = readme.match(/当前公开版本为[ \t]*v?(\d+\.\d+\.\d+)/);
 if (!readmeVersionMatch) {
-  console.log('SKIP: README 未声明公开版本');
+  // 2026-11-18 由独立验证发现：此处若只 SKIP，措辞漂移（如"公开版本为"/"当前公开的版本为"）
+  // 会让检查失效且门禁照样全绿，属于无信号的假绿。因此改为明确失败。
+  errors.push('README.md 未找到"当前公开版本为 vX.Y.Z"声明（正则要求该措辞）：无法校验公开版本是否超前；请恢复该措辞或同步更新 test/docs-check.cjs 的正则');
 } else {
   const declaredParts = readmeVersionMatch[1].split('.').map(Number);
   const sourceParts = version.split('.').map(Number);
