@@ -85,10 +85,11 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
 </body></html>`;
 
 (async () => {
-  const report = { pass: [], fail: [], errors: [] };
+  const report = { pass: [], fail: [], errors: [], pageErrors: [] };
   const browser = await launchChromium({ headless:true, args:['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
   try {
     const bili = await browser.newPage();
+    bili.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await bili.route('**/*', (route) => {
       if (/\/dm\/(?:wbi\/)?web\/seg\.so/.test(route.request().url())) {
         return route.fulfill({ status:200, contentType:'application/octet-stream', body:AUTO_SEGMENT });
@@ -233,6 +234,7 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
     await bili.close();
 
     const douyin = await browser.newPage();
+    douyin.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await douyin.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:DOUYIN_FIXTURE }));
     await douyin.addInitScript({ content:DOUYIN_SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT });
     await douyin.goto('https://www.douyin.com/video/auto', { waitUntil:'domcontentloaded' });
@@ -509,5 +511,12 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
   console.log('PASS:', report.pass.length); report.pass.forEach((line) => console.log('  PASS', line));
   console.log('FAIL:', report.fail.length); report.fail.forEach((line) => console.log('  FAIL', line));
   console.log('ERRORS:', report.errors.length); report.errors.forEach((line) => console.log('  ', line));
-  process.exit(report.fail.length || report.errors.length ? 1 : 0);
+  // 退出判定：断言失败 + 外层异常 + 页面未捕获异常，任一命中即失败（不纳入 console.error）。
+  const ok = report.fail.length === 0 && report.errors.length === 0 && report.pageErrors.length === 0;
+  const failCategories = [];
+  if (report.fail.length > 0) failCategories.push('断言失败 ' + report.fail.length + ' 项');
+  if (report.errors.length > 0) failCategories.push('外层异常 ' + report.errors.length + ' 项');
+  if (report.pageErrors.length > 0) failCategories.push('页面异常 ' + report.pageErrors.length + ' 项');
+  if (!ok) console.log('FAIL CATEGORY: ' + failCategories.join(' + '));
+  process.exit(ok ? 0 : 1);
 })().catch((error) => { console.error('HARNESS ERROR:', error); process.exit(2); });

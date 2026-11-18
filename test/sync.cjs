@@ -27,7 +27,8 @@ function fetchWithBase(base) {
 (async () => {
   const server = createMockSyncServer();
   let base = '';
-  const report = { pass: [], fail: [] };
+  // 纯 Node 协议测试，无浏览器页面；pageErrors 恒为 0，保留字段以统一门禁格式。
+  const report = { pass: [], fail: [], pageErrors: [] };
   try {
     base = await server.start();
     const username = 'synthetic-sync-user';
@@ -110,7 +111,12 @@ function fetchWithBase(base) {
   console.log('SERVER: local in-process mock; DATA: artificial only');
   console.log('PASS:', report.pass.length); report.pass.forEach((item) => console.log('  ✅', item));
   console.log('FAIL:', report.fail.length); report.fail.forEach((item) => console.log('  ❌', item));
-  const ok = report.fail.length === 0;
+  // 退出判定：断言失败 + 页面未捕获异常，任一命中即失败（本脚本无浏览器，pageErrors 恒为 0）。
+  const ok = report.fail.length === 0 && report.pageErrors.length === 0;
+  const failCategories = [];
+  if (report.fail.length > 0) failCategories.push('断言失败 ' + report.fail.length + ' 项');
+  if (report.pageErrors.length > 0) failCategories.push('页面异常 ' + report.pageErrors.length + ' 项');
+  if (!ok) console.log('FAIL CATEGORY: ' + failCategories.join(' + '));
   console.log(ok ? '\nRESULT: STRUCTURE REGRESSION PASSED' : '\nRESULT: STRUCTURE REGRESSION FAILED');
   process.exit(ok ? 0 : 1);
 })().catch((error) => { console.error('HARNESS ERROR:', error); process.exit(2); });

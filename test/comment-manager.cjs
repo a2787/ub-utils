@@ -69,9 +69,10 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
 
 (async () => {
   const browser = await launchChromium();
-  const report = { pass: [], fail: [] };
+  const report = { pass: [], fail: [], pageErrors: [] };
   try {
     const bili = await browser.newPage();
+    bili.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await bili.route('**/x/v2/reply/**', (route) => {
       const url = route.request().url();
       const body = url.includes('/reply?')
@@ -204,6 +205,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
     await bili.close();
 
     const douyin = await browser.newPage();
+    douyin.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await douyin.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:douyinFixture }));
     await douyin.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + source });
     await douyin.goto('https://www.douyin.com/video/fixture-manager', { waitUntil:'domcontentloaded' });
@@ -252,6 +254,7 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
     await douyin.close();
 
     const weibo = await browser.newPage();
+    weibo.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await weibo.route('**/*', (route) => route.fulfill({ status:200, contentType:'text/html; charset=utf-8', body:weiboFixture }));
     await weibo.addInitScript({ content: shim + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + source });
     await weibo.goto('https://weibo.com/fixture-post#comment', { waitUntil:'domcontentloaded' });
@@ -312,5 +315,11 @@ function check(ok, pass, fail, report) { if (ok) report.pass.push(pass); else re
   for (const item of report.pass) console.log('  PASS', item);
   console.log('FAIL:', report.fail.length);
   for (const item of report.fail) console.log('  FAIL', item);
-  if (report.fail.length) process.exitCode = 1;
+  // 退出判定：断言失败 + 页面未捕获异常，任一命中即失败（不纳入 console.error）。
+  const ok = report.fail.length === 0 && report.pageErrors.length === 0;
+  const failCategories = [];
+  if (report.fail.length > 0) failCategories.push('断言失败 ' + report.fail.length + ' 项');
+  if (report.pageErrors.length > 0) failCategories.push('页面异常 ' + report.pageErrors.length + ' 项');
+  if (!ok) console.log('FAIL CATEGORY: ' + failCategories.join(' + '));
+  process.exitCode = ok ? 0 : 1;
 })().catch((error) => { console.error(error); process.exitCode = 1; });

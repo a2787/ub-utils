@@ -74,7 +74,7 @@ function resetDiagnostics(page) {
 }
 
 (async () => {
-  const report = { pass: [], fail: [], errors: [] };
+  const report = { pass: [], fail: [], errors: [], pageErrors: [] };
   if (/setTimeout\s*\(\s*mount(?:Fab|Gear)\b/.test(USERSCRIPT)) {
     report.fail.push('启动入口仍使用 body 轮询定时器');
   } else {
@@ -88,6 +88,7 @@ function resetDiagnostics(page) {
   const browser = await launchChromium({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] });
   try {
     const page = await browser.newPage();
+    page.on('pageerror', (error) => report.pageErrors.push(String(error)));
     await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: FIXTURE }));
     await page.addInitScript({ content: SHIM + '\n' + '\nwindow.__OB_TEST_HOOKS__="omniblock-test-only";\n' + USERSCRIPT });
     await page.goto('https://www.douyin.com/video/performance-fixture', { waitUntil: 'domcontentloaded' });
@@ -307,5 +308,12 @@ function resetDiagnostics(page) {
   console.log('PASS:', report.pass.length); report.pass.forEach((line) => console.log('  PASS', line));
   console.log('FAIL:', report.fail.length); report.fail.forEach((line) => console.log('  FAIL', line));
   console.log('ERRORS:', report.errors.length); report.errors.forEach((line) => console.log('  ', line));
-  process.exit(report.fail.length || report.errors.length ? 1 : 0);
+  // 退出判定：断言失败 + 外层异常 + 页面未捕获异常，任一命中即失败（不纳入 console.error）。
+  const ok = report.fail.length === 0 && report.errors.length === 0 && report.pageErrors.length === 0;
+  const failCategories = [];
+  if (report.fail.length > 0) failCategories.push('断言失败 ' + report.fail.length + ' 项');
+  if (report.errors.length > 0) failCategories.push('外层异常 ' + report.errors.length + ' 项');
+  if (report.pageErrors.length > 0) failCategories.push('页面异常 ' + report.pageErrors.length + ' 项');
+  if (!ok) console.log('FAIL CATEGORY: ' + failCategories.join(' + '));
+  process.exit(ok ? 0 : 1);
 })().catch((error) => { console.error('HARNESS ERROR:', error); process.exit(2); });
