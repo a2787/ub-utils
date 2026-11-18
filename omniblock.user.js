@@ -21811,7 +21811,8 @@
 
         <section class="ob-group" id="ob-group-rules">
           <h3>规则</h3>
-          <p class="ob-settings-ai-note">关键词与正则规则（B站/抖音）在「内容屏蔽」弹窗的「关键词屏蔽」标签管理：就地编辑、逐条备注、命中计数、导入导出和跨平台作用域都在那里；也可以用「屏蔽与名单」分组里的「B站规则管理」「抖音规则管理」按钮在任意页面打开同一个界面。规则命中可靠身份后直接写入本地名单，不消耗 AI token；规则自动写入不属于人工确认操作，因此不出现在「最近本地屏蔽操作」里，可在规则例外中恢复。</p>
+          <p class="ob-settings-ai-note">在这里分别管理 B站 和抖音的关键词屏蔽、正则屏蔽规则，按平台分开维护；命中规则的内容会被自动隐藏，只保存在本机。点下面的按钮即可打开管理界面，支持编辑、备注、命中计数和导入导出。</p>
+          <div class="ob-keyword-entry"><button id="ob-rules-bili" type="button">B站规则管理</button><button id="ob-rules-douyin" type="button">抖音规则管理</button></div>
         </section>
 
         <section class="ob-group" id="ob-group-backup">
@@ -21946,6 +21947,10 @@
     const rulesDouyinButton = panel.querySelector('#ob-open-rules-douyin');
     if (rulesBiliButton) rulesBiliButton.onclick = () => openKeywordManager('bili');
     if (rulesDouyinButton) rulesDouyinButton.onclick = () => openKeywordManager('douyin');
+    const groupRulesBiliButton = panel.querySelector('#ob-rules-bili');
+    const groupRulesDouyinButton = panel.querySelector('#ob-rules-douyin');
+    if (groupRulesBiliButton) groupRulesBiliButton.onclick = () => openKeywordManager('bili');
+    if (groupRulesDouyinButton) groupRulesDouyinButton.onclick = () => openKeywordManager('douyin');
 
     function renderLogMap(map) {
       return Object.keys(map || {}).sort().map((key) => key + '=' + map[key]).join('，') || '无';
