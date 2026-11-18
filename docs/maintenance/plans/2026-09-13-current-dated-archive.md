@@ -82,8 +82,8 @@
   `omniblock.user.js`，验证脚本/文档差异与工作区状态须以 `git status --short` 实时核对；`git fsck` 无错误。
   `node --check omniblock.user.js` 通过，`node test/docs-check.cjs` 与 `git diff --check` 均通过。v0.57.4 已推送到
   `origin/master`，`v0.57.4` tag 与 GitHub Release 已创建；本仓库没有登记的插件生产部署链，未执行平台写入。
-- 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](PLAN.md)；旧日期条目已移至
-  [移出存档](plans/2026-09-13-current-dated-archive.md)。
+- 计划收尾：OB-CTX-001 已转 verified，证据与验收见 [PLAN.md](../PLAN.md)；旧日期条目已移至
+  [移出存档](2026-09-13-current-dated-archive.md)。
 
 ## 2026-09-10 作品语境感知的 AI 屏蔽与紧凑协议收口（OB-AI-014，v0.56.0，已发布）
 
@@ -91,7 +91,7 @@
 - `structure regression`：上下文契约 CTX-1..9 与受影响 AI/平台/通用/性能回归通过；评测输入增长 `16.95%`、聚合 p95 比值 `1.0014`。
 - `real-site verified`：2026-09-10，匿名隔离只读会话，脱敏页面形式 `bilibili.com/video/...`；动态页 99 条记录全部带作品语境；AI mock 确认 2 条弹幕候选只入当前作品作用域，平台写入 0 次；字幕/音频/画面语义保持 `blocked`（远期预留封存）。
 - `blocked`：真实内容长期精度无标注集证据；根评论分页仍可能 partial。
-- 发布状态：功能提交 `3f94c1bb` 已推送，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。详细设计与数据见 [实施方案](plans/2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../changelog/v0.56.0.md)。
+- 发布状态：功能提交 `3f94c1bb` 已推送，`v0.56.0` tag 与 [GitHub Release](https://github.com/a2787/ub-utils/releases/tag/v0.56.0) 已创建。详细设计与数据见 [实施方案](2026-09-10-ob-ai-014.md) 与 [v0.56.0 changelog](../../changelog/v0.56.0.md)。
 
 ## 2026-09-11 Tampermonkey 移动端适配、API 直连与账户同步（OB-TM-001，v0.57.1 已发布，平板线 2026-09-12 封存）
 
@@ -104,7 +104,7 @@
 - 发布状态：v0.57.1 已发布（tag/Release 在 GitHub）；当前 Latest 已由 v0.57.2 接替；未执行平台写入。
 - 触控入口手势：入口常驻可见 + 齿轮单次点按进设置；旧两段式手势在触控端 dock 挂载即 expanded，不可满足，已退休。
 - 平板 561px+ 触控宽度下紧凑按钮被组件级 min-height 压回 26–34px 的缺陷已在 v0.57.1 内修复（coarse-pointer 组件规则后置覆盖恢复 44px）。
-- 计划收尾：2026-09-11 关闭 11 个积压项，2026-09-12 重新启用并完成 OB-RULE-001；终态见 [收尾归档](plans/2026-09-11-plan-closure.md)。
+- 计划收尾：2026-09-11 关闭 11 个积压项，2026-09-12 重新启用并完成 OB-RULE-001；终态见 [收尾归档](2026-09-11-plan-closure.md)。
 
 ## 2026-09-11 东京独立同步服务首次部署（OB-SYNC-001，deferred，随平板线封存）
 
@@ -113,7 +113,7 @@
 - `real-site verified`：2026-09-11，东京机本地 `/healthz` 与独立 HTTPS Quick Tunnel `/healthz` 均返回 200；部署源码与本地 SHA-256 一致。
 - `blocked`：真实账户注册/登录、第一台写入、第二台解密合并与墓碑读回未执行；稳定 HTTPS 域名未配置。
 - 当前限制：Quick Tunnel 重启可能换址，需两台设备同步更新；API Key、密码、同步口令、令牌和日志不进入服务端同步文档。
-- 下一步：随平板线封存；重启时按 [封存记录](plans/2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再双设备互测。
+- 下一步：随平板线封存；重启时按 [封存记录](2026-09-12-tablet-track-sealed.md) 先单设备注册/合并，再双设备互测。
 
 ## 2026-09-12 自动弹幕正则安全边界与 CI（OB-RULE-001，v0.57.2，已发布）
 

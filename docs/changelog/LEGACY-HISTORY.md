@@ -1,7 +1,7 @@
 # 更新日志
 
 本项目按版本记录安装用户可见的变化。验证证据和维护细节见
-[MAINTENANCE.md](MAINTENANCE.md)。
+[MAINTENANCE.md](../../MAINTENANCE.md)。
 
 ## v0.45.0 - 全插件性能与资源效率优化 - 2026-08-29
 

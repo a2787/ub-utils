@@ -225,7 +225,31 @@ function checkMarkdownLinks(relative, content) {
   }
 }
 
-for (const [relative] of activeDocs) {
+// 历史归档区（plans/ 与 changelog/）是知识树/历史索引把 AI 路由过去追溯历史的入口：
+// 归档内的断链会让历史追溯断在这里。它们不占活动文档的体积预算，但链接可用性必须
+// 与活动文档同等受门禁保护。这里只按目录列 .md 文件，不做递归全仓扫描（避免误扫
+// node_modules 等噪声，也保持"只检查维护文档"的定位）；目录不存在或不可读则静默跳过。
+function listMarkdownInDir(relativeDir) {
+  const absDir = path.join(ROOT, relativeDir);
+  if (!fs.existsSync(absDir)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
+  } catch (error) {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+    .map((entry) => `${relativeDir}/${entry.name}`);
+}
+
+const archiveDocs = [
+  ...listMarkdownInDir('docs/maintenance/plans'),
+  ...listMarkdownInDir('docs/changelog'),
+];
+
+const linkCheckedDocs = [...activeDocs.map(([relative]) => relative), ...archiveDocs];
+for (const relative of linkCheckedDocs) {
   if (exists(relative) && relative.toLowerCase().endsWith('.md')) checkMarkdownLinks(relative, read(relative));
 }
 
