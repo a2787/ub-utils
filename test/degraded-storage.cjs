@@ -282,6 +282,146 @@ function isoDay(offsetDays) {
       finalDigest.dataSha === baseline.dataSha && finalDigest.backupSha === baseline.backupSha
       && finalDigest.dataPersons === 2,
       { baseline, final: finalDigest });
+
+    // ================= Phase C（空态覆盖拒绝：状态 + 数据双校验） =================
+    // 不再依赖 degraded：桥接 ready（状态闸门放行）+ 内存被置为默认空态 +
+    // 磁盘已有 2 个真实身份，正是旧代码用空态覆盖主名单的物理路径。
+    async function readStoredPersons() {
+      const worker = await getSw();
+      return worker.evaluate(async () => {
+        const raw = String((await chrome.storage.local.get('omniblock:data:v1'))['omniblock:data:v1'] || '');
+        try {
+          const parsed = JSON.parse(raw);
+          return {
+            persons: Object.keys(parsed.persons || {}).length,
+            labels: Object.values(parsed.persons || {}).map((person) => person.label).sort(),
+          };
+        } catch (error) {
+          return { persons: -1, labels: [] };
+        }
+      });
+    }
+    async function openReadyPage(tag) {
+      const readyPage = await context.newPage();
+      readyPage.on('pageerror', (error) => report.pageErrors.push(tag + ': ' + String(error)));
+      await readyPage.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
+      await readyPage.waitForFunction(() => !!window.OB && !!window.__OB_EXTENSION_RUNTIME__
+        && window.__OB_EXTENSION_RUNTIME__.bridge
+        && window.__OB_EXTENSION_RUNTIME__.bridge.state === 'ready', null, { timeout: 30000 });
+      await sleep(300);
+      return readyPage;
+    }
+
+    // C-1：非清空白名单动作不得用空态覆盖已有真实名单（旧行为上失败）。
+    await seedCoreStorage(await getSw());
+    const c1Page = await openReadyPage('C-1');
+    const c1Result = await c1Page.evaluate(() => {
+      const before = Object.keys(window.OB.Store.persons()).length;
+      const sync = window.OB.Store.applySyncState({ persons: {}, settings: {} });
+      const settingOk = window.OB.Store.setSetting('skipCap', 21);
+      const status = window.OB.Store.storageStatus();
+      return {
+        before,
+        syncPersisted: sync.persisted,
+        syncError: sync.persistError,
+        settingOk,
+        refusals: status.persist.emptyOverwriteRefusals,
+        lastError: status.persist.lastError,
+      };
+    });
+    await sleep(300);
+    const c1Stored = await readStoredPersons();
+    expect('C-1', '内存默认空态 + 磁盘已有 2 身份：sync-merge/setSetting 不得用空态覆盖主名单',
+      c1Result.before === 2 && c1Result.syncPersisted === false
+      && c1Result.syncError === 'storage-empty-overwrite-refused'
+      && c1Result.settingOk === false && c1Result.refusals >= 2
+      && c1Result.lastError === 'storage-empty-overwrite-refused'
+      && c1Stored.persons === 2 && c1Stored.labels.join(',') === '合成名单A,合成名单B',
+      { c1Result, c1Stored });
+    await c1Page.close();
+
+    // C-2a/C-2b：显式删除到最后一人/最后一批身份必须合法落盘，不能拦住用户真实操作。
+    await seedCoreStorage(await getSw());
+    const c2Page = await openReadyPage('C-2a');
+    const c2Result = await c2Page.evaluate(() => {
+      const first = window.OB.Store.removePerson('p_seed1');
+      const second = window.OB.Store.removePerson('p_seed2');
+      const after = Object.keys(window.OB.Store.persons()).length;
+      return { first, second, after };
+    });
+    await sleep(300);
+    const c2Stored = await readStoredPersons();
+    expect('C-2a', 'removePerson 删到最后一人时必须成功写入空名单',
+      c2Result.first === true && c2Result.second === true && c2Result.after === 0
+      && c2Stored.persons === 0, { c2Result, c2Stored });
+    await c2Page.close();
+
+    await seedCoreStorage(await getSw());
+    const c2bPage = await openReadyPage('C-2b');
+    const c2bResult = await c2bPage.evaluate(() => {
+      const removed = window.OB.Store.removeIdentities(['bili:uid:10001', 'bili:uid:10002']);
+      return { removed, after: Object.keys(window.OB.Store.persons()).length };
+    });
+    await sleep(300);
+    const c2bStored = await readStoredPersons();
+    expect('C-2b', 'removeIdentities 删到最后一批身份时必须成功写入空名单',
+      c2bResult.removed === 2 && c2bResult.after === 0 && c2bStored.persons === 0,
+      { c2bResult, c2bStored });
+    await c2bPage.close();
+
+    // C-3：新用户首次加载空存储，lastPersistedIdentityCount 为 0 不构成拦截条件。
+    await getSw().then((worker) => worker.evaluate(async () => {
+      await chrome.storage.local.set({ 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {} }) });
+    }));
+    const c3Page = await openReadyPage('C-3');
+    const c3Result = await c3Page.evaluate(() => {
+      const before = Object.keys(window.OB.Store.persons()).length;
+      const settingOk = window.OB.Store.setSetting('skipCap', 19);
+      const add = window.OB.Store.addIdentities(['bili:uid:70001'], '合成新用户');
+      return { before, settingOk, addPersisted: add.persisted };
+    });
+    await sleep(300);
+    const c3Stored = await readStoredPersons();
+    expect('C-3', '新用户空存储首次加载后普通写入正常，lastPersistedIdentityCount=0 不拦截',
+      c3Result.before === 0 && c3Result.settingOk === true && c3Result.addPersisted === true
+      && c3Stored.persons === 1, { c3Result, c3Stored });
+    await c3Page.close();
+
+    // C-2c：confirmIdentityLink 的 undo 撤销唯一身份关联回到空名单必须合法落盘。
+    // 前置走真实 Store API 建立 1 个合成身份（非直接内存注入）；undo 回调本身无
+    // 返回值，以 storageStatus().persist.lastOk 作为写入 ok 的等价判据。
+    await getSw().then((worker) => worker.evaluate(async () => {
+      await chrome.storage.local.set({ 'omniblock:data:v1': JSON.stringify({ version: 1, persons: {}, settings: {} }) });
+    }));
+    const c2cPage = await openReadyPage('C-2c');
+    const c2cResult = await c2cPage.evaluate(() => {
+      const Store = window.OB.Store;
+      const beforePersons = Object.keys(Store.persons()).length;
+      const link = Store.confirmIdentityLink(['bili:uid:88888'], '合成撤销验证');
+      const afterLink = Object.keys(Store.persons()).length;
+      const beforeRefusals = Store.storageStatus().persist.emptyOverwriteRefusals;
+      if (typeof link.undo === 'function') link.undo();
+      const status = Store.storageStatus();
+      return {
+        beforePersons,
+        afterLink,
+        hasUndo: typeof link.undo === 'function',
+        ok: status.persist.lastOk,
+        afterPersons: Object.keys(Store.persons()).length,
+        refusalsBefore: beforeRefusals,
+        refusalsAfter: status.persist.emptyOverwriteRefusals,
+        lastError: status.persist.lastError,
+      };
+    });
+    await sleep(300);
+    const c2cStored = await readStoredPersons();
+    expect('C-2c', 'confirmIdentityLink undo 撤销唯一身份到空名单必须成功写入且不计入空态拒绝',
+      c2cResult.beforePersons === 0 && c2cResult.afterLink === 1 && c2cResult.hasUndo === true
+      && c2cResult.ok !== false && c2cResult.afterPersons === 0
+      && c2cResult.refusalsAfter === c2cResult.refusalsBefore
+      && !String(c2cResult.lastError).includes('storage-empty-overwrite-refused')
+      && c2cStored.persons === 0, { c2cResult, c2cStored });
+    await c2cPage.close();
   } catch (error) {
     report.fail.push(String(error && error.stack || error));
   } finally {

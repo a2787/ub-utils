@@ -2,6 +2,18 @@
  * 覆盖：B站 Shadow DOM 拉黑链路 + 全局影子穿透兜底 + 检查更新按钮三分支
  * 依赖：playwright-core 与 Chrome；可用 PLAYWRIGHT_CORE_PATH / CHROME_PATH 覆盖自动发现。
  * 运行：node test/run.cjs
+ *
+ * 退出码语义（门禁地基，务必保持）：
+ *   0 = 20 项断言全通过，且无页面未捕获异常(pageerror)，且无真实 console.error；
+ *   1 = 上述三类任一类命中（断言失败 / 页面异常 / 控制台错误），RESULT 行打印 FAILED
+ *       并在上一行给出 FAIL CATEGORY，维护者无需翻代码即可定位红在哪一类；
+ *   2 = 测试夹具自身崩溃（harness error），与被测代码无关。
+ *   console 采集同时含 error 与 warning：仅 error 参与判定，warning 只打印（分级策略），
+ *   已知测试环境噪声须在 EXPECTED_CONSOLE_ERRORS 登记精确正则并注明来源。
+ * CI 边界：本脚本只跑本地测试页，不访问真实站点。真实站点探针需要用户专用浏览器与
+ *   登录态授权，按 .github/workflows/maintenance.yml:3-4 的决定永远不在 CI 里执行；
+ *   CI 仅在本地回归矩阵中调用本脚本（maintenance.yml:36-45，set -e 串行），
+ *   因此退出码必须只在真异常时非零，避免假红中断整个矩阵。
  */
 const { launchChromium, ROOT } = require('./runtime.cjs');
 const fs = require('fs');
@@ -727,7 +739,22 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
     ? report.pass.push('L 生命周期边界：SPA 不增殖资源，freeze/BFCache 可恢复，普通 pagehide 幂等回收')
     : report.fail.push('L 生命周期回收失败：' + JSON.stringify(lifecycle));
 
-  const ok = report.fail.length === 0;
+  // 退出判定（三层门禁）：断言全通过 && 无页面未捕获异常 && 无真实 console.error。
+  // console 采集含 error 与 warning（见 page.on('console')），这里只让 [error] 参与判定，
+  // warning 仅作信息打印，避免测试环境自身告警造成假红（分级策略，不一刀切）。
+  // EXPECTED_CONSOLE_ERRORS 是"测试环境噪声"白名单：基线实测 20 项全绿时 console 集合
+  // 为空，故当前无条目；将来若引入确属环境噪声的 error，必须写精确正则 + 注释来源，
+  // 禁止泛化放行真实错误。
+  const EXPECTED_CONSOLE_ERRORS = [
+    // 示例（仅在确认属环境噪声后启用）：/responded with a status of 429/i
+  ];
+  const consoleErrors = report.console.filter((entry) =>
+    entry.startsWith('[error]') && !EXPECTED_CONSOLE_ERRORS.some((pattern) => pattern.test(entry)));
+  const ok = report.fail.length === 0 && report.pageErrors.length === 0 && consoleErrors.length === 0;
+  const failCategories = [];
+  if (report.fail.length > 0) failCategories.push('断言失败 ' + report.fail.length + ' 项');
+  if (report.pageErrors.length > 0) failCategories.push('页面异常 ' + report.pageErrors.length + ' 项');
+  if (consoleErrors.length > 0) failCategories.push('控制台错误 ' + consoleErrors.length + ' 项');
   // 同步落盘报告（务必在 browser.close 之前，避免其偶发挂起导致进程卡死、结果丢失）
   try { fs.writeFileSync(path.join(ROOT, 'test', '_lastrun.json'), JSON.stringify(report, null, 2) + '\n', 'utf8'); } catch (e) {}
   console.log('==== OmniBlock 自测结果 ====');
@@ -735,6 +762,8 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
   console.log('FAIL:', report.fail.length); report.fail.forEach(x => console.log('  ❌', x));
   console.log('Console(errors/warn):', report.console.length); report.console.forEach(x => console.log('  ·', x));
   console.log('PageErrors:', report.pageErrors.length); report.pageErrors.forEach(x => console.log('  ·', x));
+  // FAILED 时在 RESULT 之前给出红因类别，RESULT 仍保持为输出最后一行（现有格式保留）。
+  if (!ok) console.log('FAIL CATEGORY: ' + failCategories.join(' + '));
   console.log(ok ? '\nRESULT: STRUCTURE REGRESSION PASSED' : '\nRESULT: STRUCTURE REGRESSION FAILED');
   // 不 await browser.close：偶发挂起会让进程无法自然退出；强制退出以保结果落盘
   try { browser.close().catch(() => {}); } catch (e) {}

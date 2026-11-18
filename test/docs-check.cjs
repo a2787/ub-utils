@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
@@ -151,6 +151,40 @@ function validatePlan(content) {
 
 validatePlan(plan);
 
+// A. README 声明的公开版本不得超前于源码 @version：公开版本是用户已能拿到的发布版，
+// @version 是工作版本，两者允许不同（落后会被发布流程发现）；只拦"声明不存在的版本"。
+const readme = exists('README.md') ? read('README.md') : '';
+const readmeVersionMatch = readme.match(/当前公开版本为[ \t]*v?(\d+\.\d+\.\d+)/);
+if (!readmeVersionMatch) {
+  console.log('SKIP: README 未声明公开版本');
+} else {
+  const declaredParts = readmeVersionMatch[1].split('.').map(Number);
+  const sourceParts = version.split('.').map(Number);
+  let ahead = false;
+  for (let index = 0; index < 3; index++) {
+    if (declaredParts[index] !== sourceParts[index]) {
+      ahead = declaredParts[index] > sourceParts[index];
+      break;
+    }
+  }
+  if (ahead) errors.push(`README 声明的公开版本 v${readmeVersionMatch[1]} 超前于源码 @version ${version}：只描述已公开发布的用户可获取版本`);
+}
+
+// B. PLAN.md 活动区不得残留 verified：只查 ## 活动项 到下一个 ## 之间的区段，
+// 已关闭项区段的 verified 是合法历史记录，不在检查范围。
+const activeHeading = plan.match(/^##[ \t]+活动项[ \t]*$/m);
+if (!activeHeading) {
+  console.log('SKIP: PLAN.md 无 ## 活动项 区段');
+} else {
+  const afterHeading = plan.slice(activeHeading.index + activeHeading[0].length);
+  const nextHeading = afterHeading.search(/^##[ \t]/m);
+  const activeSection = nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+  const verifiedInActive = (activeSection.match(/^-[ \t]+status:[ \t]+verified[ \t]*$/gm) || []).length;
+  if (verifiedInActive) {
+    errors.push(`PLAN.md 活动区仍残留 ${verifiedInActive} 个 status: verified 项（AGENTS.md:94 要求已验证项移出活动正文）`);
+  }
+}
+
 const snapshotMatch = current.match(/最近验证的源码快照：`([0-9a-f]{40})`/i);
 if (!snapshotMatch) {
   errors.push('CURRENT 缺少 40 位最近验证源码快照');
@@ -166,10 +200,7 @@ else if (documentedHashMatch[1].toLowerCase() !== sourceHash) {
   errors.push(`CURRENT 候选源码 SHA-256 过期：文档 ${documentedHashMatch[1]}，实际 ${sourceHash}`);
 }
 
-let shortStatus = '';
-try { shortStatus = execFileSync('git', ['status', '--short'], { cwd: ROOT, encoding: 'utf8' }).trim(); }
-catch (error) { errors.push('无法读取 Git 工作区状态：' + error.message); }
-if (shortStatus && /(?:^|\n).*当前工作区干净/.test(current)) errors.push('CURRENT 声称当前工作区干净，但 Git 存在改动');
+// 原工作区一致性检查因匹配串从未出现在 CURRENT 中而恒假，2026-11-18 移除；工作区状态由维护者交接时人工核对。
 
 function checkMarkdownLinks(relative, content) {
   const linkPattern = /\[[^\]]+\]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g;

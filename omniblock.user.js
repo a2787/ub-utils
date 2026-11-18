@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.63.2
+// @version       0.63.3
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.63.2-bridge-chunked-ready';
+  const RUNTIME_BUILD = '0.63.3-empty-state-guard';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -1259,6 +1259,10 @@
 
   const Store = (function () {
     let data = null;             // { version, persons:{}, settings:{} }
+    // OB-STORE-001（v0.63.3 数据层闸门）：上一次成功落盘时的身份键规模。load() 之后
+    // 立即同步为真实存储规模；内存被换成空态但磁盘仍有真实名单时，它作为"曾经有
+    // 数据"的证据，供 persist 识别空态覆盖。新用户首次加载为 0，不构成拦截条件。
+    let lastPersistedIdentityCount = 0;
     const listeners = [];
     const persistListeners = [];
     const backupSinks = new Map();
@@ -1277,7 +1281,21 @@
       maxDurationMs: 0,
       lastPayloadChars: 0,
       degradedRefusals: 0, // OB-STORE-001：degraded 只读降级期间被拒的 persist 次数
+      emptyOverwriteRefusals: 0, // OB-STORE-001 v0.63.3：数据层拒绝空态覆盖的次数
     };
+    // OB-STORE-001（v0.63.3）：只有"用户显式删除/导入/恢复"才允许把名单写空。
+    // 下列 reason 均为调用点实际传入的字符串（行号以改动前 omniblock.user.js 为准）：
+    //   'remove-person'     ← removePerson（原 1766 行）：删到最后一人时合法写空；
+    //   'remove-identities' ← removeIdentities（原 1782 行）：删到最后一批身份时合法写空；
+    //   'import'            ← importJSON（原 1822 行）：用户显式导入（含空名单）时合法；
+    //   'restore'           ← restoreBackup（原 1881 行）：用户显式恢复快照（含空快照）时合法。
+    //   'undo-identity-link'← confirmIdentityLink 的 undo 回调（本轮改动前 1824 行）：
+    //                        用户显式撤销刚建立的身份关联，回退到建立前的空态是合法意图，
+    //                        与"空态误覆盖真实名单"不同，故放行（本轮修掉的一条回归）。
+    // 明确不放行：setSetting（原 1629 行，persist() 无 reason）、
+    // applySyncState（原 1584 行，'sync-merge'）、addIdentities / addIdentityGroups /
+    // confirmIdentityLink（原 1685/1696/1744 行，persist() 无 reason）等非删除动作。
+    const EXPLICIT_EMPTY_REASONS = new Set(['remove-person', 'remove-identities', 'import', 'restore', 'undo-identity-link']);
     // key → 归属人物集合。名单通常很小，但批量导入/作品屏蔽会连续调用多个
     // addIdentities；缓存避免每组都重新遍历全部人物和身份数组。直接改动名单的
     // 少数路径会显式失效，下一次查询再惰性重建。
@@ -1345,6 +1363,39 @@
       return out;
     }
 
+    // OB-STORE-001（v0.63.3）：统计 persons 下所有合法身份键的总数。只遍历
+    // person.identities 数组，不把 label/note/hits 等元数据算作身份，也不重新
+    // 创造或猜测身份键——sanitizePersons 已保证数组内是规范化后的合法键。
+    function countIdentityKeys(value) {
+      const persons = value && value.persons;
+      if (!persons || typeof persons !== 'object' || Array.isArray(persons)) return 0;
+      let total = 0;
+      for (const id of Object.keys(persons)) {
+        const person = persons[id];
+        if (person && Array.isArray(person.identities)) total += person.identities.length;
+      }
+      return total;
+    }
+
+    // OB-STORE-001（v0.63.3）：判断给定值是否与"空名单 + 默认设置"等价。
+    // 判定保守：只比较 DEFAULT_SETTINGS 中明确定义的键，未知/额外键不纳入判断；
+    // 数组键做序列化比较，任何一项偏离默认即返回 false（漏判只会退回状态闸门）。
+    function isDefaultState(value) {
+      if (!value || typeof value !== 'object') return false;
+      if (countIdentityKeys(value) !== 0) return false;
+      const settings = value.settings && typeof value.settings === 'object' ? value.settings : {};
+      for (const key of Object.keys(DEFAULT_SETTINGS)) {
+        const expected = DEFAULT_SETTINGS[key];
+        const actual = settings[key];
+        if (Array.isArray(expected) || Array.isArray(actual)) {
+          if (!Array.isArray(actual) || JSON.stringify(actual) !== JSON.stringify(expected)) return false;
+        } else if (actual !== expected) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     function load() {
       if (data) return data;
       let raw;
@@ -1355,6 +1406,8 @@
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
       data = { version: 1, persons: sanitizePersons(raw.persons), settings: sanitizeSettings(raw.settings) };
       identityOwners = null;
+      // 首次加载真实存储（非空）时即为真实规模；新用户首次加载为 0。
+      lastPersistedIdentityCount = countIdentityKeys(data);
       return data;
     }
 
@@ -1526,6 +1579,20 @@
         listeners.forEach((fn) => { try { fn(); } catch (e) {} });
         return { ok: false, error: persistMetrics.lastError };
       }
+      // v0.63.3 数据层闸门：桥接"健康"但内存身份键被清零、而上次落盘仍有真实名单时，
+      // 除非是显式删除/导入/恢复，否则拒绝用空态覆盖主名单。isDefaultState 识别典型
+      // 降级默认态；即便用户改过设置（isDefaultState=false），只要身份键为 0 也一律
+      // 拒写——空态落盘不可恢复，设置改动可在刷新读回真实名单后重做。
+      // 不置 pendingLocalWrite：这是本页主动拒写，不是外部变更冲突。
+      if (lastPersistedIdentityCount > 0 && !EXPLICIT_EMPTY_REASONS.has(reason)
+          && (isDefaultState(data) || countIdentityKeys(data) === 0)) {
+        persistMetrics.failures++;
+        persistMetrics.lastOk = false;
+        persistMetrics.lastError = 'storage-empty-overwrite-refused';
+        persistMetrics.emptyOverwriteRefusals++;
+        listeners.forEach((fn) => { try { fn(); } catch (e) {} });
+        return { ok: false, error: persistMetrics.lastError };
+      }
       const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
       let payload = '';
       let writeError = '';
@@ -1555,6 +1622,8 @@
       persistMetrics.lastError = '';
       persistMetrics.pendingLocalWrite = false;
       persistMetrics.externalConflict = false;
+      // 写入成功后同步真实规模，作为下一次空态覆盖判定的基准。
+      lastPersistedIdentityCount = countIdentityKeys(data);
       const snapshot = snapshotObject(reason || 'change');
       captureBackup(snapshot, reason || 'change');
       notifyBackupSinks(snapshot);
@@ -1755,7 +1824,7 @@
           if (!current.identities.length) delete persons()[targetId];
         }
         invalidateIdentityOwners();
-        persist();
+        persist('undo-identity-link');
       } : null;
       return { person: target, personId: targetId, added: addedKeys.length, addedKeys, rejected: false,
         persisted: persisted.ok, persistError: persisted.error || '', undo };
@@ -1763,7 +1832,7 @@
 
     function removePerson(id) {
       load();
-      if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; invalidateIdentityOwners(); return persist().ok; }
+      if (Object.prototype.hasOwnProperty.call(persons(), id)) { delete persons()[id]; invalidateIdentityOwners(); return persist('remove-person').ok; }
       return false;
     }
 
@@ -1779,7 +1848,7 @@
         if (kept.length) persons()[id].identities = kept;
         else if (kept.length !== arr.length) delete persons()[id];
       }
-      if (removed) { invalidateIdentityOwners(); persist(); }
+      if (removed) { invalidateIdentityOwners(); persist('remove-identities'); }
       return removed;
     }
 
@@ -1819,7 +1888,7 @@
         result.identities += added.added;
       }
       if (source.settings && typeof source.settings === 'object') data.settings = sanitizeSettings({ ...data.settings, ...source.settings });
-      const persisted = persist();
+      const persisted = persist('import');
       result.persisted = persisted.ok;
       result.persistError = persisted.error || '';
       return result;
