@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.63.4-dock-visible';
+  const RUNTIME_BUILD = '0.63.4-discovery-fixes';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -4218,6 +4218,23 @@
     }
     #ob-gear:hover { background: #41414a; }
 
+    /* ---- 首次访问一次性提示（OB-DISC-001）：齿轮左侧的极简说明浮条。
+       独立元素，不加入控制坞的 hover/CONTROL_SELECTOR 逻辑；亮色配色沿用设置面板。 ---- */
+    #ob-first-hint {
+      position: fixed; right: max(62px, calc(env(safe-area-inset-right) + 48px)); bottom: max(14px, env(safe-area-inset-bottom));
+      z-index: 2147483642; box-sizing: border-box; display: flex; gap: 8px; align-items: flex-start;
+      max-width: min(300px, calc(100vw - 130px)); padding: 8px 10px;
+      border: 1px solid #cfd5ee; border-radius: 8px; background: rgba(250, 251, 255, 0.96); color: #333;
+      box-shadow: 0 3px 14px rgba(0,0,0,.16); font-size: 12px; line-height: 1.5; word-break: break-word;
+    }
+    #ob-first-hint .ob-first-hint-title { font-weight: 600; }
+    #ob-first-hint .ob-first-hint-text { margin-top: 2px; color: #555; }
+    #ob-first-hint .ob-first-hint-close {
+      flex: 0 0 auto; border: 0; background: transparent; color: #888;
+      font-size: 15px; line-height: 1.2; cursor: pointer; padding: 0 2px;
+    }
+    #ob-first-hint .ob-first-hint-close:hover { color: #333; }
+
     /* ---- OB-STORE-001 degraded 只读降级警示（面板横幅 + 可关闭浮条） ---- */
     #ob-panel #ob-degraded-banner {
       box-sizing: border-box; margin: 8px 0 0; padding: 8px 10px;
@@ -4643,6 +4660,14 @@
       }
       #ob-degraded-float .ob-degraded-float-close { color: #f0a29a; }
       #ob-degraded-float .ob-degraded-float-close:hover { color: #ffc9c2; }
+      /* ---- 首次访问一次性提示（深色） ---- */
+      #ob-first-hint {
+        border-color: var(--ob-dark-accent-border); background: rgba(28, 32, 48, 0.96);
+        color: var(--ob-dark-text); box-shadow: 0 3px 14px rgba(0,0,0,.4);
+      }
+      #ob-first-hint .ob-first-hint-text { color: var(--ob-dark-text-dim); }
+      #ob-first-hint .ob-first-hint-close { color: var(--ob-dark-text-dim); }
+      #ob-first-hint .ob-first-hint-close:hover { color: var(--ob-dark-text); }
       /* ---- 深色下的键盘焦点可见性 ---- */
       #ob-panel :focus-visible, #ob-content-manager :focus-visible,
       #ob-comment-manager :focus-visible, #ob-dm-manager :focus-visible,
@@ -4813,6 +4838,79 @@
     }
 
     return { mount, expand, scheduleCollapse, hold, release, isControlTarget, sync: syncControls };
+  })();
+
+  // 首次访问一次性提示（OB-DISC-001）：新用户第一次在任一平台加载时，在齿轮旁
+  // 显示一条可关闭的极简说明浮条，之后永不再显示。标志位走独立的 GM 键，直接
+  // GM_getValue/GM_setValue 读写，绝不进入 Store / persist() / 数据层闸门。
+  // 放在 FloatingDock 之后是因为必须在 mount() 完成、#ob-gear 已存在后才判断；
+  // 浮条本身是独立元素，不参与控制坞的 hover 展开/自动收起逻辑。
+  const FirstVisitHint = (() => {
+    const KEY = 'omniblock:ui-hint:v1';
+    const ID = 'ob-first-hint';
+
+    function alreadyShown() {
+      try {
+        if (typeof GM_getValue !== 'function') return false;
+        const raw = GM_getValue(KEY, null);
+        return raw === 1 || raw === '1' || raw === true;
+      } catch (e) {
+        // 读失败按“没提示过”处理：最多多显示一次，好过让存储不可用的用户
+        // 永远看不到引导。
+        return false;
+      }
+    }
+
+    function markShown() {
+      // 降级只读态不产生任何写操作（提示是纯 UI，不碰存储闸门）。
+      if (storageBridgeDegraded) return;
+      try {
+        if (typeof GM_setValue !== 'function') return;
+        GM_setValue(KEY, 1);
+      } catch (e) {} // 写失败忽略：下次再显示一遍，无害。
+    }
+
+    function dismiss(reason) {
+      const el = document.getElementById(ID);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      markShown();
+      EventLog.record('ui.first-hint.dismiss', { reason: reason || 'unspecified' });
+    }
+
+    function maybeShow() {
+      try {
+        if (document.getElementById(ID)) return;
+        if (!document.body || !document.getElementById('ob-gear')) return;
+        if (document.getElementById('ob-panel')) return; // 面板已开，用户已找到入口
+        if (alreadyShown()) return;
+        const chip = document.createElement('div');
+        chip.id = ID;
+        chip.setAttribute('role', 'status');
+        chip.setAttribute('data-ob-runtime', RUNTIME_MARKER);
+        const body = document.createElement('div');
+        body.className = 'ob-first-hint-body';
+        const title = document.createElement('div');
+        title.className = 'ob-first-hint-title';
+        title.textContent = 'OmniBlock 已启用';
+        const text = document.createElement('div');
+        text.className = 'ob-first-hint-text';
+        text.textContent = '本地内容屏蔽工具，点右下角 ⚙ 设置';
+        body.append(title, text);
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'ob-first-hint-close';
+        close.setAttribute('aria-label', '关闭提示');
+        close.textContent = '×';
+        close.onclick = () => dismiss('close');
+        chip.append(body, close);
+        document.body.appendChild(chip);
+        // 首次显示即写标志：刷新后不再出现。写失败可忽略，下次再显示一遍。
+        markShown();
+        EventLog.record('ui.first-hint.show', { degraded: storageBridgeDegraded });
+      } catch (e) {}
+    }
+
+    return { maybeShow, dismiss };
   })();
 
   // ====================================================================
@@ -22496,6 +22594,10 @@
       gear.onclick = () => openOptions();
       document.body.appendChild(gear);
       FloatingDock.mount();
+      // 控制坞挂载完成、齿轮已存在，此时才判断首次提示。
+      // 点齿轮＝用户已找到入口，隐藏浮条并写标志（onclick 打开设置照常执行）。
+      gear.addEventListener('click', () => FirstVisitHint.dismiss('gear'));
+      FirstVisitHint.maybeShow();
     }
     const mountEntryPoints = () => {
       mountGear();
