@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.63.3
+// @version       0.63.4
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -55,7 +55,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.63.3-empty-state-guard';
+  const RUNTIME_BUILD = '0.63.4-dock-visible';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -3738,9 +3738,13 @@
       transition: opacity .18s ease, transform .22s ease, visibility 0s linear 0s;
       will-change: opacity, transform;
     }
+    /* 2026-11-18 在 B站/微博/知乎/贴吧四平台桌面实测：收起态截图均看不到齿轮，
+       最终只能靠 DOM 里的 aria-label 才确认入口存在——原 translateX(32px) 把齿轮
+       右移出可视边缘是根因。因此收起态也保持齿轮常驻可见（低透明度、不位移），
+       其余工具仍沿用悬停展开；展开后由下方 expanded 规则自然恢复到 opacity 1。 */
     html[data-ob-dock="collapsed"] #ob-gear {
-      transform: translateX(32px);
-      opacity: .76;
+      transform: translateX(0);
+      opacity: .55;
     }
     html[data-ob-dock="expanded"] #ob-gear {
       transform: translateX(0);
