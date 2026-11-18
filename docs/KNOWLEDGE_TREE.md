@@ -43,6 +43,7 @@ AGENTS.md
 ├── 启动网关.cmd                             ← legacy：双击调用 PowerShell 7 启动本地网关
 ├── docs/maintenance/HISTORY_INDEX.md      ← 历史事实按需索引
 │   ├── docs/maintenance/plans/             ← 已关闭计划的短归档
+│   ├── docs/maintenance/plans/2026-11-18-current-history-archive.md ← CURRENT 早期日期条目逐字归档
 │   └── docs/maintenance/LEGACY-HISTORY.md ← 重组前只读完整历史
 ├── README.md                              ← 安装用户行为与当前限制
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口

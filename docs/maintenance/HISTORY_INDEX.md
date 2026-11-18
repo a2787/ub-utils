@@ -23,6 +23,7 @@
 | [plans/2026-10-27-plan-closure.md](plans/2026-10-27-plan-closure.md) | 2026-10-27 移出活动计划的 4 个已 verified 项（OB-RULE-001、OB-REL-001、OB-CTX-001、OB-MAINT-002）终态原文 | 只在追溯各项验收证据与残留边界时读取；当前事实仍以 CURRENT 为准 |
 | [plans/2026-10-30-plan-closure.md](plans/2026-10-30-plan-closure.md) | 2026-10-30 移出活动计划的 3 个已 verified 项（OB-RULE-004、OB-UI-003、OB-MAINT-004）终态原文（2026-10-30 回写轮补登记） | 只在追溯各项验收证据与残留边界时读取；当前事实仍以 CURRENT 为准 |
 | [plans/2026-11-18-plan-closure.md](plans/2026-11-18-plan-closure.md) | 2026-11-18 移出活动计划的 3 个已 verified 项（OB-BRIDGE-001、OB-STORE-001、OB-MAINT-003）终态原文 | 只在追溯各项验收证据与残留边界时读取；当前事实仍以 CURRENT 为准 |
+| [plans/2026-11-18-current-history-archive.md](plans/2026-11-18-current-history-archive.md) | 为守住 CURRENT 的 24 KiB 预算移出的 2026-09-06~2026-10-29 早期日期条目原文（含 2026-09-13 仓库事故、2026-10-28 ×2、2026-10-27、2026-09-13/11、已发布历史路由） | 只在追溯对应日期的范围、证据、限制与当时状态时读取；措辞逐字保留，不追加当前状态 |
 | [plans/2026-10-30-current-dated-archive.md](plans/2026-10-30-current-dated-archive.md) | 2026-10-30 为守住 CURRENT 预算移出的 2026-10-27 日期条目原文（OB-MAINT-003、OB-UI-003、OB-RULE-004、v0.60.0/v0.61.0 事实路由、OB-RULE-003、OB-AI-015、接手调查） | 只在追溯对应日期的范围、证据与当时状态时读取；不追加当前状态 |
 | [LEGACY-HISTORY.md](LEGACY-HISTORY.md) | 文档重组前的完整维护与交接记录，保持原顺序和原文字 | 只读历史；不追加当前状态，不作为当前规则来源 |
 

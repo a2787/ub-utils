@@ -100,24 +100,8 @@
 
 ## 最低验证矩阵
 
-每次代码改动都必须运行 `node --check omniblock.user.js` 和 `git diff --check`，
-每次文档/规则/知识树改动都必须运行 `node test/docs-check.cjs` 和 `git diff --check`，
-再按下表运行受影响的检查。
+每次代码改动都必须运行 `node --check omniblock.user.js` 和 `git diff --check`，每次文档/规则/知识树改动都必须运行 `node test/docs-check.cjs` 和 `git diff --check`。完整的「改动范围 → 必跑检查」矩阵、真实站点探针隔离规则见 [MAINTENANCE_WORKFLOW.md 第 5 节](docs/MAINTENANCE_WORKFLOW.md#5-验证矩阵)；全仓只保留这一份权威矩阵，本文件不再复制。
 
-| 改动范围 | 必跑检查 |
-|---|---|
-| 文档、规则、知识树、计划、架构或版本说明 | `node test/docs-check.cjs` |
-| 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
-| B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
-| 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
-| 当前专用 Chrome 登录态读取 | `node test/maintenance-check.cjs --dedicated-only`（自动同步扩展后运行专用探针） |
-| 用户可见版本发布 | 所有受影响行，加上 userscript 头部版本号检查 |
-
-真实站点探针默认使用隔离、只读、未登录会话：不得发帖、举报、关注、触发官方拉黑，
-也不得导出 Cookie。可以移动鼠标、滚动、暂停播放和点击脚本自身的 UI，但不得点击平台的
-举报、拉黑、关注等写入控件。真实探针失败是需要记录的证据，不是降低测试标准的理由。
-默认隔离探针与专用 profile 探针是两条不同证据链；前者不能代替后者，也不能用前者的
-登录页/验证码结果推断用户专用浏览器不可用。
 
 ### 登录态探针（需用户显式授权）
 

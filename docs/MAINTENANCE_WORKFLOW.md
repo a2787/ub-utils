@@ -92,8 +92,27 @@ node test/docs-check.cjs
 node test/run.cjs
 git diff --check
 ```
-受影响平台额外执行 `AGENTS.md` 中的聚焦测试和真实站点探针。改动 B站评论/弹幕跑 quickblock 与 B站探针；改动抖音、
-微博等适配器跑 adapters 与对应探针；改动通用 UI、存储、Shadow DOM、日志或调度跑通用回归和性能边界回归。
+
+### 最低验证矩阵（全仓唯一权威来源）
+
+每次代码改动都必须运行 `node --check omniblock.user.js` 和 `git diff --check`，
+每次文档/规则/知识树改动都必须运行 `node test/docs-check.cjs` 和 `git diff --check`，
+再按下表运行受影响的检查。
+
+| 改动范围 | 必跑检查 |
+|---|---|
+| 文档、规则、知识树、计划、架构或版本说明 | `node test/docs-check.cjs` |
+| 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
+| B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
+| 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
+| 当前专用 Chrome 登录态读取 | `node test/maintenance-check.cjs --dedicated-only`（自动同步扩展后运行专用探针） |
+| 用户可见版本发布 | 所有受影响行，加上 userscript 头部版本号检查 |
+
+真实站点探针默认使用隔离、只读、未登录会话：不得发帖、举报、关注、触发官方拉黑，
+也不得导出 Cookie。可以移动鼠标、滚动、暂停播放和点击脚本自身的 UI，但不得点击平台的
+举报、拉黑、关注等写入控件。真实探针失败是需要记录的证据，不是降低测试标准的理由。
+默认隔离探针与专用 profile 探针是两条不同证据链；前者不能代替后者，也不能用前者的
+登录页/验证码结果推断用户专用浏览器不可用。
 `node test/maintenance-check.cjs` 的平台真站部分使用隔离未登录会话；当前任务若已得到用户对专用 profile 的
 登录态只读授权，使用 `--dedicated-only`，命令会先构建并同步开发扩展，再由同一专用 CDP 读取六平台实际页面。
 需要匿名对照时使用 `--dedicated`，它会额外保留隔离探针结果；两条证据必须分开记录，隔离会话的登录页/验证码

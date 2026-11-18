@@ -3,8 +3,6 @@
 更新时间：2026-11-18
 状态来源：v0.63.3（数据层空态覆盖拒绝，承接 v0.63.2 的 degraded 存储只读降级）为最近公开发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
-> 2026-09-13 仓库事故（已修复）：`E:\pluginforchrome\.git` 对象库与 `refs/` 丢失（工作区无损失），经用户同意从远端重建，v0.55.0~v0.57.2 全部 tag 恢复；唯一无法恢复的未推送提交 `c025d8b`（v0.57.3）的代码内容已随提交 `b83003a` 落库。细节见当时交接与 [v0.57.3 条目](../changelog/v0.57.3.md)。
-
 ## 当前版本
 
 - 当前 userscript：`0.63.3`（已公开发布，数据层空态覆盖拒绝）
@@ -19,9 +17,8 @@
 
 - 改动：`Store.persist()` 新增数据层空态覆盖拒绝——内存身份键数归零、上次成功落盘仍有真实名单时，除 5 类显式动作（`remove-person`/`remove-identities`/`import`/`restore`/`undo-identity-link`）外一律拒写；新增 `countIdentityKeys`、`isDefaultState`、`EXPLICIT_EMPTY_REASONS` 白名单、`lastPersistedIdentityCount` 基线、`emptyOverwriteRefusals` 指标。补 v0.63.2 缺口：其 degraded 闸门为一次性布尔、永不重算，"桥接健康+内存空态"仍可能覆盖真实名单。
 - `structure regression`：`test/degraded-storage.cjs` 新增 C-1/C-2a/C-2b/C-3/C-2c，15/15（C-1 唯一旧代码必失败（旧代码把磁盘 2 个身份清成 0）；C-2c 在无闸门旧代码上靠 `undefined===undefined` 通过，锁定"闸门已加、undo 回调漏配白名单 reason"半成品态，防本轮不完整实现误伤合法撤销，均留证）；`test/run.cjs` 20/20；`node --check`、`git diff --check` 通过。**本轮无真实站点验证**。
-- 限制：未改 degraded 状态机；纯 Tampermonkey 路径仍无层 2 兜底；新拒绝计入 `persistMetrics.failures` 并置 `lastOk=false`，面板通用写入失败提示覆盖该错误码（未定制文案）；其余 8 个测试脚本 pageerror 判定仍未修。
+- 限制：未改 degraded 状态机；纯 Tampermonkey 路径仍无层 2 兜底；新拒绝计入 `persistMetrics.failures` 并置 `lastOk=false`，面板通用写入失败提示覆盖该错误码（未定制文案）；其余 8 个测试脚本 pageerror 判定本轮已修（见下方摘要）。
 - 已知限制（有意取舍）：`sync-merge` 的 reason 不在白名单，远端下发空名单（他设备删光所有人）时本机拒写，合法跨设备清空无法经同步完成；宁可拦一次合法清空也不许空态覆盖真实名单（被拦可本机手动删除补回，被覆盖不可恢复）。账户级加密同步尚无真实站点验证（OB-SYNC-001 三项验收为空），该取舍当前无线上影响。
-- 工作区状态：本轮回写时仍有未提交文档改动（README/CHANGELOG/MAINTENANCE/PLAN/INDEX/HISTORY_INDEX 六改 + 两新增），非干净。
 - 门禁变化（AGENTS.md:97-99 要求，该文件仅余 312 字节按冲突记此）：`docs-check.cjs` 删恒假"工作区干净"检查，新增 README 公开版本不得超前于 `@version`、PLAN 活动区不得残留 `status: verified` 两条（README 声明找不到时报错而非静默跳过，防措辞漂移使检查失效）；`run.cjs` 退出码由"只看断言"改为"断言+pageErrors+console.error"，FAILED 打印 FAIL CATEGORY。
 
 ## 2026-10-30 v0.63.2 合并发布：degraded 存储只读降级（OB-STORE-001，数据安全）+ 桥接就绪快照分块与孤儿清理（OB-BRIDGE-001）
@@ -43,35 +40,10 @@
 - `blocked`（桥接当时未修复部分）：驱动期间持久扩展实例仍为 `0.63.0`/bridge=starting（即 2026-10-28 OB-MAINT-004 专用轮记录的同一 degraded/ready-timeout 故障），0.63.1 为探针实例注入运行并持运行锁——该部分随后由 OB-BRIDGE-001 同轮修复并经 v0.63.2 发布对照验证（0.63.0 degraded 8/8 → 0.63.2 ready，见上方 v0.63.2 条目）；既有另案边界不变：tieba/x `Target.getTargets` 超时、zhihu 无可探测条目、匿名链路知乎登录墙/抖音验证码/X 登录墙。
 - `structure regression`（degraded-storage 断言，本轮回写轮复跑）：`node test/degraded-storage.cjs` PASS 10 / FAIL 0（exit 0、PageErrors 0）——STORE-1..4 degraded 只读（data:v1/backup:v1 字节不变、警示 UI 且浮条关闭后面板保留）、CONTROL-1 ready 放行对照、BR-1..5 >8MiB 存储分块 ready/种子读回/degraded=false/孤儿分片清理/ready 放行；旧行为基线（HEAD 0.63.0）六项失败字节级留证（data:v1 SHA-256 `6be1e28e…`→`4186f9d7…`、backup:v1 468→2,365 字节），对照见 [v0.63.2 条目](../changelog/v0.63.2.md)。
 
-## 2026-10-29 仓库卫生完善（审计修复，无用户可见行为，摘要）
+## 早期日期条目归档
 
-- 摘要：一次性探针 `_probe_diag4.cjs` 曾被 `b3fdbb1` 意外入库，本轮解除跟踪（本地保留）并以 `.gitignore` 根级锚定 `/_probe_diag*.cjs`、`/_probe_features.cjs`、`.mimosa/` 运行时子目录兜底；修复 `scripts/commit-pending.cjs`（多行提交信息经 `.git/OB_MSG` + `git commit -F`，杜绝字面 `\n` 主题行）、新增 `scripts/commit-worktree.cjs`（消息文件 + `--dry-run`，git 调用全部绕过 shell）。`omniblock.user.js` 零改动（SHA-256 前后一致）；`structure regression`：`node --check`（两个脚本）、docs-check、`git diff --check` 通过。详细边界见提交 `ec31217` 说明。
-
-## 2026-10-28 专用登录态实装验证（v0.60.0~v0.63.0 实装回写）
-
-- `real-site verified`：2026-10-28，用户专用 Chrome 登录态（browser-harness profile，CDP 9222）开发扩展 `0.63.0`/`0.63.0-dark-mode` 实装，runtime 在真实页面确认：脱敏 `bilibili.com/page/...`（首页形态）AI content 记录 8 条、`byKind={"content":8}`、withIdentity=8/8、gearCount=1。基线 `node test/maintenance-check.cjs --dedicated-only`（完整运行约 25 分钟）：41 个检查节全部执行，40 项本地门禁通过（docs governance/userscript syntax/run/quickblock/adapters/performance 等含 `RESULT: … PASSED`），整体 `RESULT: MAINTENANCE SELF-CHECK FAILED`（exit 1）——唯一失败项为 dedicated Chrome login-state real-site probe（exit 1）；legacy dev-browser sync 单独记 `blocked`（退出码 2）。
-- 登录态基线读取（页面世界，按平台，2026-10-28 时桥接均 degraded/ready-timeout 8/8，该故障已于 2026-10-30 由 OB-BRIDGE-001 修复）：`bilibili.com/page/...` content=8（verified）；`douyin.com/jingxuan/...` content=49、withIdentity=0/49（verified 内容读取；页面级登录/安全门禁，导航 blocked）；weibo 页面加载但 content=0（failed；2026-09-12 与 2026-10-30 同 profile 均读到 6 条）；`zhihu.com/hot/...` content=0（failed，导航 blocked）；tieba/x 均 `CDP timeout: Target.getTargets`（浏览器级，未取得页面证据）。
-- 分步实装细节（v0.60 五分组/名单搜索/最近操作、v0.61 自动分析默认关闭 0 请求、v0.62 快捷拉黑→样本→撤销、v0.63 深色双向断言的逐步探针记录）已回写各版本条目「实装验证」节，本页不再重复；全轮边界：未读取/导出 Cookie；探针标签页已关闭（CDP 目标列表仅剩用户原有标签页）。
-- `blocked`：专用扩展桥接 degraded/ready-timeout（历轮既有，诊断见 2026-09-12 条目）；匿名链路知乎登录墙、抖音验证码、X 登录墙、贴吧。新功能逐版本回写见 v0.60.0~v0.63.0 条目「实装验证」节。`structure regression`：本轮测试层修复（OB-MAINT-004，见上节）。
-
-## 2026-10-28 探针发现共享化（OB-MAINT-004，测试层）
-
-- 摘要：新增 test/content-discovery.cjs（Shadow DOM 深度遍历 + 路由形状兜底），discover.cjs 与 dedicated-browser.cjs 内容发现统一走该实现；real-platform-probe.cjs 修复恒定退出 0；夹具 9/9（旧浅层 0 目标→新实现命中 /video/、/question/）。`blocked`：--dedicated-only 专用链路 6 平台桥接 degraded/ready-timeout，签名同 2026-09-12 已知故障（已于 2026-10-30 修复，见 OB-BRIDGE-001）。
-
-## 2026-10-27 日期条目（已移出活动正文以守住 24 KiB 预算）
-
-- OB-MAINT-003、OB-UI-003、OB-RULE-004、v0.60.0/v0.61.0 事实路由、OB-RULE-003、OB-AI-015 与接手调查的原始日期条目逐字保存在 [2026-10-30 移出存档](plans/2026-10-30-current-dated-archive.md)；各版本用户可见事实以对应版本 changelog（v0.58.0~v0.63.0）与 [PLAN 收尾归档](plans/2026-10-27-plan-closure.md) 为准。Mimosa 原生钩子当前为卸载状态，恢复命令 `node "C:/Users/et4vr/.zcode/cli/plugins/cache/zcode-plugins-official/mimosa/1.0.4/payload/dist/cli.js" git-gate install`（详见存档 OB-MAINT-003 条目）。
-## 2026-09-13 撤销接管右键的本地拉黑菜单（OB-CTX-001，v0.57.4，已公开发布）
-
-- 完整日期条目（范围/改动/证据/发布状态）已移入 [2026-09-13 移出存档](plans/2026-09-13-current-dated-archive.md)；当前公开版本与发布状态以本页"当前版本"区为准。
-
-## 2026-09-11 上一轮 MV3 方案收回（OB-EXT-001，superseded）
-
-- 平板 Edge 的实际安装路径确认以 Tampermonkey userscript 为准，因此不再把 `extension/`、正式 MV3、service worker 或扩展 options 作为本版本交付物；相关源码（含 `--product` 构建分支与 `test/product-extension.cjs`）已归档提交进仓库，未删除，保留复用可能。
-
-## 已发布历史路由（详情见版本条目与 [HISTORY_INDEX.md](HISTORY_INDEX.md)）
-
-- v0.54.0（独立 AI 评测）、v0.53.1（B站 AI 后台生命周期）、v0.53.0、v0.52.0、v0.51.x 与 2026-09-08/09 的 AI 型号、提示词、桥接和反馈证据均已移入对应版本 changelog 与历史索引；当前只继承“未核查不等于虚假、候选必须人工确认、平台不写入”的边界。
+- 2026-10-29 及更早的日期条目（含 2026-09-13 仓库事故说明）已逐字移入 [2026-11-18-current-history-archive.md](plans/2026-11-18-current-history-archive.md)；本页只保留 2026-11-18 与 2026-10-30 最近条目，更多历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+- 本轮补充事实（2026-11-18）：B站热门页/微博首页 `real-site verified`；B站首页/视频页与知乎/贴吧 `blocked`；存储闸门真实存储下未验证；8 脚本 pageErrors 门禁升级、断链 15→0。详见 [v0.63.3 条目](../changelog/v0.63.3.md)。
 
 ## 当前边界摘要
 
@@ -80,15 +52,6 @@
 - AI 入口只保留用户配置的 provider 直连、脱敏、最多 80 条分批、人工确认和事实核查保守门禁；本机 loopback 网关仅属于历史兼容/评测路径，不能作为当前 userscript 默认方式。B站新增后台 UID 增强遵守 OB-AI-012 的暂停/取消/hash-only 约束。
 - 账户同步必须由用户点击“立即同步（合并）”触发；名单、可同步设置、提示词和反馈在客户端加密，API Key、密码、同步口令、令牌和日志不进入同步文档。东京独立同步服务已部署并有 health 证据；本项目未改 Vibeme/V2/KB schema。
 - `real-site verified` 的当前只读入口与阻断以本文件顶部和版本条目为准；未判定登录、验证码、根评论 partial、模型精度和平台写入不能从夹具推导。
-
-## 2026-09-06 至 2026-09-08 日期条目（已移出活动正文以守住 24 KiB 预算）
-
-- OB-AI-001、OB-AI-002、OB-AI-003、OB-AI-003~007、OB-BILI-001、OB-RULE-002 的原始范围、改动文件、
-  证据与当时发布状态逐字保存在 [2026-09-13 移出存档](plans/2026-09-13-current-dated-archive.md)；
-  本节只保留仍影响当前版本的边界。
-- 仍然生效的边界：B站根评论分页长期为 partial，不能由样本推导全量；抖音匿名入口验证码、知乎登录墙与
-  微博 spacer 未被推翻；商汤 provider 与多 provider fallback 从未联调（商汤评估已作废）；抖音一键加载、
-  评论/弹幕会话隔离的详细证据在版本条目中，本页不重复。以上项目前仍按未验证处理。
 
 ## 历史事实路由
 
@@ -107,7 +70,7 @@
 
 ## 常用命令
 
-完整矩阵以 `AGENTS.md` 最低验证矩阵与 `docs/MAINTENANCE_WORKFLOW.md` §5 为准；本页只留高频入口：`node test/docs-check.cjs`、
+完整矩阵以 `docs/MAINTENANCE_WORKFLOW.md` §5 为唯一权威来源（`AGENTS.md` 仅留摘要与指针）；本页只留高频入口：`node test/docs-check.cjs`、
 `node test/userscript-product.cjs`、`node test/dev-extension.cjs`（先 `node test/build-dev-extension.cjs`）、
 `node test/real-bilibili-probe.cjs --verify-local`、`node test/real-platform-probe.cjs <platform> --verify-local`。
 固定专用 Chrome 的 profile 由 `dev-browser sync` 自动核对/刷新；登录态探针授权与红线见 `AGENTS.md`。
