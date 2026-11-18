@@ -2,6 +2,14 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.63.4 - 桌面控制坞设置入口可见性修复 - 2026-11-19（本地候选，未公开发布；结构回归，未做真实站点验证）
+
+本地候选，未 push、未打 tag、未建 Release；当前公开版本仍为 v0.63.3，公开安装地址未提供本修复。
+
+桌面端控制坞（FloatingDock）收起态下，设置齿轮 `#ob-gear` 被 `transform: translateX(32px)` 推出可视边缘只露一条边，且产品内无首次引导；2026-11-18 四平台桌面截图全部看不到齿轮，仅靠 DOM 的 `aria-label="打开 OmniBlock 设置"` 确认其存在。本轮改为 `transform: translateX(0); opacity: .55`（常驻可见但低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其他按钮悬停展开、1800ms 自动收起与触控端均不变。
+
+`structure regression`：`test/run.cjs` 20/20（E4 控制坞用例通过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7；computed style 收起态 0.55 / 展开态 1 / 触控态 1。仅本地夹具验证，未做真实站点验证。详细变更、证据和边界：[v0.63.4 完整条目](docs/changelog/v0.63.4.md)。
+
 ## v0.63.3 - 存储空态防护加固 - 2026-11-18（已公开发布）
 
 GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.3](https://github.com/a2787/ub-utils/releases/tag/v0.63.3)。

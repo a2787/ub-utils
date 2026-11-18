@@ -1,17 +1,23 @@
 # OmniBlock 当前维护状态
 
-更新时间：2026-11-18
+更新时间：2026-11-19
 状态来源：v0.63.3（数据层空态覆盖拒绝，承接 v0.63.2 的 degraded 存储只读降级）为最近公开发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.63.3`（已公开发布，数据层空态覆盖拒绝）
-- 构建：`0.63.3-empty-state-guard`
+- 当前 userscript：`0.63.4`（本地候选，尚未公开发布，桌面控制坞入口可见性修复；公开版仍为 0.63.3）
+- 构建：`0.63.4-dock-visible`
 - 当前公开版本：`0.63.3`（最近公开发布），公开功能提交 `f6fb3cd7e078989f63be960646f791f699bb319c`
-- 最近验证的源码快照：`f6fb3cd7e078989f63be960646f791f699bb319c`（当前 HEAD，v0.63.3 空态覆盖拒绝修复提交）
-- 当前候选源码 SHA-256：`52a0401782209e24deaa57fd73e3ccaf67861a18dc6980c9f5e908fa60b30b71`（当前工作区 userscript 快照，2026-11-18 核对一致）
-- 发布状态：v0.63.3 已公开发布（tag/Release 已建、raw 已更新返回 0.63.3）；未执行平台写入。
+- 最近验证的源码快照：`695366b21fb6b64929d8bf6dfd2bf6a0d4ac5cc1`（当前 HEAD，入口可见性修复提交）
+- 当前候选源码 SHA-256：`1db150709d7924e4cfd84cf8ef9fc8d99ec6c9145b794ef5b4c30c5c22d63c21`（当前工作区 userscript 快照，2026-11-19 核对一致）
+- 发布状态：v0.63.4 为本地候选，尚未公开发布（未 push、未打 tag、未建 Release）；当前公开版本仍为 v0.63.3（tag/Release 已建、raw 已更新返回 0.63.3）；未执行平台写入。
 - 当前公开 tag/Release：[v0.63.3](https://github.com/a2787/ub-utils/releases/tag/v0.63.3)。
+
+## 2026-11-19 v0.63.4 桌面控制坞设置入口可见性修复（本地候选，未公开发布）
+
+- 根因：桌面端控制坞（FloatingDock）收起态下，设置齿轮 `#ob-gear` 被 CSS `transform: translateX(32px)` 推出可视边缘只露一条边，且产品内无首次引导；2026-11-18 B站/微博/知乎/贴吧四平台桌面实测截图全部看不到齿轮，仅靠 DOM 中 `aria-label="打开 OmniBlock 设置"` 确认其存在。
+- 修复：`#ob-gear` 收起态改为 `transform: translateX(0); opacity: .55`（常驻可见但刻意低对比度），悬停/键盘聚焦由既有 expanded 规则恢复 opacity 1；其余不变——其他工具按钮仍悬停展开、1800ms 自动收起保留、触控端（本就常驻展开）完全未动。
+- `structure regression`：`test/run.cjs` 20/20（E4 控制坞用例通过）、`test/state.cjs` 9/9、`test/userscript-product.cjs` 7/7；computed style 实测收起态 0.55 / 展开态 1 / 触控态 1。本轮无真实站点验证（仅本地夹具验证），亦未公开发布（未 push/tag/Release；当前公开版本仍为 v0.63.3）。详见 [v0.63.4 完整条目](../changelog/v0.63.4.md)。
 
 ## 2026-11-18 v0.63.3 数据层空态覆盖拒绝（已公开发布）
 
