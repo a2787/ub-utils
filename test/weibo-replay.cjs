@@ -31,7 +31,7 @@ const persons = {
 };
 const shim = `
 window.__OB_PROBE_DIAGNOSTICS__ = { enabled: true };
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
 window.GM_deleteValue = (k) => { delete window.__gm[k]; };

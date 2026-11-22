@@ -86,6 +86,38 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - updated: 2026-09-12
 - supersedes: none
 
+### OB-UI-004 — Personal 2.0 一键屏蔽核心动线
+
+- status: in_progress
+- priority: P0
+- scope: 快捷/作者入口默认直提；批量、弹幕、UID 候选保持确认；`bili:dmhash` 从共享 `.ob-quick` 进入也必须派生 `danmaku` 确认；按设置撤销停留时长可撤销；“撤销上一次”与最近操作兜底；直提提示最多 3 次/打开设置停止。
+- non-goals: 不改控制坞收起态/透明度/齿轮；不做新手引导、平台总开关、全局快捷键；不改低调脚本名/@namespace/@updateURL/@downloadURL；不执行平台举报/官方拉黑/关注/发帖。
+- dependencies: none
+- acceptance: required
+  - [x] 快捷/作者入口无确认直提、名单写入、撤销恢复；批量/弹幕/UID 保留确认；`bili:dmhash` 仍弹确认（QB-NC-1/2）。
+  - [x] 直提提示最多 3 次、打开设置后停止（QB-NC-3）。
+  - [ ] B站/微博真站门禁与列表/关注流命中记录；未授权时记 `blocked`/`structure regression`，不得发布为已验证。
+- evidence: `structure regression`：quickblock 41/41（含 QB-NC-1/2/3）、adapters 28/28、run 20/20、state 9/9；dry-run worktree `b2141c1` 未合并；2026-11-23 本地候选。
+- next: Phase 2 Health/日志；Phase 5 真站与发布；列表/关注流按 Task 1.4 预探测。
+- updated: 2026-11-23
+- supersedes: none
+
+### OB-MAINT-005 — Health、日志瘦身、测试/CI、文档与发布链
+
+- status: in_progress
+- priority: P0
+- scope: Health 聚合存储/备份/日志失败并可见；事件日志 7 天/5 千条/2 MiB；备份读取 detailed API 不覆盖坏数据；设置信息架构与更新检查终态可见；README/docs 减负；CI 差集、code-health 与通用 release 脚本。
+- non-goals: 不改 `omniblock:data:v1` schema；不删除名单/备份/撤销；不做全量重写；不新增 npm 依赖；不把 AI 默认开启。
+- dependencies: OB-UI-004
+- acceptance: required
+  - [ ] 存储降级/写入失败可见；日志 ≤2 MiB；备份坏数据不覆盖； `test/health.cjs` 通过。
+  - [ ] CI 保留现有 22 项并补差集 headless 测试；`test/code-health.cjs` 门禁；release 脚本 dry-run/publish 分工。
+  - [ ] README ≤20 KiB、docs-check 通过；发布前真站证据按标签记录。
+- evidence: pending；计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
+- next: 实现 Health/日志/备份 detailed；再做设置/更新/文档/CI/发布。
+- updated: 2026-11-23
+- supersedes: none
+
 ## 关闭规则
 
 计划项只有在实现、验证、文档同步和交接事实全部完成后才可标记 `verified`。如果平台、登录、验证码、

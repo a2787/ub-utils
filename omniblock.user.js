@@ -1234,6 +1234,7 @@
     douyinAutoSkip: true,
     skipCap: 6,                  // 连续跳过上限，超过则停在遮罩不再自动切
     showQuickBlock: true,        // 在平台原生"拉黑/举报"旁插入"本地拉黑"
+    quickBlockNoConfirm: true,   // 快捷/作者入口直接屏蔽；按撤销停留时长内可撤销
     showBulkBlock: true,         // 本页/弹窗内"一键拉黑全部用户"
     undoToastSeconds: 10,        // 撤销 toast 停留秒数；sanitizeSettings 固定在 5–30
     localBackupEnabled: true,    // 自动保留最近 5 份本地快照（不上传）
@@ -1311,7 +1312,7 @@
     function sanitizeSettings(input) {
       const source = input && typeof input === 'object' ? input : {};
       const out = { ...DEFAULT_SETTINGS };
-      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'showBulkBlock', 'localBackupEnabled', 'logEnabled', 'aiAutoAnalyze', 'aiAutoCommentsOnly']) {
+      for (const key of ['enabled', 'showHoverButton', 'douyinAutoSkip', 'showQuickBlock', 'quickBlockNoConfirm', 'showBulkBlock', 'localBackupEnabled', 'logEnabled', 'aiAutoAnalyze', 'aiAutoCommentsOnly']) {
         if (typeof source[key] === 'boolean') out[key] = source[key];
       }
       if (source.hideMode === 'collapse' || source.hideMode === 'disappear') out.hideMode = source.hideMode;
@@ -2047,6 +2048,7 @@
     const LABEL_MAX_CHARS = 120;
     const TYPE_LABELS = {
       quick: '快捷拉黑',
+      author: '作者拉黑',
       bulk: '批量拉黑',
       work: '作品屏蔽',
       danmaku: '弹幕拉黑',
@@ -8656,10 +8658,136 @@
     }
   }
 
+  // 直提提示（OB-UI-004）：独立 GM 键，最多提示 3 次；打开设置后永久停止。
+  // 读写失败只记事件，不影响名单提交。
+  const DirectNotice = (function () {
+    const KEY = 'omniblock:direct-notice:v1';
+    const MAX = 3;
+    function load() {
+      try {
+        const raw = GM_getValue(KEY, '');
+        if (raw && typeof raw === 'string') {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            return {
+              count: Math.max(0, Math.min(MAX, Number(parsed.count) || 0)),
+              done: !!parsed.done,
+            };
+          }
+        }
+      } catch (e) { EventLog.recordError('ui.direct-notice.read', e); }
+      return { count: 0, done: false };
+    }
+    function save(state) {
+      try { GM_setValue(KEY, JSON.stringify(state)); } catch (e) { EventLog.recordError('ui.direct-notice.write', e); }
+    }
+    function maybeSuffix() {
+      const s = load();
+      if (s.done || s.count >= MAX) return '';
+      s.count += 1;
+      if (s.count >= MAX) s.done = true;
+      save(s);
+      return '（可在设置关闭直接屏蔽）';
+    }
+    function markSeen() {
+      const s = load();
+      if (!s.done) { s.done = true; save(s); }
+    }
+    return { maybeSuffix, markSeen };
+  })();
+
+  // 拉黑提交体（OB-UI-004）：确认气泡的 .ob-ok 与免确认直提分支共用同一段
+  // 提交、记账、toast 与重扫逻辑；任何一步失败都不吞异常，至少留下事件。
+  function commitBlock(normalizedKeys, label, anchorEl, onBlocked, commit, note, toastLabel, actionType, direct) {
+    let transaction;
+    try {
+      if (commit) transaction = commit();
+      else {
+        clearDanmakuExemptionsForManualBlock(normalizedKeys);
+        const result = Store.addIdentities(normalizedKeys, label, note || reasonFromAnchor(anchorEl));
+        transaction = {
+          result,
+          undo: result.addedKeys.length ? () => {
+            EventLog.record('action.manual.undo', { keyCount: result.addedKeys.length }, { immediate: true });
+            Store.removeIdentities(result.addedKeys);
+          } : null,
+        };
+      }
+    } catch (e) {
+      EventLog.recordError('ui.confirm.commit', e);
+      showToast('拉黑失败：' + (e && e.message || e));
+      return null;
+    }
+    EventLog.record('ui.confirm.commit', {
+      action: 'block', keyCount: normalizedKeys.length,
+      added: transaction && transaction.result ? Number(transaction.result.added) || 0 : 0,
+      source: actionType || 'confirm',
+    }, { immediate: true });
+    // 所有原生/快捷“本地拉黑”入口都在这里收口。能从入口回溯到正文时，
+    // 记录为 manual_miss；批量按钮、作者页等没有唯一正文时安全跳过，
+    // 不把整页或不确定内容伪装成反馈样本。
+    try { PromptSystem.recordManualBlockFromAnchor(anchorEl); } catch (e) { EventLog.recordError('ai.feedback.manual-miss', e); }
+    try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) { EventLog.recordError('ui.block.on-blocked', e); }
+    const persisted = !(transaction && transaction.result && transaction.result.persisted === false);
+    const committedKeys = transaction && transaction.result && Array.isArray(transaction.result.addedKeys)
+      ? transaction.result.addedKeys : [];
+    if (committedKeys.length) {
+      // 最近本地屏蔽操作：与撤销 toast 的 undo 使用同一批 keys，保证撤销一致。
+      try {
+        RecentActions.record({
+          type: actionType === 'bulk' || actionType === 'danmaku' || actionType === 'author' ? actionType : 'quick',
+          platform: RecentActions.platformForKeys(committedKeys),
+          label: String(toastLabel || label || normalizedKeys[0] || ''),
+          addedKeys: committedKeys,
+        });
+      } catch (e) { EventLog.recordError('action.recent.record', e); }
+      // 已屏蔽内容样本（OB-RULE-004）：快捷确认按入口锚点回溯正文，只对
+      // B站/抖音记录；批量/作品提交点的样本由各自提交点按列表记录，避免
+      // 把整页或不确定内容伪装成样本。采样失败绝不影响拉黑结果。
+      try {
+        const samplePlatform = RecentActions.platformForKeys(committedKeys);
+        const sampleText = PromptSystem.textFromAnchor(anchorEl);
+        if (sampleText && (samplePlatform === 'bili' || samplePlatform === 'douyin')) {
+          RuleSamples.record(samplePlatform, sampleText);
+        }
+      } catch (e) { EventLog.recordError('action.samples.record', e); }
+    }
+    const directNotice = direct && shouldSkipConfirm(actionType) ? DirectNotice.maybeSuffix() : '';
+    showToast((persisted
+      ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
+      : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`) + directNotice,
+    transaction && transaction.undo || null);
+    // 立即重扫
+    try { if (currentScanner) currentScanner.schedule(); } catch (e) { EventLog.recordError('ui.scan.schedule', e); }
+    return transaction;
+  }
+
+  // 一键屏蔽（OB-UI-004）：快捷与作者入口默认跳过确认气泡直接提交；
+  // 批量、弹幕与 UID 候选确认仍走气泡。设置关闭 quickBlockNoConfirm 后全部恢复确认。
+  function shouldSkipConfirm(actionType) {
+    return (actionType === 'quick' || actionType === 'author')
+      && Store.getSetting('quickBlockNoConfirm') !== false;
+  }
+
   function showConfirm(label, keys, anchorEl, onBlocked, commit, note, toastLabel, actionType) {
     const normalizedKeys = normalizeIdentityKeys(keys);
     if (!normalizedKeys.length) { EventLog.record('ui.confirm.rejected', { reasonCode: 'no-reliable-identity' }, { immediate: true }); showToast('无法识别可靠身份'); return; }
-    EventLog.record('ui.confirm.open', { action: 'block', keyCount: normalizedKeys.length, hasLabel: !!label }, { immediate: true });
+    const direct = shouldSkipConfirm(actionType);
+    EventLog.record(direct ? 'ui.block.direct' : 'ui.confirm.open', {
+      action: 'block', keyCount: normalizedKeys.length, hasLabel: !!label, source: actionType || 'confirm',
+    }, { immediate: true });
+    if (direct) {
+      let transaction = null;
+      try {
+        transaction = commitBlock(normalizedKeys, label, anchorEl, onBlocked, commit, note, toastLabel, actionType, true);
+      } catch (e) {
+        EventLog.recordError('ui.block.direct', e);
+        showToast('拉黑失败：' + (e && e.message || e));
+      } finally {
+        focusPageAfterOmniBlock(transaction ? 'direct-commit' : 'direct-error');
+      }
+      return;
+    }
     FloatingDock.hold('confirm');
     let box = $('#ob-confirm');
     if (box) box.remove();
@@ -8678,66 +8806,17 @@
     box.style.top = rect.top + 'px';
     document.body.appendChild(box);
     box.querySelector('.ob-ok').onclick = () => {
-      let transaction;
+      let transaction = null;
       try {
-        if (commit) transaction = commit();
-        else {
-          clearDanmakuExemptionsForManualBlock(normalizedKeys);
-          const result = Store.addIdentities(normalizedKeys, label, note || reasonFromAnchor(anchorEl));
-          transaction = {
-            result,
-            undo: result.addedKeys.length ? () => {
-              EventLog.record('action.manual.undo', { keyCount: result.addedKeys.length }, { immediate: true });
-              Store.removeIdentities(result.addedKeys);
-            } : null,
-          };
-        }
+        transaction = commitBlock(normalizedKeys, label, anchorEl, onBlocked, commit, note, toastLabel, actionType, false);
       } catch (e) {
         EventLog.recordError('ui.confirm.commit', e);
-        box.remove(); FloatingDock.release('confirm'); focusPageAfterOmniBlock('confirm-error'); showToast('拉黑失败：' + (e && e.message || e)); return;
+        showToast('拉黑失败：' + (e && e.message || e));
+      } finally {
+        box.remove();
+        FloatingDock.release('confirm');
+        focusPageAfterOmniBlock(transaction ? 'confirm-commit' : 'confirm-error');
       }
-      box.remove();
-      FloatingDock.release('confirm');
-      focusPageAfterOmniBlock('confirm-commit');
-      EventLog.record('ui.confirm.commit', {
-        action: 'block', keyCount: normalizedKeys.length,
-        added: transaction && transaction.result ? Number(transaction.result.added) || 0 : 0,
-      }, { immediate: true });
-      // 所有原生/快捷“本地拉黑”入口都在这里收口。能从入口回溯到正文时，
-      // 记录为 manual_miss；批量按钮、作者页等没有唯一正文时安全跳过，
-      // 不把整页或不确定内容伪装成反馈样本。
-      try { PromptSystem.recordManualBlockFromAnchor(anchorEl); } catch (e) { EventLog.recordError('ai.feedback.manual-miss', e); }
-      try { if (onBlocked) onBlocked(transaction && transaction.result); } catch (e) {}
-      const persisted = !(transaction && transaction.result && transaction.result.persisted === false);
-      const committedKeys = transaction && transaction.result && Array.isArray(transaction.result.addedKeys)
-        ? transaction.result.addedKeys : [];
-      if (committedKeys.length) {
-        // 最近本地屏蔽操作：与撤销 toast 的 undo 使用同一批 keys，保证撤销一致。
-        try {
-          RecentActions.record({
-            type: actionType === 'bulk' || actionType === 'danmaku' ? actionType : 'quick',
-            platform: RecentActions.platformForKeys(committedKeys),
-            label: String(toastLabel || label || normalizedKeys[0] || ''),
-            addedKeys: committedKeys,
-          });
-        } catch (e) { EventLog.recordError('action.recent.record', e); }
-        // 已屏蔽内容样本（OB-RULE-004）：快捷确认按入口锚点回溯正文，只对
-        // B站/抖音记录；批量/作品提交点的样本由各自提交点按列表记录，避免
-        // 把整页或不确定内容伪装成样本。采样失败绝不影响拉黑结果。
-        try {
-          const samplePlatform = RecentActions.platformForKeys(committedKeys);
-          const sampleText = PromptSystem.textFromAnchor(anchorEl);
-          if (sampleText && (samplePlatform === 'bili' || samplePlatform === 'douyin')) {
-            RuleSamples.record(samplePlatform, sampleText);
-          }
-        } catch (e) { EventLog.recordError('action.samples.record', e); }
-      }
-      showToast(persisted
-        ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
-        : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`,
-      transaction && transaction.undo || null);
-      // 立即重扫
-      if (currentScanner) currentScanner.schedule();
     };
   }
 
@@ -11251,7 +11330,7 @@
         event.stopPropagation(); event.preventDefault();
         const current = extract(card);
         if (!current.keys.length) return;
-        showConfirm(current.label, current.keys, button);
+        showConfirm(current.label, current.keys, button, null, null, null, '', 'author');
       });
       return button;
     }
@@ -11330,7 +11409,7 @@
           event.stopPropagation(); event.preventDefault();
           const current = extract(card);
           if (!current.keys.length) return;
-          showConfirm(current.label, current.keys, button);
+          showConfirm(current.label, current.keys, button, null, null, null, '', 'author');
         });
         if (link.parentElement === mount) mount.insertBefore(button, link.nextSibling);
         else mount.appendChild(button);
@@ -11422,7 +11501,7 @@
             event.stopPropagation(); event.preventDefault();
             const current = extract(item);
             if (!current.keys.length) return;
-            showConfirm(current.label, current.keys, button);
+            showConfirm(current.label, current.keys, button, null, null, null, '', 'quick');
           });
           mount.insertBefore(button, mount.firstChild);
         }
@@ -12768,7 +12847,7 @@
       button.title = '本地拉黑该内容作者'; button.setAttribute('aria-label', '本地拉黑该内容作者');
       button.addEventListener('click', (event) => {
         event.stopPropagation(); event.preventDefault();
-        showConfirm(info.label, info.keys, button);
+        showConfirm(info.label, info.keys, button, null, null, null, '', 'author');
       });
       return button;
     }
@@ -13319,8 +13398,10 @@
         EventLog.record('ui.quick.rejected', { platform: currentAdapter && currentAdapter.id || 'unknown', reasonCode: 'no-reliable-identity' }, { immediate: true });
         showToast('⚠️ 无法识别该用户，请重新打开菜单后重试'); return;
       }
-      EventLog.record('ui.quick.open-confirm', { platform: currentAdapter && currentAdapter.id || 'unknown' }, { immediate: true });
-      showConfirm(info.label || '该用户', info.keys, anchorEl, null, null, info.note);
+      const actionType = cfg.actionType
+        || (info.keys.some((k) => /^bili:dmhash:/.test(k)) ? 'danmaku' : 'quick');
+      EventLog.record(shouldSkipConfirm(actionType) ? 'ui.quick.direct' : 'ui.quick.open-confirm', { platform: currentAdapter && currentAdapter.id || 'unknown' }, { immediate: true });
+      showConfirm(info.label || '该用户', info.keys, anchorEl, null, null, info.note, '', actionType);
     };
     btn.addEventListener('click', activate);
     if (listItem) btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') activate(e); });
@@ -21819,6 +21900,7 @@
   }
 
   function openOptions() {
+    DirectNotice.markSeen();
     let panel = $('#ob-panel');
     if (panel) {
       if (typeof panel.__obClose === 'function') panel.__obClose();
@@ -21875,6 +21957,7 @@
             <label><input type="checkbox" id="ob-enabled" checked> 启用屏蔽</label>
             <label><input type="checkbox" id="ob-hover" checked> 显示平台专用悬浮入口（如抖音弹幕）</label>
             <label><input type="checkbox" id="ob-quick" checked> 显示"本地拉黑"入口（含B站弹幕工具）</label>
+            <label><input type="checkbox" id="ob-quick-noconfirm" checked> 快捷/作者入口直接屏蔽（按设置的撤销停留时长，默认 10 秒）</label>
             <label><input type="checkbox" id="ob-bulk" checked> 显示批量拉黑入口（含弹幕勾选批量）</label>
             <label><input type="checkbox" id="ob-skip" checked> 抖音推荐流自动切下一条</label>
             <label>抖音连续跳过上限 <input type="number" id="ob-skipcap" min="0" max="50" style="width:56px"> 条（0=不限制）</label>
@@ -22410,6 +22493,7 @@
       panel.querySelector('#ob-enabled').checked = s.enabled;
       panel.querySelector('#ob-hover').checked = s.showHoverButton;
       panel.querySelector('#ob-quick').checked = s.showQuickBlock;
+      panel.querySelector('#ob-quick-noconfirm').checked = s.quickBlockNoConfirm !== false;
       panel.querySelector('#ob-bulk').checked = s.showBulkBlock;
       panel.querySelector('#ob-skip').checked = s.douyinAutoSkip;
       panel.querySelector('#ob-skipcap').value = s.skipCap;
@@ -22485,6 +22569,7 @@
     };
     panel.querySelector('#ob-hover').onchange = (e) => { Store.setSetting('showHoverButton', e.target.checked); logSettingChange('showHoverButton', e.target.checked); };
     panel.querySelector('#ob-quick').onchange = (e) => { Store.setSetting('showQuickBlock', e.target.checked); logSettingChange('showQuickBlock', e.target.checked); refreshQuickBlock(); };
+    panel.querySelector('#ob-quick-noconfirm').onchange = (e) => { Store.setSetting('quickBlockNoConfirm', e.target.checked); logSettingChange('quickBlockNoConfirm', e.target.checked); };
     panel.querySelector('#ob-bulk').onchange = (e) => { Store.setSetting('showBulkBlock', e.target.checked); logSettingChange('showBulkBlock', e.target.checked); refreshBulkBlock(); };
     panel.querySelector('#ob-skip').onchange = (e) => { Store.setSetting('douyinAutoSkip', e.target.checked); logSettingChange('douyinAutoSkip', e.target.checked); };
     panel.querySelector('#ob-skipcap').onchange = (e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 0) { Store.setSetting('skipCap', v); logSettingChange('skipCap', v); } };
@@ -22616,6 +22701,7 @@
   if (window.__OB_TEST_HOOKS__ === 'omniblock-test-only') {
     window.OB = {
       Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
+      makeQuickBtn,
       setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
       refreshWork: refreshWorkBlock, openWorkBlock,
       openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,

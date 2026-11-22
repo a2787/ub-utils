@@ -38,7 +38,7 @@ window.__gm = { 'omniblock:data:v1': JSON.stringify({
     'p_bob': { label:'Bob', note:'', createdAt:0, hits:0, identities:['bili:uid:222'] },
     'p_frank': { label:'Frank', note:'', createdAt:0, hits:0, identities:['bili:uid:666'] }
   },
-  settings: { enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6 }
+  settings: { enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, quickBlockNoConfirm:false }
 }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };

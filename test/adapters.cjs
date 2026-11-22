@@ -10,7 +10,7 @@ const version = (userscript.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[
 function shim(blockedIdentity) {
   const persons = blockedIdentity ? { blocked:{ label:'Blocked', note:'', createdAt:0, hits:0, identities:[blockedIdentity] } } : {};
   return `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:${JSON.stringify(persons)}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => { window.__gm[k] = v; };
 window.GM_deleteValue = () => {};
@@ -884,18 +884,24 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       const authorButton = authorButtons[0] || null;
       let authorConfirm = false; let authorNamed = false; let authorBlocked = false; let authorRestored = false;
       if (authorButton) {
+        // OB-UI-004 作者入口一键直提：运行时打开 quickBlockNoConfirm，起手清理
+        // 夹具身份避免 before/after 被前序残留污染；行尾恢复 false 保留确认路径覆盖。
+        window.OB.Store.setSetting('quickBlockNoConfirm', true);
+        window.OB.Store.removeIdentities(['weibo:uid:1234567890']);
+        const authorBefore = window.OB.Index.size();
         authorButton.click();
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         const authorConfirmBox = document.getElementById('ob-confirm');
         authorConfirm = !!authorConfirmBox;
-        authorNamed = !!(authorConfirmBox && authorConfirmBox.textContent.includes('微博作者'));
         if (authorConfirmBox) authorConfirmBox.querySelector('.ob-ok').click();
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        authorBlocked = window.OB.Index.isBlocked('weibo:uid:1234567890');
+        await new Promise((resolve) => setTimeout(resolve, 100));
         const authorToast = document.getElementById('ob-toast');
+        authorNamed = !!(authorToast && authorToast.textContent.includes('微博作者'));
+        authorBlocked = window.OB.Index.isBlocked('weibo:uid:1234567890') || window.OB.Index.size() > authorBefore;
         if (authorToast) authorToast.querySelector('button').click();
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        authorRestored = !window.OB.Index.isBlocked('weibo:uid:1234567890');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        authorRestored = !window.OB.Index.isBlocked('weibo:uid:1234567890') && window.OB.Index.size() === authorBefore;
+        window.OB.Store.setSetting('quickBlockNoConfirm', false);
       }
       return {
         selected: comments.map((item) => adapter.selectors.some((selector) => item.matches(selector))),
@@ -951,7 +957,8 @@ const WEIBO_REPLY_MODAL_FIXTURE = `
       && weiboDetail.genericHoverButtonCount === 0
       && weiboDetail.inlineButtonsAfterHover
       && weiboDetail.authorButtonCount === 1
-      && weiboDetail.authorConfirm && weiboDetail.authorNamed && weiboDetail.authorBlocked && weiboDetail.authorRestored
+      // 一键直提（OB-UI-004）：作者入口不再弹 #ob-confirm，直接屏蔽 + toast 撤销恢复。
+      && weiboDetail.authorConfirm === false && weiboDetail.authorNamed && weiboDetail.authorBlocked && weiboDetail.authorRestored
       && weiboDetail.duplicateQuickCount === 0
       && weiboDetail.expandRowGuard
       && /内容屏蔽（评论\/AI）/.test(weiboDetail.bulkText || '')

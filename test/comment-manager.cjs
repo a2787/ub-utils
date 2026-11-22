@@ -12,7 +12,7 @@ const source = fs.readFileSync(path.join(ROOT, 'omniblock.user.js'), 'utf8');
 const version = (source.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0.0'])[1];
 const shim = `
 window.__OB_PROBE_DIAGNOSTICS__ = { enabled:true };
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'disappear', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'disappear', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true } }) };
 window.GM_getValue = (key, fallback) => key in window.__gm ? window.__gm[key] : fallback;
 window.GM_setValue = (key, value) => { window.__gm[key] = value; if (key === 'omniblock:data:v1') window.__writes = (window.__writes || 0) + 1; };
 window.GM_deleteValue = (key) => { delete window.__gm[key]; };

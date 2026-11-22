@@ -12,7 +12,7 @@ const LOCAL_VERSION = (USERSCRIPT.match(/\/\/\s*@version\s+([\d.]+)/) || [, '0.0
 const SAVE_SCREENSHOTS = process.argv.includes('--screenshot');
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => {
   window.__gm[k] = v;
@@ -727,6 +727,106 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (replyBlock.exists && replyBlock.confirm && replyBlock.named && replyBlock.blockedBeforeUndo && replyBlock.parentVisible && replyBlock.bars === 0 && replyBlock.restored)
       report.pass.push('QB-L 真实楼中楼菜单拉黑后只隐藏该回复，撤销立即恢复');
     else report.fail.push('QB-L 楼中楼菜单拉黑失败：' + JSON.stringify(replyBlock));
+
+    // QB-NC-1（OB-UI-004）：快捷入口在 quickBlockNoConfirm 默认直提时不弹确认，
+    // 直接写名单并出可撤销 toast；finally 必须恢复设置并清理 444，避免污染同页后续用例。
+    const noConfirm = await page.evaluate(async () => {
+      window.OB.Store.setSetting('quickBlockNoConfirm', true);
+      window.OB.Store.removeIdentities(['bili:uid:444']);
+      try {
+        const renderer = window.__replyRenderer('444');
+        const btn = renderer && renderer.shadowRoot
+          .querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
+        if (!btn) return { exists: false };
+        btn.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const confirm = document.getElementById('ob-confirm');
+        const blocked = window.OB.Index.isBlocked('bili:uid:444');
+        const toast = document.getElementById('ob-toast');
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 80)); }
+        const restored = !window.OB.Index.isBlocked('bili:uid:444');
+        return { exists: true, confirm: !!confirm, blocked, toast: !!toast, restored };
+      } finally {
+        window.OB.Store.setSetting('quickBlockNoConfirm', false);
+        window.OB.Store.removeIdentities(['bili:uid:444']);
+      }
+    });
+    if (noConfirm.exists && !noConfirm.confirm && noConfirm.blocked && noConfirm.toast && noConfirm.restored)
+      report.pass.push('QB-NC-1 快捷入口无确认直接屏蔽，撤销可恢复');
+    else report.fail.push('QB-NC-1 失败：' + JSON.stringify(noConfirm));
+
+    // QB-NC-3（OB-UI-004）：直提提示最多 3 次；打开设置后停止，不再出现。
+    const noticeRun = await page.evaluate(async () => {
+      const KEY = 'omniblock:direct-notice:v1';
+      const clickReply = async () => {
+        window.OB.Store.removeIdentities(['bili:uid:444']);
+        const renderer = window.__replyRenderer('444');
+        const btn = renderer && renderer.shadowRoot
+          .querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
+        if (!btn) return { exists: false, text: '' };
+        btn.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const toast = document.getElementById('ob-toast');
+        const text = toast ? toast.textContent : '';
+        const undo = toast && toast.querySelector('button');
+        if (undo) { undo.click(); await new Promise((resolve) => setTimeout(resolve, 80)); }
+        window.OB.Store.removeIdentities(['bili:uid:444']);
+        return { exists: true, text };
+      };
+      window.OB.Store.setSetting('quickBlockNoConfirm', true);
+      try {
+        delete window.__gm[KEY];
+        const first = await clickReply();
+        const second = await clickReply();
+        const third = await clickReply();
+        const fourth = await clickReply();
+        window.OB.openOptions();
+        window.OB.openOptions();
+        const afterOpen = await clickReply();
+        return { first, second, third, fourth, afterOpen };
+      } finally {
+        window.OB.Store.setSetting('quickBlockNoConfirm', false);
+        window.OB.Store.removeIdentities(['bili:uid:444']);
+        delete window.__gm[KEY];
+      }
+    });
+    const noticeText = '可在设置关闭直接屏蔽';
+    if (noticeRun.first.exists && noticeRun.first.text.includes(noticeText)
+      && noticeRun.second.text.includes(noticeText)
+      && noticeRun.third.text.includes(noticeText)
+      && noticeRun.fourth.exists && !noticeRun.fourth.text.includes(noticeText)
+      && noticeRun.afterOpen.exists && !noticeRun.afterOpen.text.includes(noticeText))
+      report.pass.push('QB-NC-3 直提提示最多 3 次，打开设置后停止');
+    else report.fail.push('QB-NC-3 失败：' + JSON.stringify(noticeRun));
+
+    // QB-NC-2（OB-UI-004）：makeQuickBtn 是共享工厂；dmhash 键即使从快捷入口进入，
+    // 也必须派生为 danmaku 并保留确认气泡，不能被默认直提绕过。
+    const dmhashGuard = await page.evaluate(async () => {
+      window.OB.Store.setSetting('quickBlockNoConfirm', true);
+      const anchor = document.createElement('div');
+      document.body.appendChild(anchor);
+      try {
+        const btn = window.OB.makeQuickBtn('本地拉黑', anchor, {
+          identify: () => ({ keys: ['bili:dmhash:deadbeef'], label: 'DM User', note: '' }),
+        }, 'bili:dmhash:deadbeef');
+        document.body.appendChild(btn);
+        btn.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const confirm = document.getElementById('ob-confirm');
+        const text = confirm ? confirm.textContent : '';
+        const cancel = confirm && confirm.querySelector('.ob-no');
+        if (cancel) cancel.click();
+        btn.remove();
+        return { confirm: !!confirm, text };
+      } finally {
+        anchor.remove();
+        window.OB.Store.setSetting('quickBlockNoConfirm', false);
+      }
+    });
+    if (dmhashGuard.confirm && dmhashGuard.text.includes('DM User'))
+      report.pass.push('QB-NC-2 dmhash 走共享快捷工厂仍弹确认，未被直提绕过');
+    else report.fail.push('QB-NC-2 失败：' + JSON.stringify(dmhashGuard));
 
     const quickBlock = await page.evaluate(async () => {
       const renderer = window.__commentRenderer('111');

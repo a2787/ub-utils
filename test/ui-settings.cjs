@@ -20,7 +20,7 @@ const BASELINE_WINDOW_CONFIRM = 7;
 const MAX_WINDOW_CONFIRM = 4;
 
 const SHIM = `
-window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, showBulkBlock:true, localBackupEnabled:false, logEnabled:false } }) };
+window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true, localBackupEnabled:false, logEnabled:false } }) };
 window.__nativeDialogs = { confirm: 0, prompt: 0, alert: 0 };
 window.confirm = (msg) => { window.__nativeDialogs.confirm++; return true; };
 window.prompt = (msg) => { window.__nativeDialogs.prompt++; return ''; };
