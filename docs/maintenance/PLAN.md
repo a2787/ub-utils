@@ -110,11 +110,11 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - non-goals: 不改 `omniblock:data:v1` schema；不删除名单/备份/撤销；不做全量重写；不新增 npm 依赖；不把 AI 默认开启。
 - dependencies: OB-UI-004
 - acceptance: required
-  - [ ] 存储降级/写入失败可见；日志 ≤2 MiB；备份坏数据不覆盖； `test/health.cjs` 通过。
+  - [x] 存储降级/写入失败可见；日志 7 天/5 千条/2 MiB；备份坏数据不覆盖；HEALTH-1/2 通过（quickblock 套件）。
   - [ ] CI 保留现有 22 项并补差集 headless 测试；`test/code-health.cjs` 门禁；release 脚本 dry-run/publish 分工。
   - [ ] README ≤20 KiB、docs-check 通过；发布前真站证据按标签记录。
-- evidence: pending；计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
-- next: 实现 Health/日志/备份 detailed；再做设置/更新/文档/CI/发布。
+- evidence: `structure regression`：quickblock 43/43（含 HEALTH-1/2）、run 20/20、state 9/9；Health 诊断卡在设置日志区可见。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
+- next: Phase 3 设置/更新/文档；Phase 4 CI/code-health；Phase 5 真站/发布。
 - updated: 2026-11-23
 - supersedes: none
 

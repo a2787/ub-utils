@@ -50,6 +50,11 @@
 (async function () {
   'use strict';
 
+  // 关键静默路径的安全记录器：EventLog 尚未初始化时也不会二次抛错。
+  function recordErrorSafe(scope, error) {
+    try { EventLog.recordError(scope, error); } catch (e) { void e; }
+  }
+
   // 运行锁必须先于任何异步初始化建立。开发扩展的存储恢复栅栏可能等待
   // 多个消息边界；如果在 await 之后才写锁，重复注入可以同时通过检查，
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
@@ -1509,14 +1514,24 @@
       };
     }
 
-    function readBackupRecords() {
-      let raw;
-      try { raw = GM_getValue(BACKUP_STORAGE_KEY, null); } catch (e) { raw = null; }
+    function readBackupRecordsDetailed() {
+      let raw = null;
+      let readError = null;
+      let parseError = null;
+      try { raw = GM_getValue(BACKUP_STORAGE_KEY, null); } catch (e) { readError = e; raw = null; }
+      let parsed = raw;
       if (raw && typeof raw === 'string') {
-        try { raw = JSON.parse(raw); } catch (e) { raw = null; }
+        try { parsed = JSON.parse(raw); } catch (e) { parseError = e; parsed = null; }
       }
-      const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.snapshots) ? raw.snapshots : []);
-      return list.map(normalizeSnapshot).filter(Boolean).sort((a, b) => b.revision - a.revision).slice(0, BACKUP_RETENTION);
+      const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.snapshots) ? parsed.snapshots : []);
+      const records = list.map(normalizeSnapshot).filter(Boolean).sort((a, b) => b.revision - a.revision).slice(0, BACKUP_RETENTION);
+      const corrupted = !!(readError || parseError
+        || (raw && !Array.isArray(parsed) && !(parsed && Array.isArray(parsed.snapshots))));
+      return { records, corrupted, readError, parseError };
+    }
+
+    function readBackupRecords() {
+      return readBackupRecordsDetailed().records;
     }
 
     function writeBackupRecords(records) {
@@ -1545,7 +1560,7 @@
       // 同步实现自行处理认证、加密、冲突和网络；Store 只提供规范化快照，
       // 不替任何 AI provider 上传名单。
       for (const registration of backupSinks.values()) {
-        try { registration.sink.onSnapshot(JSON.parse(JSON.stringify(snapshot))); } catch (e) {}
+        try { registration.sink.onSnapshot(JSON.parse(JSON.stringify(snapshot))); } catch (e) { recordErrorSafe('backup.sink', e); }
       }
     }
 
@@ -1557,7 +1572,12 @@
         backupError = '本地快照过大，已保留旧快照';
         return false;
       }
-      const records = readBackupRecords();
+      const detail = readBackupRecordsDetailed();
+      if (detail.corrupted) {
+        backupError = '本地快照读取失败，已跳过写入';
+        return false;
+      }
+      const records = detail.records;
       const fingerprint = snapshotFingerprint(normalized);
       // 只跳过与当前最新快照完全相同的重复写入；历史上再次出现同一状态时仍要留下
       // 新的时间点，保证“恢复上一份”在恢复操作后有可逆路径。
@@ -1908,13 +1928,17 @@
     }
 
     function backupStatus() {
-      const records = readBackupRecords();
+      const detail = readBackupRecordsDetailed();
+      const records = detail.records;
       return {
         enabled: !!getSetting('localBackupEnabled'),
         count: records.length,
         retention: BACKUP_RETENTION,
         latestAt: records[0] ? records[0].exportedAt : 0,
-        error: backupError,
+        error: backupError || (detail.corrupted ? '本地快照读取失败' : ''),
+        corrupted: detail.corrupted,
+        readError: detail.readError ? 'read-error' : '',
+        parseError: detail.parseError ? 'parse-error' : '',
         format: BACKUP_FORMAT,
         schema: BACKUP_SCHEMA,
       };
@@ -2094,7 +2118,7 @@
     }
 
     function persist() {
-      try { GM_setValue(STORAGE_KEY, JSON.stringify(entries)); } catch (e) {}
+      try { GM_setValue(STORAGE_KEY, JSON.stringify(entries)); } catch (e) { recordErrorSafe('action.recent.persist', e); }
     }
 
     function platformForKeys(keys) {
@@ -2174,9 +2198,9 @@
     const DAY_KEY_PREFIX = 'omniblock:events:v1:';
     const FORMAT = 'omniblock.events';
     const SCHEMA = 1;
-    const RETENTION_DAYS = 30;
-    const MAX_EVENTS_PER_DAY = 50000;
-    const MAX_TOTAL_CHARS = 16 * 1024 * 1024;
+    const RETENTION_DAYS = 7;
+    const MAX_EVENTS_PER_DAY = 5000;
+    const MAX_TOTAL_CHARS = 2 * 1024 * 1024;
     // 被动遥测不需要把每一个 MutationObserver 回调都单独落盘。将高频、无用户
     // 操作的观察事件聚合成短窗口摘要，保留诊断计数和少量安全样本，避免空闲
     // 页面持续重写整份日志分片；用户操作、屏蔽动作和错误仍由 record() 逐条记录。
@@ -2877,7 +2901,7 @@
           for (const [entryKey, value] of hitCounts) out[entryKey] = value;
           GM_setValue(RULE_HITS_STORAGE_KEY, JSON.stringify(out));
         }
-      } catch (e) {}
+      } catch (e) { recordErrorSafe('rule-hits.persist', e); }
     }
     function recordHit(platform, ruleId) {
       loadHits();
@@ -3109,7 +3133,7 @@
     function persist() {
       try {
         if (typeof GM_setValue === 'function') GM_setValue(RULE_SAMPLES_STORAGE_KEY, JSON.stringify(cache));
-      } catch (e) {}
+      } catch (e) { recordErrorSafe('rule-samples.persist', e); }
     }
     // 采样绝不抛错、绝不影响拉黑：任何异常都吞掉并返回 null。
     function record(platform, rawText) {
@@ -3977,6 +4001,9 @@
     #ob-panel .ob-log-toolbar button:hover { background: #f5f5f5; }
     #ob-panel .ob-log-toolbar .ob-log-danger { color: #c0392b; border-color: #e2a39c; }
     #ob-panel .ob-log-status { color: #777; font-size: 11px; line-height: 1.5; margin-top: 6px; word-break: break-word; }
+    #ob-panel .ob-health-status { margin-top: 8px; padding: 10px 12px; border: 1px solid #e6e7eb; border-radius: 10px; background: #fafbfc; color: #555; font-size: 11px; line-height: 1.6; white-space: pre-line; word-break: break-word; }
+    #ob-panel .ob-health-status[data-state="warn"] { border-color: #e0b36a; background: #fff8e8; color: #7a5b1e; }
+    #ob-panel .ob-health-status[data-state="bad"] { border-color: #d98b8b; background: #fff1f1; color: #8a2f2f; }
     #ob-panel .ob-log-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 6px; margin-top: 8px; }
     #ob-panel .ob-log-summary-item { min-width: 0; padding: 6px 8px; border: 1px solid #eee; border-radius: 6px; background: #fafafa; color: #555; font-size: 11px; word-break: break-word; }
     #ob-panel .ob-log-events { box-sizing: border-box; max-height: 260px; overflow: auto; margin-top: 8px; padding: 7px 8px; border: 1px solid #eee; border-radius: 6px; background: #1f2024; color: #e8e8e8; font: 11px/1.5 Consolas, 'Courier New', monospace; white-space: pre-wrap; word-break: break-word; }
@@ -4428,6 +4455,7 @@
       #ob-panel .ob-platform-title { background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim); }
       #ob-panel .ob-item { border-bottom-color: var(--ob-dark-border-soft); }
       #ob-panel .ob-log-intro, #ob-panel .ob-log-status { color: var(--ob-dark-text-dim); }
+      #ob-panel .ob-health-status { border-color: var(--ob-dark-border-soft); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim); }
       #ob-panel .ob-log-summary-item {
         border-color: var(--ob-dark-border-soft); background: var(--ob-dark-bg-soft); color: var(--ob-dark-text-dim);
       }
@@ -8658,6 +8686,36 @@
     }
   }
 
+  // 健康聚合（OB-MAINT-005）：只聚存储/备份/日志状态和最近错误，不改名单写入路径。
+  // ok 使用 5 分钟窗口，避免一次瞬时后台失败把设置诊断永久锁红。
+  const Health = (function () {
+    const MAX_ERRORS = 20;
+    const RECENT_WINDOW_MS = 5 * 60 * 1000;
+    const errors = [];
+    let reportFailures = 0;
+    function report(scope, error, data) {
+      const entry = {
+        at: Date.now(),
+        scope: String(scope || 'unknown').slice(0, 64),
+        name: String(error && error.name || 'Error').slice(0, 48),
+        message: String(error && error.message || error || '').slice(0, 240),
+      };
+      errors.push(entry);
+      if (errors.length > MAX_ERRORS) errors.shift();
+      try { EventLog.recordError('health.' + entry.scope, error, data); } catch (e) { reportFailures++; }
+    }
+    function snapshot() {
+      const storage = Store.storageStatus();
+      const logs = EventLog.status();
+      const backup = Store.backupStatus ? Store.backupStatus() : null;
+      const degraded = !!(storage && storage.degraded);
+      const recentErrors = errors.filter((item) => Date.now() - item.at <= RECENT_WINDOW_MS);
+      return { ok: !degraded && !recentErrors.length, storage, logs, backup, errors: errors.slice(), recentErrors, reportFailures };
+    }
+    return { report, snapshot };
+  })();
+  let healthNoticeShown = false;
+
   // 直提提示（OB-UI-004）：独立 GM 键，最多提示 3 次；打开设置后永久停止。
   // 读写失败只记事件，不影响名单提交。
   const DirectNotice = (function () {
@@ -8752,10 +8810,16 @@
         }
       } catch (e) { EventLog.recordError('action.samples.record', e); }
     }
+    if (!persisted) Health.report('commit.persist', new Error('storage-persist-failed'));
     const directNotice = direct && shouldSkipConfirm(actionType) ? DirectNotice.maybeSuffix() : '';
+    let healthNotice = '';
+    if (!persisted && !healthNoticeShown) {
+      healthNoticeShown = true;
+      healthNotice = '；本地存储异常，详见设置→日志诊断';
+    }
     showToast((persisted
       ? `已拉黑：${toastLabel || label || normalizedKeys[0]}`
-      : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`) + directNotice,
+      : `已在本页生效但未确认落盘：${toastLabel || label || normalizedKeys[0]}（请重试或导出备份）`) + directNotice + healthNotice,
     transaction && transaction.undo || null);
     // 立即重扫
     try { if (currentScanner) currentScanner.schedule(); } catch (e) { EventLog.recordError('ui.scan.schedule', e); }
@@ -18815,7 +18879,7 @@
     function saveAnalyzedCacheNow() {
       analyzedCache.dirty = false;
       if (!analyzedCache.loaded || typeof GM_setValue !== 'function') return;
-      try { GM_setValue(AI_ANALYZED_STORAGE_KEY, JSON.stringify(pruneAndSerializeAnalyzedCache())); } catch (e) {}
+      try { GM_setValue(AI_ANALYZED_STORAGE_KEY, JSON.stringify(pruneAndSerializeAnalyzedCache())); } catch (e) { recordErrorSafe('ai.analyzed.persist', e); }
     }
 
     function scheduleAnalyzedCacheSave() {
@@ -18894,7 +18958,7 @@
           version: 1, day: usageState.day,
           requests: usageState.dayRequests, records: usageState.dayRecords, chars: usageState.dayChars,
         }));
-      } catch (e) {}
+      } catch (e) { recordErrorSafe('ai.usage.persist', e); }
     }
 
     // 每次真实发出的 provider 请求（含重试）都计数；取消前的请求同样真实消耗过配额。
@@ -22053,6 +22117,7 @@
           </div>
           <label style="display:block;margin-top:8px"><input type="checkbox" id="ob-log-enabled" checked> 自动记录详细运行日志</label>
           <div id="ob-log-status" class="ob-log-status"></div>
+          <div id="ob-health-status" class="ob-health-status" role="status"></div>
           <div id="ob-log-summary" class="ob-log-summary"></div>
           <pre id="ob-log-events" class="ob-log-events" aria-live="polite"></pre>
         </section>
@@ -22135,6 +22200,27 @@
 
     function renderLogMap(map) {
       return Object.keys(map || {}).sort().map((key) => key + '=' + map[key]).join('，') || '无';
+    }
+
+    function updateHealthCard() {
+      const el = panel.querySelector('#ob-health-status');
+      if (!el) return;
+      const snapshot = Health.snapshot();
+      const storage = snapshot.storage || {};
+      const backup = snapshot.backup || {};
+      const logs = snapshot.logs || {};
+      const recent = snapshot.recentErrors || [];
+      const warn = !!(storage.degraded || (backup && (backup.corrupted || backup.error)));
+      el.dataset.state = storage.degraded ? 'bad' : (warn ? 'warn' : 'ok');
+      const lines = [
+        '存储：' + (storage.degraded ? '只读降级' : '正常') + ' · 日志：' + (logs.events || 0) + ' 条 / ' + Math.ceil((logs.chars || 0) / 1024) + ' KiB',
+        '备份：' + (backup.corrupted ? '读取异常' : (backup.error || '正常')) + ' · 最近错误：' + recent.length,
+      ];
+      if (recent.length) {
+        const last = recent[recent.length - 1];
+        lines.push('最近：' + last.scope + ' · ' + last.message);
+      }
+      el.textContent = lines.join('\n');
     }
 
     function refreshLogs() {
@@ -22499,6 +22585,7 @@
       panel.querySelector('#ob-skipcap').value = s.skipCap;
       panel.querySelector('#ob-undo-seconds').value = String(s.undoToastSeconds);
       panel.querySelector('#ob-log-enabled').checked = s.logEnabled !== false;
+      updateHealthCard();
       const backup = Store.backupStatus();
       const backupToggle = panel.querySelector('#ob-local-backup');
       const restoreBackup = panel.querySelector('#ob-restore-backup');
@@ -22701,7 +22788,7 @@
   if (window.__OB_TEST_HOOKS__ === 'omniblock-test-only') {
     window.OB = {
       Store, Index, openOptions, adapters: Adapters, collectUsers, identifyFromAnchor,
-      makeQuickBtn,
+      makeQuickBtn, showConfirm,
       setupQuickBlock: refreshQuickBlock, refreshBulk: refreshBulkBlock,
       refreshWork: refreshWorkBlock, openWorkBlock,
       openCommentManager, closeCommentManager, openContentManager, closeContentManager, runThreadBlock, mergeCommentRecords,
@@ -22710,6 +22797,7 @@
       sync: AccountSync,
       logs: EventLog,
       recentActions: RecentActions,
+      health: Health,
       ui: { undoToastDurationMs, showOBConfirm },
       danmakuRules: DanmakuRules,
       danmakuExemptions: DanmakuExemptions,

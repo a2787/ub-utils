@@ -15,6 +15,7 @@ const SHIM = `
 window.__gm = { 'omniblock:data:v1': JSON.stringify({ version:1, persons:{}, settings:{ enabled:true, hideMode:'collapse', showHoverButton:true, douyinAutoSkip:true, skipCap:6, showQuickBlock:true, quickBlockNoConfirm:false, showBulkBlock:true } }) };
 window.GM_getValue = (k,d) => (k in window.__gm ? window.__gm[k] : d);
 window.GM_setValue = (k,v) => {
+  if (window.__failDataWrite && k === 'omniblock:data:v1') throw new Error('forced data write failure');
   window.__gm[k] = v;
   // 本地快照使用独立 GM 键；事务断言只统计主名单提交次数。
   if (k === 'omniblock:data:v1') window.__writes = (window.__writes || 0) + 1;
@@ -782,9 +783,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const third = await clickReply();
         const fourth = await clickReply();
         window.OB.openOptions();
+        const healthCard = document.querySelector('#ob-health-status');
+        const healthText = healthCard ? healthCard.textContent : '';
         window.OB.openOptions();
         const afterOpen = await clickReply();
-        return { first, second, third, fourth, afterOpen };
+        return { first, second, third, fourth, afterOpen, healthCard: !!healthCard, healthText };
       } finally {
         window.OB.Store.setSetting('quickBlockNoConfirm', false);
         window.OB.Store.removeIdentities(['bili:uid:444']);
@@ -796,8 +799,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       && noticeRun.second.text.includes(noticeText)
       && noticeRun.third.text.includes(noticeText)
       && noticeRun.fourth.exists && !noticeRun.fourth.text.includes(noticeText)
-      && noticeRun.afterOpen.exists && !noticeRun.afterOpen.text.includes(noticeText))
-      report.pass.push('QB-NC-3 直提提示最多 3 次，打开设置后停止');
+      && noticeRun.afterOpen.exists && !noticeRun.afterOpen.text.includes(noticeText)
+      && noticeRun.healthCard && noticeRun.healthText.includes('存储'))
+      report.pass.push('QB-NC-3 直提提示最多 3 次，打开设置后停止；Health 卡可见');
     else report.fail.push('QB-NC-3 失败：' + JSON.stringify(noticeRun));
 
     // QB-NC-2（OB-UI-004）：makeQuickBtn 是共享工厂；dmhash 键即使从快捷入口进入，
@@ -827,6 +831,59 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (dmhashGuard.confirm && dmhashGuard.text.includes('DM User'))
       report.pass.push('QB-NC-2 dmhash 走共享快捷工厂仍弹确认，未被直提绕过');
     else report.fail.push('QB-NC-2 失败：' + JSON.stringify(dmhashGuard));
+
+    // HEALTH-1（OB-MAINT-005）：主名单写入失败时 Health 应变为异常，
+    // toast 追加一次存储异常提示；恢复写入后清理身份与设置。
+    const healthFailure = await page.evaluate(async () => {
+      window.OB.Store.setSetting('quickBlockNoConfirm', true);
+      window.OB.Store.removeIdentities(['bili:uid:444']);
+      const renderer = window.__replyRenderer('444');
+      const btn = renderer && renderer.shadowRoot
+        .querySelector('bili-comment-menu').shadowRoot.querySelector('.ob-quick');
+      if (!btn) return { exists: false };
+      window.__failDataWrite = true;
+      try {
+        const before = window.OB.health.snapshot();
+        btn.click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const after = window.OB.health.snapshot();
+        const toast = document.getElementById('ob-toast');
+        return {
+          exists: true,
+          beforeOk: before.ok,
+          afterOk: after.ok,
+          toast: toast ? toast.textContent : '',
+          blocked: window.OB.Index.isBlocked('bili:uid:444'),
+        };
+      } finally {
+        window.__failDataWrite = false;
+        window.OB.Store.removeIdentities(['bili:uid:444']);
+        window.OB.Store.setSetting('quickBlockNoConfirm', false);
+      }
+    });
+    if (healthFailure.afterOk === false && healthFailure.toast.includes('本地存储异常'))
+      report.pass.push('HEALTH-1 主名单写入失败时 Health 可见并提示一次');
+    else report.fail.push('HEALTH-1 失败：' + JSON.stringify(healthFailure));
+
+    // HEALTH-2（OB-MAINT-005）：备份键损坏时 backupStatus 标记 corrupted，
+    // 后续 persist 的 captureBackup 不得覆盖坏数据。
+    const backupCorrupt = await page.evaluate(async () => {
+      const key = 'omniblock:backup:v1';
+      const original = window.__gm[key];
+      window.__gm[key] = '{bad json';
+      try {
+        const status = window.OB.Store.backupStatus();
+        window.OB.Store.setSetting('undoToastSeconds', 11);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { corrupted: !!status.corrupted, unchanged: window.__gm[key] === '{bad json' };
+      } finally {
+        if (original === undefined) delete window.__gm[key]; else window.__gm[key] = original;
+        window.OB.Store.setSetting('undoToastSeconds', 10);
+      }
+    });
+    if (backupCorrupt.corrupted && backupCorrupt.unchanged)
+      report.pass.push('HEALTH-2 坏备份被标记且不被覆盖');
+    else report.fail.push('HEALTH-2 失败：' + JSON.stringify(backupCorrupt));
 
     const quickBlock = await page.evaluate(async () => {
       const renderer = window.__commentRenderer('111');
