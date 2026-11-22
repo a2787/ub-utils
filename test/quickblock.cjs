@@ -885,6 +885,26 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       report.pass.push('HEALTH-2 坏备份被标记且不被覆盖');
     else report.fail.push('HEALTH-2 失败：' + JSON.stringify(backupCorrupt));
 
+    // UNDO-LAST：最近操作按时间倒序，撤销上一次只移除最新一条。
+    const undoLastRun = await page.evaluate(async () => {
+      window.OB.Store.removeIdentities(['bili:uid:901', 'bili:uid:902']);
+      window.OB.Store.addIdentities(['bili:uid:901'], 'Older');
+      window.OB.Store.addIdentities(['bili:uid:902'], 'Newer');
+      window.OB.recentActions.record({ type: 'quick', platform: 'bili', label: 'Older', addedKeys: ['bili:uid:901'] });
+      window.OB.recentActions.record({ type: 'quick', platform: 'bili', label: 'Newer', addedKeys: ['bili:uid:902'] });
+      const result = window.OB.recentActions.undoLast();
+      const list = window.OB.recentActions.list();
+      const olderStill = window.OB.Index.isBlocked('bili:uid:901');
+      const newerGone = !window.OB.Index.isBlocked('bili:uid:902');
+      const olderEntry = list.find((item) => item.label === 'Older');
+      if (olderEntry) window.OB.recentActions.remove(olderEntry.id);
+      window.OB.Store.removeIdentities(['bili:uid:901', 'bili:uid:902']);
+      return { ok: result.ok, removed: result.removed, olderStill, newerGone };
+    });
+    if (undoLastRun.ok && undoLastRun.newerGone && undoLastRun.olderStill)
+      report.pass.push('UNDO-LAST 撤销上一次只移除最新记录');
+    else report.fail.push('UNDO-LAST 失败：' + JSON.stringify(undoLastRun));
+
     const quickBlock = await page.evaluate(async () => {
       const renderer = window.__commentRenderer('111');
       const container = window.OB.adapters.bilibili.containerOf(renderer);

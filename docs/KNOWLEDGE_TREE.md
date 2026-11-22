@@ -45,7 +45,9 @@ AGENTS.md
 │   ├── docs/maintenance/plans/             ← 已关闭计划的短归档
 │   ├── docs/maintenance/plans/2026-11-18-current-history-archive.md ← CURRENT 早期日期条目逐字归档
 │   └── docs/maintenance/LEGACY-HISTORY.md ← 重组前只读完整历史
-├── README.md                              ← 安装用户行为与当前限制
+├── README.md                              ← 安装用户行为摘要与当前限制
+│   ├── docs/usage/PLATFORMS.md            ← 分平台实现细节、限制与验证状态
+│   └── docs/usage/AI-AND-SYNC.md          ← AI 直连、规则、同步与本地数据详解
 ├── CHANGELOG.md                           ← 当前版本短摘要与历史入口
 └── docs/changelog/
     ├── INDEX.md                           ← 版本条目路由
@@ -79,8 +81,8 @@ AGENTS.md
 | 普通代码修复 | `AGENTS.md`、本文件、`MAINTENANCE_WORKFLOW.md`、`maintenance/CURRENT.md`、`maintenance/PLAN.md`、`architecture/ARCHITECTURE.md` | 受影响平台的源码/测试、README 对应段落 |
 | 平台适配或真实站点验证 | 上述活动节点 | 对应 `test/real-*.cjs`、`test/dedicated-browser-probe.cjs`、平台回放、相关历史条目 |
 | 性能、日志、生命周期 | 上述活动节点 | `test/performance.cjs`、运行时相关测试、性能历史 |
-| 用户可见功能 | 上述活动节点、`README.md` | 当前版本 changelog 条目、受影响测试 |
-| AI 直连与账户同步 | 上述活动节点、`docs/architecture/ARCHITECTURE.md` | `sync/`、`sync-server/`、`test/userscript-product.cjs`、`test/sync*.cjs` |
+| 用户可见功能 | 上述活动节点、`README.md` | `docs/usage/PLATFORMS.md`、`docs/usage/AI-AND-SYNC.md`、当前版本 changelog 条目、受影响测试 |
+| AI 直连与账户同步 | 上述活动节点、`docs/architecture/ARCHITECTURE.md`、`docs/usage/AI-AND-SYNC.md` | `sync/`、`sync-server/`、`test/userscript-product.cjs`、`test/sync*.cjs` |
 | 上一轮 MV3/网关实验追溯 | 上述活动节点 | `extension/`、`docs/decisions/0003-mv3-extension-account-sync.md`、`gateway/`、`test/product-extension.cjs`、`test/gateway-smoke.cjs` |
 | 发布或回滚 | 上述活动节点、`CHANGELOG.md`、`docs/changelog/INDEX.md` | 对应版本条目和发布历史 |
 | 仅文档治理 | `AGENTS.md`、本文件、`MAINTENANCE_WORKFLOW.md` | 受影响索引，不读取平台历史 |
@@ -91,7 +93,7 @@ AGENTS.md
 - 已明确授权且范围清楚的本地可回滚修复，计划完成后直接执行；重新确认只适用于维护流程中列出的安全红线或范围扩张。
 - 活动计划的唯一正文：`docs/maintenance/PLAN.md`；架构边界的唯一正文：`docs/architecture/ARCHITECTURE.md`。
 - 当前事实的唯一正文：`docs/maintenance/CURRENT.md`。根 `MAINTENANCE.md` 只是入口索引。
-- 安装用户行为：`README.md`；版本发布摘要：根 `CHANGELOG.md` 与对应 `docs/changelog/vX.Y.Z.md`。
+- 安装用户行为：`README.md`（≤20 KiB 摘要）；分平台细节与验证状态在 `docs/usage/PLATFORMS.md`，AI、规则、同步与本地数据细节在 `docs/usage/AI-AND-SYNC.md`；版本发布摘要：根 `CHANGELOG.md` 与对应 `docs/changelog/vX.Y.Z.md`。
 - 历史归档只用于追溯，不作为当前规则、当前版本或当前验证状态的来源。不得在归档中追加“最新状态”。
 - 代码、测试、文档和发布说明都不得保存 Cookie、凭证、原始个人浏览数据或未经脱敏的真实页面标识。
 
@@ -112,7 +114,7 @@ AGENTS.md
 活动文档按 UTF-8 字节数管理，不按“看起来还好”判断。默认预算为：`AGENTS.md` 16 KiB、
 `docs/KNOWLEDGE_TREE.md` 12 KiB、`docs/MAINTENANCE_WORKFLOW.md` 24 KiB、
 `MAINTENANCE.md` 16 KiB、`docs/maintenance/CURRENT.md` 24 KiB、根 `CHANGELOG.md` 24 KiB、
-单个版本条目 24 KiB、`README.md` 64 KiB。超过预算必须在本轮拆分，或在台账中记录明确理由和期限。
+单个版本条目 24 KiB、`README.md` 20 KiB、`docs/usage/PLATFORMS.md` 17 KiB、`docs/usage/AI-AND-SYNC.md` 16 KiB。超过预算必须在本轮拆分，或在台账中记录明确理由和期限。
 
 `LEGACY-HISTORY.md` 是本次重组前保留的不可编辑归档，不进入每轮 AI 必读集合，也不允许把新事实写回其中；
 以后若需要修订历史，新增小型补充条目并更新历史索引。任何新的活动文档都不能借“历史”名义绕过大小预算。

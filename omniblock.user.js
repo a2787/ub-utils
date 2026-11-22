@@ -30,6 +30,8 @@
 // @sandbox       raw
 // @updateURL     https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
 // @downloadURL   https://raw.githubusercontent.com/a2787/ub-utils/master/omniblock.user.js
+// @homepageURL   https://github.com/a2787/ub-utils
+// @supportURL    https://github.com/a2787/ub-utils/issues
 // @license       GPL-3.0-only
 // @author        vibeme（含 PAKKU GPLv3 与 Pynseq MIT 来源代码，详见 README）
 // ==/UserScript==
@@ -2182,7 +2184,13 @@
       return { ok: removed > 0, removed };
     }
 
-    return { record, list, remove, clear, undoById, typeLabel, platformForKeys, maxEntries: MAX_ENTRIES };
+    function undoLast() {
+      const entriesNow = load();
+      if (!entriesNow.length) return { ok: false, removed: 0 };
+      return undoById(entriesNow[0].id);
+    }
+
+    return { record, list, remove, clear, undoById, undoLast, typeLabel, platformForKeys, maxEntries: MAX_ENTRIES };
   })();
 
   // ====================================================================
@@ -4924,7 +4932,7 @@
         title.textContent = 'OmniBlock 已启用';
         const text = document.createElement('div');
         text.className = 'ob-first-hint-text';
-        text.textContent = '本地内容屏蔽工具，点右下角 ⚙ 设置';
+        text.textContent = '作者旁或‘⋯’菜单里点‘本地拉黑’；撤销默认 10 秒';
         body.append(title, text);
         const close = document.createElement('button');
         close.type = 'button';
@@ -20871,13 +20879,17 @@
   // ====================================================================
   function checkUpdate() {
     const statusEl = document.getElementById('ob-update-status');
-    const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+    const setStatus = (t) => {
+      if (statusEl && statusEl.isConnected) statusEl.textContent = t;
+      else if (t !== '正在检查…') showToast('检查更新：' + t);
+    };
     EventLog.record('action.update.check', { source: 'settings-or-menu' }, { immediate: true });
     setStatus('正在检查…');
     try {
       GM_xmlhttpRequest({
         url: UPDATE_URL,
         method: 'GET',
+        timeout: 15000,
         onload: (res) => {
           try {
             const txt = res.responseText || '';
@@ -20905,6 +20917,7 @@
           } catch (e) { EventLog.recordError('action.update.response', e); setStatus('检查失败：' + (e && e.message || e)); }
         },
         onerror: () => { EventLog.record('action.update.result', { result: 'network-error' }, { immediate: true }); setStatus('检查失败（网络问题），可稍后重试或手动拖入'); },
+        ontimeout: () => { EventLog.record('action.update.result', { result: 'timeout' }, { immediate: true }); setStatus('检查超时：GitHub 可能不可达，可手动导入新文件'); },
       });
     } catch (e) {
       EventLog.recordError('action.update.request', e);
@@ -21999,6 +22012,8 @@
         <section class="ob-group" id="ob-group-block">
           <h3>屏蔽与名单</h3>
 
+          <div class="ob-keyword-entry" style="margin-bottom:10px"><button id="ob-open-workbench" type="button">打开当前页内容屏蔽工作台</button></div>
+
           <h4>新增屏蔽</h4>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <select id="ob-plat">
@@ -22028,10 +22043,6 @@
             <label>撤销确认停留 <input type="number" id="ob-undo-seconds" min="5" max="30" style="width:56px"> 秒（5–30，默认 10）</label>
           </div>
 
-          <h4>平台专用屏蔽入口</h4>
-          <p class="ob-settings-ai-note">B站和抖音的关键词/正则规则在「内容屏蔽」弹窗的「关键词屏蔽」标签；新规则默认启用，命中可靠身份后直接写入本地名单，不消耗 AI token，也不需要逐条确认。AI 智能屏蔽同样在内容屏蔽弹窗中配置。下面两个按钮可在任意页面打开同一个规则管理界面（就地编辑、备注、命中计数、导入导出、跨平台规则）。</p>
-          <div class="ob-keyword-entry"><button id="ob-open-rules-bili" type="button">B站规则管理</button><button id="ob-open-rules-douyin" type="button">抖音规则管理</button></div>
-
           <h4>名单（点击删除）</h4>
           <div class="ob-list-tools">
             <input id="ob-list-search" type="search" placeholder="搜索名单：备注 / 身份键（不区分大小写）">
@@ -22050,14 +22061,18 @@
           <div id="ob-list-count" class="ob-list-count"></div>
           <div class="ob-list" id="ob-list"></div>
 
-          <h4>最近本地屏蔽操作</h4>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px">
+            <h4 style="margin:0">最近本地屏蔽操作</h4>
+            <button id="ob-undo-last" type="button" style="border:1px solid #e2a39c;background:#fff;color:#c0392b;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px">撤销上一次</button>
+          </div>
           <div id="ob-recent-actions" class="ob-recent-actions"></div>
         </section>
 
         <section class="ob-group" id="ob-group-rules">
           <h3>规则</h3>
-          <p class="ob-settings-ai-note">在这里分别管理 B站 和抖音的关键词屏蔽、正则屏蔽规则，按平台分开维护；命中规则的内容会被自动隐藏，只保存在本机。点下面的按钮即可打开管理界面，支持编辑、备注、命中计数和导入导出。</p>
+          <p class="ob-settings-ai-note">在这里分别管理 B站 和抖音的关键词屏蔽、正则屏蔽规则，按平台分开维护；命中规则的内容会被自动隐藏，只保存在本机。点下面的按钮即可打开管理界面，支持编辑、备注、命中计数和导入导出。AI 智能屏蔽的 provider 与提示词也在同一内容弹窗的 AI 标签中配置。</p>
           <div class="ob-keyword-entry"><button id="ob-rules-bili" type="button">B站规则管理</button><button id="ob-rules-douyin" type="button">抖音规则管理</button></div>
+          <div class="ob-keyword-entry" style="margin-top:8px"><button id="ob-open-ai-settings" type="button">打开 AI 设置</button></div>
         </section>
 
         <section class="ob-group" id="ob-group-backup">
@@ -22189,14 +22204,28 @@
       overlay.onclick = (event) => { if (event.target === overlay) closeOverlay(); };
       document.addEventListener('keydown', onKey);
     }
-    const rulesBiliButton = panel.querySelector('#ob-open-rules-bili');
-    const rulesDouyinButton = panel.querySelector('#ob-open-rules-douyin');
-    if (rulesBiliButton) rulesBiliButton.onclick = () => openKeywordManager('bili');
-    if (rulesDouyinButton) rulesDouyinButton.onclick = () => openKeywordManager('douyin');
+    const workbenchButton = panel.querySelector('#ob-open-workbench');
+    if (workbenchButton) workbenchButton.onclick = () => {
+      if (!currentAdapter) { showToast('当前页面不支持内容屏蔽工作台'); return; }
+      openContentManager(currentAdapter, 'comments', workbenchButton);
+    };
     const groupRulesBiliButton = panel.querySelector('#ob-rules-bili');
     const groupRulesDouyinButton = panel.querySelector('#ob-rules-douyin');
     if (groupRulesBiliButton) groupRulesBiliButton.onclick = () => openKeywordManager('bili');
     if (groupRulesDouyinButton) groupRulesDouyinButton.onclick = () => openKeywordManager('douyin');
+    const aiSettingsButton = panel.querySelector('#ob-open-ai-settings');
+    if (aiSettingsButton) aiSettingsButton.onclick = () => {
+      if (!currentAdapter || typeof currentAdapter.collectAIRecords !== 'function') { showToast('当前页面不支持 AI 设置'); return; }
+      openContentManager(currentAdapter, 'ai', aiSettingsButton);
+    };
+    const undoLastButton = panel.querySelector('#ob-undo-last');
+    if (undoLastButton) undoLastButton.onclick = () => {
+      const result = RecentActions.undoLast();
+      showToast(result.ok ? `已撤销 ${result.removed} 项` : '没有可撤销的本地屏蔽');
+      renderBlocklist();
+      renderRecentActions();
+      if (currentScanner) currentScanner.schedule();
+    };
 
     function renderLogMap(map) {
       return Object.keys(map || {}).sort().map((key) => key + '=' + map[key]).join('，') || '无';
@@ -22732,6 +22761,13 @@
 
   try { GM_registerMenuCommand('OmniBlock 设置', openOptions, 'o'); } catch (e) {}
   try { GM_registerMenuCommand('检查更新', checkUpdate, 'u'); } catch (e) {}
+  try {
+    GM_registerMenuCommand('撤销上一次本地屏蔽', () => {
+      const result = RecentActions.undoLast();
+      showToast(result.ok ? `已撤销 ${result.removed} 项` : '没有可撤销的本地屏蔽');
+      if (currentScanner) currentScanner.schedule();
+    }, 'z');
+  } catch (e) { EventLog.recordError('ui.menu.undo-last', e); }
 
   if (currentAdapter) {
     setupBilibiliDanmaku();

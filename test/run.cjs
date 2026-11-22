@@ -48,13 +48,15 @@ window.GM_addStyle = (css) => {
   if (document.head || document.documentElement) inject();
   else document.addEventListener('DOMContentLoaded', inject);
 };
-window.GM_registerMenuCommand = () => {};
+window.__menuCommands = {};
+window.GM_registerMenuCommand = (name, fn) => { window.__menuCommands[name] = fn; };
 window.GM_addValueChangeListener = () => {};
 // 模拟 Tampermonkey 注入的元信息（checkUpdate 用 GM_info.script.version 取本地版本）
 window.GM_info = { script: { name: '本地内容过滤增强', version: '${LOCAL_VERSION}', namespace: 'https://github.com/a2787/ub-utils' } };
 // 用 fetch 实现 GM_xmlhttpRequest（让 Playwright route 能拦截并返回伪造的远程脚本）
 // __forceXhrError 置真时直接走 onerror，模拟"网络错误"分支而不产生真实请求（避免控制台噪声）
 window.GM_xmlhttpRequest = (opts) => {
+  if (window.__forceXhrTimeout) { try { if (opts.ontimeout) opts.ontimeout(); } catch (e) {} return; }
   if (window.__forceXhrError) { try { if (opts.onerror) opts.onerror(new Error('simulated network error')); } catch (e) {} return; }
   window.fetch(opts.url).then((r) => r.text()).then((t) => { if (opts.onload) opts.onload({ responseText: t, status: 200 }); })
     .catch((e) => { if (opts.onerror) opts.onerror(e); });
@@ -387,6 +389,20 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
   (e.panelShown && e.hasSkipCap && e.hasUpdateBtn && e.hasLocalBackup && e.hasBackupStatus && e.hasRestoreBackup && e.hasRuntime && e.hasLogs && e.gearExpanded)
     ? report.pass.push('E 设置面板：含运行标识、详细日志、"跳过上限"、"检查更新"与本地快照控件') : report.fail.push('E 设置面板失败：' + JSON.stringify(e));
 
+  const e6 = await page.evaluate(() => {
+    const panel = document.getElementById('ob-panel');
+    return {
+      workbench: !!(panel && panel.querySelector('#ob-open-workbench')),
+      ai: !!(panel && panel.querySelector('#ob-open-ai-settings')),
+      undo: !!(panel && panel.querySelector('#ob-undo-last')),
+      oldRules: !!(panel && panel.querySelector('#ob-open-rules-bili')),
+      health: !!(panel && panel.querySelector('#ob-health-status')),
+    };
+  });
+  (e6.workbench && e6.ai && e6.undo && !e6.oldRules && e6.health)
+    ? report.pass.push('E6 设置 IA：工作台/AI/撤销入口存在，重复规则按钮已移除，Health 卡可见')
+    : report.fail.push('E6 设置 IA 失败：' + JSON.stringify(e6));
+
   // E2 设置名单按平台分组，并保留可悬停查看的屏蔽依据（人工合成身份）。
   const e2 = await page.evaluate(async () => {
     const panel = document.getElementById('ob-panel');
@@ -666,6 +682,30 @@ window.__OB_EXTENSION_READY__ = () => new Promise((resolve) => setTimeout(resolv
     return (document.getElementById('ob-update-status')||{}).textContent;
   })()`);
   (i && i.includes('检查失败')) ? report.pass.push('I 检查更新·网络错误：提示检查失败') : report.fail.push('I 网络错误分支失败：' + JSON.stringify(i));
+
+  // 菜单路径：设置面板关闭时，检查更新超时也必须通过 toast 可见。
+  const menuTimeout = await page.evaluate(async () => {
+    const close = document.querySelector('#ob-panel .ob-close');
+    if (close) close.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    window.__forceXhrTimeout = true;
+    try {
+      const run = window.__menuCommands['检查更新'];
+      if (!run) return { exists: false };
+      run();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const toast = document.getElementById('ob-toast');
+      return { exists: true, toast: toast ? toast.textContent : '' };
+    } finally {
+      window.__forceXhrTimeout = false;
+      const open = window.__menuCommands['OmniBlock 设置'];
+      if (open) open();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  });
+  (menuTimeout.exists && menuTimeout.toast.includes('检查超时'))
+    ? report.pass.push('I2 GM 菜单检查更新超时可见')
+    : report.fail.push('I2 菜单超时分支失败：' + JSON.stringify(menuTimeout));
 
   await page.screenshot({ path: path.join(ROOT, 'test', '_shot_3_settings.png'), fullPage: true });
 

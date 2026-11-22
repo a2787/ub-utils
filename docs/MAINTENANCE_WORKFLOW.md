@@ -67,7 +67,7 @@ README 段落、源码和测试。执行 `git status --short`，把已有脏改�
 ## 4. 文档大小与知识树治理
 
 活动文档使用 UTF-8 字节预算：`AGENTS.md` 16 KiB、知识树 12 KiB、流程 24 KiB、当前状态 24 KiB、
-根维护入口 16 KiB、根 changelog 24 KiB、单版本条目 24 KiB、README 64 KiB。`node test/docs-check.cjs`
+根维护入口 16 KiB、根 changelog 24 KiB、单版本条目 24 KiB、README 20 KiB、`docs/usage/PLATFORMS.md` 17 KiB、`docs/usage/AI-AND-SYNC.md` 16 KiB。`node test/docs-check.cjs`
 负责自动检查这些边界和入口一致性。
 活动计划 24 KiB、架构正文 24 KiB、单个 ADR 12 KiB；接近预算时先拆分，不把历史流水账挪进活动文件。
 
@@ -117,6 +117,64 @@ git diff --check
 登录态只读授权，使用 `--dedicated-only`，命令会先构建并同步开发扩展，再由同一专用 CDP 读取六平台实际页面。
 需要匿名对照时使用 `--dedicated`，它会额外保留隔离探针结果；两条证据必须分开记录，隔离会话的登录页/验证码
 不再代替专用浏览器结论。真实探针即使被阻断也要运行并记录 `blocked`，不能用夹具通过替代。
+
+### 维护者验证细节与命令清单（2026-11-23 自 README 拆入）
+
+- **确认当前页面确实运行了新代码**：从 v0.30.0 起，设置面板顶部和右下角齿轮都显示「运行版本」与「构建」；
+  齿轮还带有 `data-ob-version`、`data-ob-build`、`data-ob-runtime` 三个机器可读属性。维护修复时需要让当前
+  浏览器页面报告的版本和构建都与本轮源码一致，再观察平台行为；只看到 Tampermonkey 的「已是最新」不代表
+  工作区里尚未发布的修改已经安装。用户脚本不能在运行时替换自身，「检查更新」发现候选版本后仍需在
+  Tampermonkey 安装页点一次「更新/安装」，然后刷新原平台页面；若页面齿轮的构建标识没有变化，先不要继续
+  判断修复结果，把当前页面留在原处即可。
+- **实际交付物始终是 Tampermonkey userscript**。人工合成页面的产品回归使用 `node test/userscript-product.cjs`，
+  它覆盖 390px 触控布局、AI API 直连、Key 边界和账户同步密文边界；这类结果只记为 `structure regression`。
+  真实网站验证仍须使用本轮指定的浏览器会话和只读探针；登录、验证码、网络或设备不可用时记为 `blocked`，
+  不能由夹具代替。目标平板需要用户在 Edge 中实际安装 Tampermonkey 并导入脚本；维护者不能用桌面浏览器夹具
+  代替这一步。用户安装后应先确认右下角齿轮显示当前版本和构建，再做只读页面和触控检查。当前公开版本与
+  更新出口状态以 `docs/maintenance/CURRENT.md` 和版本 changelog 为准。
+- 本地综合回归命令为 `node test/maintenance-check.cjs`；它只执行本地代码、协议、文档和隐私门禁，不等同于
+  平板安装验证，也不会触发平台举报、官方拉黑、关注或发帖；真实页面证据仍须在本轮指定的浏览器会话中单独取得。
+- 仓库中遗留的 `extension/`、`test/dev-extension.cjs` 和 `dedicated-browser-probe` 只是上一轮 MV3 方向的
+  维护/实验产物，当前不属于用户安装路径，也不计入平板验收。它们暂不删除，避免覆盖工作区中尚未单独确认的
+  文件；如果未来要保留，只能作为历史兼容夹具维护。
+- 登录态验证前由用户本人在专用 profile 完成登录；探针只控制自己创建的临时标签页，名单写入使用内存 stub，
+  不会读取 Cookie 或点击微博举报、官方拉黑、关注、发帖等平台写入控件。公开隔离探针可直接注入工作区
+  userscript，目标设备的安装与触控仍须由用户在 Edge + Tampermonkey 中单独验证。同一文档内若因调试重放再次
+  执行源码，当前运行锁会忽略重复实例，避免扫描器、观察器、定时器和设置入口叠加；源码发生变化仍需刷新或
+  打开新文档后再验证。真实探针默认从平台公开入口页自动发现只读目标（`test/discover.cjs`），所以仓库里不
+  保存任何具体验证页标识；需要指定页面时仍可加 `--url=`。
+
+可重复运行的检查：
+
+```powershell
+node test/maintenance-check.cjs    # 静态门禁、完整矩阵、作品级回归和隔离真站探针
+node test/userscript-product.cjs      # userscript 390px 触控、AI 直连和账户同步产品回归
+node test/sync.cjs                    # 浏览器/Node 同步协议、合并、CAS、离线回归
+node test/sync-server.cjs             # 独立 Python 同步服务本地 health/auth/CAS 回归
+node test/weibo-replay.cjs         # 微博虚拟列表回放/压力回归；可用 --git-ref= 复核旧版失败
+node test/comment-manager.cjs      # 三平台统一评论管理器、作者去重、搜索、多选和楼操作回归
+node test/work-block.cjs           # 三平台作品作用域、作者/评论/子评论/弹幕、一次事务与撤销回归
+node test/run.cjs                 # 基础 Shadow DOM / 设置回归
+node test/state.cjs               # 状态可逆、身份规范化、导入安全与入口开关回归
+node test/quickblock.cjs          # B站楼中楼、弹幕分组、列表分段、浮动弹幕坐标命中、UID 候选、批量范围面板、PAKKU 与 XHR 回归
+node test/adapters.cjs            # 微博/知乎/贴吧/X/抖音身份契约、抖音弹幕与评论管理器结构回归
+node test/douyin.cjs              # 抖音推荐流节点复用、无限上限与延迟守卫回归
+node test/danmaku-auto.cjs       # B站/抖音关键词正则自动弹幕规则与 PAKKU 共存结构回归
+node test/content-ai.cjs         # B站/抖音关键词优先级、评论延迟 AI、微博/知乎评论 AI 入口回归
+node test/content-coverage.cjs   # 六平台作者/作品/评论/帖子语义读取与操作文案隔离回归
+node test/ai-screening.cjs       # B站 AI 规则、直连、脱敏请求和人工审核回归
+node test/ai-platforms.cjs       # 抖音评论/弹幕 AI 采集、会话隔离和请求去重回归
+node test/ai-watchdog.cjs        # GM/XHR 无回调时有限超时回归
+node test/ai-bridge.cjs          # 历史扩展桥接兼容性降级快速失败回归
+node test/probe-hygiene.cjs      # 真实探针 document-start 注入清理回归
+node test/real-bilibili-probe.cjs --verify-local --verify-danmaku-tool --verify-floating-danmaku --verify-auto-danmaku
+node test/real-bilibili-probe.cjs --verify-ai-background # 真实 B站 DOM + 隔离 provider mock，验证确认后立即关闭与后台完成提示
+node test/real-douyin-probe.cjs --current --verify-auto-danmaku --duration=90 # 专用 Chrome 登录态只读探针
+node test/real-platform-probe.cjs douyin --verify-local # 抖音隔离真实页只读探针；验证码时如实返回 blocked
+node test/real-platform-probe.cjs weibo --verify-local   # 自动发现真实详情页并验证评论/楼中楼
+node test/real-platform-probe.cjs <platform>             # 其余平台隔离真实页只读探针
+node test/installed-browser-probe.cjs --url=https://www.bilibili.com/... # 新页面无注入核对
+```
 
 ### 扫描噪声与 git 门禁治理（2026-10-27 起）
 

@@ -24,7 +24,9 @@ const build = buildMatch ? buildMatch[1] : 'unknown';
 
 const activeDocs = [
   ['AGENTS.md', 16],
-  ['README.md', 64],
+  ['README.md', 20],
+  ['docs/usage/PLATFORMS.md', 17],
+  ['docs/usage/AI-AND-SYNC.md', 16],
   ['CHANGELOG.md', 24],
   ['MAINTENANCE.md', 16],
   ['docs/KNOWLEDGE_TREE.md', 12],

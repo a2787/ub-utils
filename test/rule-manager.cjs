@@ -168,8 +168,8 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>规则�
 
   // RULE-UI：设置面板入口打开规则管理浮层；行内“命中”徽标与就地编辑可用。
   await page.evaluate(() => window.OB.openOptions());
-  await page.waitForSelector('#ob-panel #ob-open-rules-bili', { timeout: 5000 });
-  await page.click('#ob-open-rules-bili');
+  await page.waitForSelector('#ob-panel #ob-rules-bili', { timeout: 5000 });
+  await page.click('#ob-rules-bili');
   await page.waitForSelector('#ob-keyword-manager .ob-auto-rule', { timeout: 5000 });
   const ui = await page.evaluate(() => {
     const overlay = document.querySelector('#ob-keyword-manager');

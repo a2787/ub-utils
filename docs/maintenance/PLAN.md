@@ -95,10 +95,10 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - dependencies: none
 - acceptance: required
   - [x] 快捷/作者入口无确认直提、名单写入、撤销恢复；批量/弹幕/UID 保留确认；`bili:dmhash` 仍弹确认（QB-NC-1/2）。
-  - [x] 直提提示最多 3 次、打开设置后停止（QB-NC-3）。
+  - [x] 直提提示最多 3 次、打开设置后停止（QB-NC-3）；撤销上一次与设置 IA 可用；更新检查终态（含 GM 菜单）可见（run E6/I2、quickblock UNDO-LAST）。
   - [ ] B站/微博真站门禁与列表/关注流命中记录；未授权时记 `blocked`/`structure regression`，不得发布为已验证。
-- evidence: `structure regression`：quickblock 41/41（含 QB-NC-1/2/3）、adapters 28/28、run 20/20、state 9/9；dry-run worktree `b2141c1` 未合并；2026-11-23 本地候选。
-- next: Phase 2 Health/日志；Phase 5 真站与发布；列表/关注流按 Task 1.4 预探测。
+- evidence: `structure regression`：quickblock 44/44（含 QB-NC-1/2/3、HEALTH-1/2、UNDO-LAST）、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18；dry-run worktree `b2141c1` 未合并；2026-11-23 本地候选。
+- next: Phase 4 CI/code-health；Phase 5 真站与发布；列表/关注流按 Task 1.4 预探测。
 - updated: 2026-11-23
 - supersedes: none
 
@@ -112,9 +112,10 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - acceptance: required
   - [x] 存储降级/写入失败可见；日志 7 天/5 千条/2 MiB；备份坏数据不覆盖；HEALTH-1/2 通过（quickblock 套件）。
   - [ ] CI 保留现有 22 项并补差集 headless 测试；`test/code-health.cjs` 门禁；release 脚本 dry-run/publish 分工。
-  - [ ] README ≤20 KiB、docs-check 通过；发布前真站证据按标签记录。
-- evidence: `structure regression`：quickblock 43/43（含 HEALTH-1/2）、run 20/20、state 9/9；Health 诊断卡在设置日志区可见。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
-- next: Phase 3 设置/更新/文档；Phase 4 CI/code-health；Phase 5 真站/发布。
+  - [x] README 9.2 KiB（≤20）、docs-check 通过、usage 拆分与知识树/工作流路由完成；release dry-run 已验证。
+  - [ ] 发布前真站证据按标签记录。
+- evidence: `structure regression`：quickblock 44/44（含 HEALTH-1/2、UNDO-LAST）、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18；README 9,186 B；release dry-run exit 0/2 分支符合预期。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
+- next: Phase 4 CI/code-health；Phase 5 真站/发布。
 - updated: 2026-11-23
 - supersedes: none
 
