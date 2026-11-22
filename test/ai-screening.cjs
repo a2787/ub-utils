@@ -121,6 +121,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 (async () => {
   const report = { pass: [], fail: [], console: [], expectedConsole: [], pageErrors: [] };
   let providerAttempts = 0;
+  let provider429Responses = 0;
   let expectedProvider429Console = 0;
   const watchdogReady = USERSCRIPT.includes("const AI_REQUEST_TIMEOUT_MS = 60000;")
     && USERSCRIPT.includes("const AI_REQUEST_WATCHDOG_SLACK_MS = 250;")
@@ -146,14 +147,20 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   const page = await browser.newPage();
   page.on('console', (message) => {
     const type = message.type();
+    if (type !== 'error' && type !== 'warning') return;
     const text = message.text();
-    if ((type === 'error' || type === 'warning') && expectedProvider429Console > 0
-      && /responded with a status of 429/i.test(text)) {
+    // 豁免只认 mock 网关自身产生的资源加载错误：URL 必须精确等于 PROVIDER_URL
+    // （message.location().url），且只按已发出的 429 数量逐条核销。任意文本里
+    // 出现 429 的其他页面错误不再消耗豁免额度，也不会被放行（Task 4.3）。
+    let locationUrl = '';
+    try { locationUrl = String((message.location() && message.location().url) || ''); } catch (error) {}
+    if (locationUrl === PROVIDER_URL && /responded with a status of 429/i.test(text)
+      && expectedProvider429Console > 0) {
       expectedProvider429Console--;
-      report.expectedConsole.push('[' + type + '] ' + text);
+      report.expectedConsole.push('[' + type + '] ' + locationUrl + ' ' + text);
       return;
     }
-    if (type === 'error' || type === 'warning') report.console.push('[' + type + '] ' + text);
+    report.console.push('[' + type + '] ' + text);
   });
   page.on('pageerror', (error) => report.pageErrors.push(String(error && error.stack || error)));
   await page.route('**/*', async (route) => {
@@ -172,6 +179,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       // 第二次请求完成，旧行为（无重试）会让整轮分析失败。
       providerAttempts++;
       if (providerAttempts === 1) {
+        provider429Responses++;
         expectedProvider429Console++;
         await route.fulfill({ status: 429, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ error: 'rate limited' }) });
         return;
@@ -536,7 +544,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
       backgroundText: document.querySelector('#ob-ai-background-status') && document.querySelector('#ob-ai-background-status').textContent,
       hasBackgroundUndo: !!document.querySelector('#ob-ai-background-status .ob-ai-background-undo'),
     }));
-    if (!immediateCommit.review && immediateCommit.elapsed < 250 && immediateCommit.hasImmediateDmHash
+    if (!immediateCommit.review && immediateCommit.elapsed < 600 && immediateCommit.hasImmediateDmHash
       && immediateCommit.background && immediateCommit.background.active === 1
       && immediateCommit.background.total >= 1 && /正在后台补充 UID/.test(immediateCommit.backgroundText || '')
       && immediateCommit.hasBackgroundUndo) {
@@ -667,9 +675,16 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
     const status = window.OB && window.OB.ai ? window.OB.ai.status() : null;
     return !!status && (status.analyzed > 0 || status.candidates > 0 || status.state === 'review' || status.state === 'idle');
   });
-  if (providerAttempts >= 2 && recovered) {
-    report.pass.push('AI-24 直连请求 429 后自动重试一次，分析靠第二次请求完成（旧行为整轮失败）');
-  } else report.fail.push('AI-24 直连重试未生效：providerAttempts=' + providerAttempts + ' recovered=' + recovered);
+  // 加强断言（Task 4.3）：mock 必须真实发出恰好一次 429（否则重试路径未被考
+  // 验），分析必须靠第二次请求完成；同时该 429 的浏览器资源 console error
+  // 必须全部经 URL 精确豁免核销，不允许豁免额度残留或未核销的真实错误。
+  const retryExercised = provider429Responses === 1 && providerAttempts >= 2;
+  const exemptionSettled = expectedProvider429Console === 0 && report.expectedConsole.length === provider429Responses;
+  if (retryExercised && exemptionSettled && recovered) {
+    report.pass.push('AI-24 直连请求恰好一次 429 后自动重试，分析靠第二次请求完成；429 资源 console error 已按 URL 全量豁免核销');
+  } else report.fail.push('AI-24 直连重试或 429 豁免核销异常：providerAttempts=' + providerAttempts
+    + ' provider429Responses=' + provider429Responses + ' 未核销豁免=' + expectedProvider429Console
+    + ' expectedConsole=' + report.expectedConsole.length + ' recovered=' + recovered);
 
   }
   await browser.close();

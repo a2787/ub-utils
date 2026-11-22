@@ -34,12 +34,23 @@ jobs:
           node test/docs-check.cjs
           git diff --check
       - name: Local regression matrix
+        # push 门禁 = 既有 22 项 + Task 4.2 差集补入的 headless 项
+        # （ui-settings、dark-mode、rule-manager、rule-samples，均为人工合成夹具）
+        # + Task 4.1 的 code-health 静态基线门禁。
+        # degraded-storage 不进标准 runner：它需要 Edge/Chromium 持久化 profile 且
+        # headless:false（test/degraded-storage.cjs:73），留给本地/发布前专用门禁，
+        # 环境要求见 docs/MAINTENANCE_WORKFLOW.md 登录态探针一节。
+        # 2026-11-23 本地 headless 已通过：ai-auto-gate、ai-batch、ai-bridge、
+        # ai-context、ai-eval、ai-fact-integration、ai-retrieval，已加入 push。
+        # gateway-smoke 需要 Docker Linux 引擎，本轮未运行，排除并记 blocked。
         run: |
           set -e
           for test in run state quickblock comment-manager danmaku-auto work-block \
             performance weibo-replay userscript-product adapters douyin sync sync-server \
             ai-screening ai-prompt-system ai-prompt-eval ai-platforms content-ai \
-            content-coverage ai-autoload ai-watchdog probe-hygiene; do
+            content-coverage ai-autoload ai-watchdog probe-hygiene \
+            ui-settings dark-mode rule-manager rule-samples ai-auto-gate ai-batch \
+            ai-bridge ai-context ai-eval ai-fact-integration ai-retrieval code-health; do
             echo "=== $test ==="
             node "test/$test.cjs"
           done

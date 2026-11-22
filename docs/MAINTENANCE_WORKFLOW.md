@@ -102,6 +102,7 @@ git diff --check
 | 改动范围 | 必跑检查 |
 |---|---|
 | 文档、规则、知识树、计划、架构或版本说明 | `node test/docs-check.cjs` |
+| 代码健康（空 catch / 文件体积 / CSS 体积） | `node test/code-health.cjs` |
 | 通用 UI、存储、设置、Shadow DOM 遍历 | `node test/run.cjs` |
 | B 站评论、快捷拉黑、批量拉黑或弹幕 | `node test/quickblock.cjs` 和 `node test/real-bilibili-probe.cjs --verify-local`；改动弹幕入口时加 `--verify-danmaku-tool --verify-floating-danmaku` |
 | 微博、知乎、贴吧、X 或抖音适配器 | `node test/adapters.cjs` 和 `node test/real-platform-probe.cjs <platform> --verify-local` |
@@ -132,6 +133,7 @@ git diff --check
   不能由夹具代替。目标平板需要用户在 Edge 中实际安装 Tampermonkey 并导入脚本；维护者不能用桌面浏览器夹具
   代替这一步。用户安装后应先确认右下角齿轮显示当前版本和构建，再做只读页面和触控检查。当前公开版本与
   更新出口状态以 `docs/maintenance/CURRENT.md` 和版本 changelog 为准。
+- CI 矩阵还包含 `ai-auto-gate`、`ai-batch`、`ai-bridge`、`ai-context`、`ai-eval`、`ai-fact-integration`、`ai-retrieval` 这 7 个 2026-11-23 本地 headless 通过的 AI 套件；`gateway-smoke` 需要 Docker Linux 引擎，未运行时记 `blocked`，不加入标准 push。
 - 本地综合回归命令为 `node test/maintenance-check.cjs`；它只执行本地代码、协议、文档和隐私门禁，不等同于
   平板安装验证，也不会触发平台举报、官方拉黑、关注或发帖；真实页面证据仍须在本轮指定的浏览器会话中单独取得。
 - 仓库中遗留的 `extension/`、`test/dev-extension.cjs` 和 `dedicated-browser-probe` 只是上一轮 MV3 方向的
@@ -148,6 +150,7 @@ git diff --check
 
 ```powershell
 node test/maintenance-check.cjs    # 静态门禁、完整矩阵、作品级回归和隔离真站探针
+node test/code-health.cjs          # 代码健康门禁：空 catch / 文件行数 / CSS 体积基线
 node test/userscript-product.cjs      # userscript 390px 触控、AI 直连和账户同步产品回归
 node test/sync.cjs                    # 浏览器/Node 同步协议、合并、CAS、离线回归
 node test/sync-server.cjs             # 独立 Python 同步服务本地 health/auth/CAS 回归

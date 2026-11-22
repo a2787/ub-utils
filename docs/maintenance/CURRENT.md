@@ -9,8 +9,8 @@
 - 构建：`0.63.4-discovery-fixes`
 - 当前公开版本：`0.63.4`（最近公开发布），公开功能提交 `9ffbd0dfb3c82084b5f3613155f9885b9b1a7bda`
 - 最近验证的源码快照：`607d04faf68c6077429081f0dec17f83968ef11e`（0.63.4 功能提交，发布提交 9ffbd0d 的父提交）
-- 当前候选源码 SHA-256：`0a30d78eaff67069b17affd87e5c4197243895ce4fb1f623fd063273a82a496e`（当前工作区 userscript 快照，2026-11-23 核对一致）
-- 2026-11-23 Personal 2.0 Phase 1-3 本地候选（未发布）：快捷/作者入口直提、QB-NC-1/2/3、`bili:dmhash` 确认守护、Health 诊断卡、日志 7 天/5 千条/2 MiB、坏备份不覆盖、撤销上一次、设置 IA、更新终态可见、README/docs 拆分；见 PLAN.md OB-UI-004/OB-MAINT-005。真实站点复核待 Phase 1 门禁。
+- 当前候选源码 SHA-256：`1f7365bc87d5d1a6d2bc531bb5cc1524bee19bc03ab86ba4c6419ceb88ba84aa`（当前工作区 userscript 快照，2026-11-23 核对一致）
+- 2026-11-23 Personal 2.0 Phase 1-4 本地候选（未发布）：快捷/作者入口直提、QB-NC-1/2/3、`bili:dmhash` 确认守护、Health 诊断卡、日志 7 天/5 千条/2 MiB、坏备份不覆盖、撤销上一次、设置 IA、更新终态可见、README/docs 拆分、CI/code-health、删除旧抖音管理器 open 死代码；见 PLAN.md OB-UI-004/OB-MAINT-005。真实站点复核待 Phase 1 门禁；`gateway-smoke` 因 Docker 未运行记 `blocked`。
 - 发布状态：0.63.4 已公开发布（tag/Release 已建、raw 已更新返回 0.63.4），提交 9ffbd0d 已推送至 origin/master；未执行平台写入。
 - 当前公开 tag/Release：[v0.63.4](https://github.com/a2787/ub-utils/releases/tag/v0.63.4)。
 

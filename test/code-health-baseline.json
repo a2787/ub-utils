@@ -1,0 +1,8 @@
+{
+  "emptyCatch": 114,
+  "maxLines": 23500,
+  "maxCssChars": 120000,
+  "capturedAt": "2026-11-23",
+  "captured": { "emptyCatch": 114, "lines": 22860, "cssChars": 116407 },
+  "note": "Phase 4 Task 4.1 锁定基线：emptyCatch 为当前实测值且只允许下调；maxLines/maxCssChars 为含余量的宽松上限，来源见 test/code-health.cjs。"
+}

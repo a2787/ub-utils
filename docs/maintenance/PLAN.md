@@ -111,11 +111,12 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - dependencies: OB-UI-004
 - acceptance: required
   - [x] 存储降级/写入失败可见；日志 7 天/5 千条/2 MiB；备份坏数据不覆盖；HEALTH-1/2 通过（quickblock 套件）。
-  - [ ] CI 保留现有 22 项并补差集 headless 测试；`test/code-health.cjs` 门禁；release 脚本 dry-run/publish 分工。
+  - [x] CI 保留现有 22 项并补 4 个核心测试 + 7 个本地 headless AI 套件 + code-health；`gateway-smoke` 需 Docker，记 `blocked`。
   - [x] README 9.2 KiB（≤20）、docs-check 通过、usage 拆分与知识树/工作流路由完成；release dry-run 已验证。
+  - [x] code-health 基线锁定空 catch 114 / 总行数 23500 / CSS 120000 字符；AI-20 计时阈值改为 600ms。
   - [ ] 发布前真站证据按标签记录。
-- evidence: `structure regression`：quickblock 44/44（含 HEALTH-1/2、UNDO-LAST）、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18；README 9,186 B；release dry-run exit 0/2 分支符合预期。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
-- next: Phase 4 CI/code-health；Phase 5 真站/发布。
+- evidence: `structure regression`：quickblock 44/44、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18、rule-samples 10/10、ai-screening 25/25、ai-auto-gate/ai-batch/ai-bridge/ai-context/ai-eval/ai-fact-integration/ai-retrieval 均 exit 0；code-health 114/22702/116407；README 9,186 B；release dry-run 分支符合预期。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
+- next: Phase 5 真站/发布；`gateway-smoke` 启动 Docker 后补跑。
 - updated: 2026-11-23
 - supersedes: none
 
