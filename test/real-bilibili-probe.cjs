@@ -900,12 +900,27 @@ async function pickLocalCommentTarget(candidates) {
           else if (node.host) node = node.host;
           else break;
         }
+        const waitFor = async (fn, timeout = 1500) => {
+          const deadline = Date.now() + timeout;
+          while (Date.now() < deadline) {
+            if (fn()) return true;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return !!fn();
+        };
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         const confirm = document.getElementById('ob-confirm');
-        if (!confirm) return { found: true, identityResolved: true, localButtonPresent: true, confirm: false };
-        confirm.querySelector('.ob-ok').click();
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        const direct = !confirm;
+        if (confirm) {
+          const confirmButton = confirm.querySelector('.ob-ok');
+          if (confirmButton) confirmButton.click();
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        } else {
+          await waitFor(() => info.keys.every((key) => window.OB.Index.isBlocked(key))
+            && target.classList.contains('ob-hidden')
+            && (getComputedStyle(target).display === 'none' || target.getBoundingClientRect().height === 0), 1500);
+        }
         const blocked = info.keys.every((key) => window.OB.Index.isBlocked(key));
         const bulkIncludesTarget = window.OB.collectUsers(document).some((candidate) =>
           candidate.keys && candidate.keys.some((key) => info.keys.includes(key))
@@ -916,13 +931,15 @@ async function pickLocalCommentTarget(candidates) {
         const undo = toast && toast.querySelector('button');
         if (undo) {
           undo.click();
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await waitFor(() => getComputedStyle(target).display !== 'none'
+            && target.getBoundingClientRect().height > 0, 1500);
         }
         return {
           found: true,
           identityResolved: true,
           localButtonPresent: true,
-          confirm: true,
+          direct,
+          confirm: !!confirm,
           blocked,
           bulkIncludesTarget,
           hidden,
@@ -931,8 +948,8 @@ async function pickLocalCommentTarget(candidates) {
         };
       });
       const sub = result.subCommentBlock || {};
-      if (!sub.found || !sub.identityResolved || !sub.localButtonPresent || !sub.confirm || !sub.blocked || !sub.bulkIncludesTarget || !sub.hidden || !sub.threadVisible || !sub.restored) {
-        result.errors.push('验证失败：真实楼中楼本地拉黑未做到独立无占位隐藏并可撤销');
+      if (!sub.found || !sub.identityResolved || !sub.localButtonPresent || !sub.direct || !sub.blocked || !sub.bulkIncludesTarget || !sub.hidden || !sub.threadVisible || !sub.restored) {
+        result.errors.push('验证失败：真实楼中楼本地拉黑未做到直提、独立无占位隐藏并可撤销');
       }
     }
 
@@ -1386,22 +1403,39 @@ async function pickLocalCommentTarget(candidates) {
         const before = target.getBoundingClientRect();
         const nextBefore = next && next.getBoundingClientRect();
         if (!button || typeof button.click !== 'function') return { found: true, confirm: false, reason: '本地拉黑按钮在操作前已被页面回收' };
+        const waitFor = async (fn, timeout = 1500) => {
+          const deadline = Date.now() + timeout;
+          while (Date.now() < deadline) {
+            if (fn()) return true;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return !!fn();
+        };
+        const targetInfo = adapter && adapter.extract ? adapter.extract(targetRenderer) : null;
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         const confirm = document.getElementById('ob-confirm');
         const result = {
           found: true,
+          direct: !confirm,
           confirm: !!confirm,
           confirmButton: !!(confirm && confirm.querySelector('.ob-ok')),
-          hasName: !!(confirm && !confirm.textContent.includes('该用户')),
+          hasName: false,
           containerTag: target.tagName,
           beforeHeight: Math.round(before.height),
         };
-        if (!confirm) return result;
-        const confirmButton = confirm.querySelector('.ob-ok');
-        if (!confirmButton) return result;
-        confirmButton.click();
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        if (confirm) {
+          result.hasName = !!(targetInfo && targetInfo.label && confirm.textContent.includes(targetInfo.label))
+            || !confirm.textContent.includes('该用户');
+          const confirmButton = confirm.querySelector('.ob-ok');
+          if (confirmButton) {
+            confirmButton.click();
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+        } else {
+          await waitFor(() => target.classList.contains('ob-hidden')
+            || getComputedStyle(target).display === 'none', 1500);
+        }
         const after = target.getBoundingClientRect();
         const nextAfter = next && next.getBoundingClientRect();
         const commonAfter = common && common.getBoundingClientRect();
@@ -1417,10 +1451,17 @@ async function pickLocalCommentTarget(candidates) {
           || result.relativeNextShift >= Math.max(1, Math.floor(before.height) - 1));
 
         const toast = document.getElementById('ob-toast');
+        result.toastText = toast && toast.textContent || '';
+        if (result.direct) {
+          result.hasName = !!targetInfo && !!targetInfo.label
+            && result.toastText.includes(String(targetInfo.label));
+        }
         const undo = toast && toast.querySelector('button');
         if (undo) {
           undo.click();
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await waitFor(() => !target.hasAttribute('data-ob-blocked')
+            && getComputedStyle(target).display !== 'none'
+            && target.getBoundingClientRect().height > 0, 1500);
         }
         result.restored = !!undo && !target.hasAttribute('data-ob-blocked') && getComputedStyle(target).display !== 'none' && target.getBoundingClientRect().height > 0;
 
@@ -1699,7 +1740,7 @@ async function pickLocalCommentTarget(candidates) {
          || !/^🚫 内容屏蔽（评论\/(?:弹幕\/)?AI\/关键词）$/.test(result.bulkBeforeInteraction.text || '')) {
         failed.push('已加载评论作者批量入口未出现');
       }
-      if (!local.found || !local.confirm || !local.confirmButton || !local.hasName) failed.push('本地拉黑确认框未显示具体用户名');
+      if (!local.found || !local.direct || !local.hasName) failed.push('本地拉黑快捷入口未直接提交或未显示具体用户名');
       if (local.containerTag !== 'BILI-COMMENT-THREAD-RENDERER' || !local.hidden || local.barCount !== 0 || !local.layoutClosed) failed.push('真实评论未按完整线程无提示、零占位隐藏');
       if (!local.restored) failed.push('撤销本地拉黑后真实评论未恢复');
       if (!local.thread || !local.thread.found || !local.thread.confirm || local.thread.authorCount < 2

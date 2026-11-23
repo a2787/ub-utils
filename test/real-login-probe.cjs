@@ -674,11 +674,13 @@ async function verifyReplyModalAction(client, sessionId) {
     return (() => {
       const dialog = document.getElementById('ob-confirm');
       const text = dialog && (dialog.textContent || '');
-      if (!dialog) return { present: false, text: '' };
+      if (!dialog) {
+        const toast = document.getElementById('ob-toast');
+        return { present: false, direct: true, text: toast && toast.textContent || '' };
+      }
       const ok = dialog.querySelector('.ob-ok');
       if (ok) ok.click();
-      void text;
-      return { present: true };
+      return { present: true, direct: false };
     })()
   `, 3000);
   await sleep(350);
@@ -872,7 +874,9 @@ async function runScenario(client, url, name, inject, block) {
       if (!modal.opened || !modal.root || !modal.rootIsRoot || modal.replyRows < 1
         || modal.identifiedReplies < 1 || modal.localButtonCount < modal.identifiedReplies
         || modal.threadButtonCount !== 0 || modal.rootThreadButtonCount !== 1
-        || !modal.localBlock || !modal.localBlock.confirm || !localBlock.blocked || !localBlock.hidden
+        || !modal.localBlock || !modal.localBlock.confirm
+        || (!modal.localBlock.confirm.present && !modal.localBlock.confirm.direct)
+        || !localBlock.blocked || !localBlock.hidden
         || !localBlock.rootVisible || !modal.localBlock.undo || !modal.localBlock.undo.present
         || !restored.restored || !restored.visible) {
         report.blocked.push('微博真实楼中楼弹窗未能完成回复识别、主/子评论入口边界或回复隐藏/撤销检查');

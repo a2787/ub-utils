@@ -173,16 +173,21 @@ for (const check of checks) {
         const target = JSON.parse(line.slice(probePrefix.length));
         const errors = Array.isArray(target.errors) ? target.errors : [];
         // 未发现目标或导航根本未完成时，网络拒绝、验证码和登录页都属于证据阻断；
-        // 只有已经加载并发现目标后的脚本/页面错误才让维护自检失败。
-        const reachabilityBlocked = !target.discovered || !target.loaded
-          || errors.some((error) => String(error).startsWith('blocked：'));
-        const hardErrors = reachabilityBlocked ? [] : errors.filter((error) => !String(error).startsWith('blocked：'));
+        // 只有已经加载并发现目标后的脚本/页面错误才让维护自检失败。同一探针里
+        // 既有 blocked 子项又有真实验证失败时，不能因为存在 blocked 就吞掉失败。
+        const unreachable = !target.discovered || !target.loaded;
+        const blockedErrors = errors.filter((error) => String(error).startsWith('blocked：'));
+        const hardErrors = unreachable ? [] : errors.filter((error) => !String(error).startsWith('blocked：'));
         if (hardErrors.length) {
           failed = true;
           console.error('CHECK FAILED:', check.label, hardErrors.join(' | '));
-        } else if (reachabilityBlocked) {
+        }
+        if (unreachable) {
           sawBlocked = true;
           blocked.push(errors.join(' | ') || ('未能从公开入口发现可验证' + probeId + '页面'));
+        } else if (blockedErrors.length) {
+          sawBlocked = true;
+          blocked.push(blockedErrors.join(' | '));
         }
       } catch (error) {
         failed = true;

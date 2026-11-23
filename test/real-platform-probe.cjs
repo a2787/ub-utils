@@ -350,6 +350,14 @@ async function pickWeiboDetailTarget(browser, candidates) {
           }
           result.localBlock = await page.evaluate(async () => {
             const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const waitFor = async (fn, timeout = 1500) => {
+              const deadline = Date.now() + timeout;
+              while (Date.now() < deadline) {
+                if (fn()) return true;
+                await pause(50);
+              }
+              return !!fn();
+            };
             const adapter = window.OB && window.OB.adapters.weibo;
             // 优先验证楼中楼行：它是本轮修复的目标，且必须独立隐藏而不影响根评论。
             // 必须挑选作者与所属根评论不同的回复，否则根评论会因为同一身份一起隐藏，
@@ -381,15 +389,35 @@ async function pickWeiboDetailTarget(browser, candidates) {
             const isReplyRow = row.matches('.wbpro-list .list2 > .item2');
             button.click(); await pause(100);
             const confirm = document.getElementById('ob-confirm');
-            const named = !!confirm && !!info.label && confirm.textContent.includes(info.label);
-            if (!confirm) return { found: true, confirm: false };
-            confirm.querySelector('.ob-ok').click(); await pause(220);
-            const blocked = window.OB.Index.isBlocked(key);
+            const direct = !confirm;
+            const toastAtClick = document.getElementById('ob-toast');
+            const toastText = toastAtClick && toastAtClick.textContent || '';
+            const named = direct
+              ? !!info.label && toastText.includes(info.label)
+              : !!confirm && !!info.label && confirm.textContent.includes(info.label);
+            if (confirm) {
+              const confirmButton = confirm.querySelector('.ob-ok');
+              if (confirmButton) confirmButton.click();
+              await pause(220);
+            }
             const liveRows = () => Array.from(document.querySelectorAll('.wbpro-list .list2 > .item2, .wbpro-list > .item1'));
-            const liveRow = liveRows().find((item) => keyOf(item) === key) || row;
-            const liveRoot = rootKey
+            let liveRow = liveRows().find((item) => keyOf(item) === key) || row;
+            let liveRoot = rootKey
               ? Array.from(document.querySelectorAll('.wbpro-list > .item1')).find((item) => keyOf(item) === rootKey) || null
               : null;
+            if (direct) {
+              await waitFor(() => {
+                const rowNow = liveRows().find((item) => keyOf(item) === key) || row;
+                return window.OB.Index.isBlocked(key)
+                  && rowNow.classList.contains('ob-hidden')
+                  && (getComputedStyle(rowNow).display === 'none' || rowNow.getBoundingClientRect().height === 0);
+              }, 1500);
+              liveRow = liveRows().find((item) => keyOf(item) === key) || row;
+              liveRoot = rootKey
+                ? Array.from(document.querySelectorAll('.wbpro-list > .item1')).find((item) => keyOf(item) === rootKey) || null
+                : null;
+            }
+            const blocked = window.OB.Index.isBlocked(key);
             const hidden = liveRow.classList.contains('ob-hidden')
               && (getComputedStyle(liveRow).display === 'none' || liveRow.getBoundingClientRect().height === 0);
             const postVisible = !!post && getComputedStyle(post).display !== 'none' && post.getBoundingClientRect().height > 0;
@@ -417,7 +445,15 @@ async function pickWeiboDetailTarget(browser, candidates) {
               && rootAfter > 0 && rootAfter < rootBefore;
             const toast = document.getElementById('ob-toast');
             const undo = toast && toast.querySelector('button');
-            if (undo) { undo.click(); await pause(220); }
+            if (undo) {
+              undo.click();
+              await waitFor(() => {
+                const rowNow = liveRows().find((item) => keyOf(item) === key) || row;
+                return !window.OB.Index.isBlocked(key)
+                  && getComputedStyle(rowNow).display !== 'none'
+                  && rowNow.getBoundingClientRect().height > 0;
+              }, 1500);
+            }
             const restoredRow = liveRows().find((item) => keyOf(item) === key) || row;
             const restored = !!undo && !window.OB.Index.isBlocked(key)
               && getComputedStyle(restoredRow).display !== 'none' && restoredRow.getBoundingClientRect().height > 0;
@@ -537,10 +573,23 @@ async function pickWeiboDetailTarget(browser, candidates) {
               const topButton = targetComment.querySelector('.ob-weibo-comment-block');
               topButton.click(); await pause(100);
               const topConfirm = document.getElementById('ob-confirm');
-              if (!topConfirm || !topConfirm.querySelector('.ob-ok') || !targetKey) {
-                topLevelSpacer = { attempted: true, confirm: false };
+              const topDirect = !topConfirm;
+              if (!targetKey || (topConfirm && !topConfirm.querySelector('.ob-ok'))) {
+                topLevelSpacer = { attempted: true, direct: topDirect, confirm: !!topConfirm };
               } else {
-                topConfirm.querySelector('.ob-ok').click(); await pause(260);
+                if (topDirect) {
+                  await waitFor(() => {
+                    const live = virtualRows().map((virtualRow) => ({
+                      virtualRow,
+                      comment: topCommentOf(virtualRow),
+                    })).find(({ comment }) => comment && keyOf(comment) === targetKey);
+                    return window.OB.Index.isBlocked(targetKey) && !!live
+                      && (getComputedStyle(live.comment).display === 'none'
+                        || rowHeight(live.virtualRow) === 0);
+                  }, 1600);
+                } else {
+                  topConfirm.querySelector('.ob-ok').click(); await pause(260);
+                }
                 const liveVirtualRows = () => virtualRows().map((virtualRow) => ({
                   virtualRow,
                   comment: topCommentOf(virtualRow),
@@ -592,7 +641,8 @@ async function pickWeiboDetailTarget(browser, candidates) {
                   && rowHeight(restoredTopRow.virtualRow) > 0;
                 topLevelSpacer = {
                   attempted: true,
-                  confirm: true,
+                  direct: topDirect,
+                  confirm: !!topConfirm,
                   targetHeight,
                   listBefore,
                   listAfterHeight,
@@ -613,22 +663,26 @@ async function pickWeiboDetailTarget(browser, candidates) {
                 };
               }
             }
-            return { found: true, isReplyRow, confirm: true, named, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, restoredDiagnostics, topLevelSpacer,
+            return { found: true, isReplyRow, direct, confirm: !!confirm, named, toastText, blocked, hidden, postVisible, rootKept, sameAuthorAsRoot, rootBefore, rootAfter, rootDiagnostics, restored, restoredDiagnostics, topLevelSpacer,
               diagnostics: window.OB && window.OB.diagnostics ? { ...window.OB.diagnostics } : null };
           });
           const local = result.localBlock || {};
           const platform = (result.page && result.page.platform) || {};
-          if (local.blocked && typeof local.blocked === 'string' && local.blocked.indexOf('blocked：') === 0) {
+          const localBlocked = !!(local.blocked && typeof local.blocked === 'string'
+            && local.blocked.indexOf('blocked：') === 0);
+          if (localBlocked) {
             result.errors.push(local.blocked);
-          } else if (!local.found || !local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
-            result.errors.push('验证失败：微博详情评论本地拉黑、隔离隐藏或撤销不完整');
+          } else if (!local.found || !local.direct || local.confirm || !local.named || !local.blocked || !local.hidden || !local.postVisible || !local.rootKept || !local.restored) {
+            result.errors.push('验证失败：微博详情评论本地拉黑快捷入口未直提、隔离隐藏或撤销不完整');
           }
           const spacer = local.topLevelSpacer || {};
-          if (spacer.blocked && typeof spacer.blocked === 'string' && spacer.blocked.indexOf('blocked：') === 0) {
+          if (localBlocked) {
+            // 回复行门禁已阻断，顶层 spacer 不会进入；未执行不能记成验证失败。
+          } else if (spacer.blocked && typeof spacer.blocked === 'string' && spacer.blocked.indexOf('blocked：') === 0) {
             result.errors.push(spacer.blocked);
-          } else if (!spacer.attempted || !spacer.confirm || !spacer.spacerCompensated
+          } else if (!spacer.attempted || spacer.direct !== true || spacer.confirm || !spacer.spacerCompensated
             || !spacer.spacerRestored || !spacer.targetRestored) {
-            result.errors.push('验证失败：微博顶层虚拟评论隐藏后内容层未补位、spacer 振荡或撤销未恢复');
+            result.errors.push('验证失败：微博顶层虚拟评论快捷入口未直提、隐藏后内容层未补位、spacer 振荡或撤销未恢复');
           }
           if (onDetail) {
             if (platform.identifiedRootCount && platform.rootButtonCount !== platform.identifiedRootCount) {

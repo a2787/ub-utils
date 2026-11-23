@@ -204,8 +204,10 @@ async function closePage(client, page) {
 }
 
 async function attachExistingPlatformPage(client, platform) {
-  const targets = await client.send('Target.getTargets');
-  const candidates = (targets.targetInfos || [])
+  // Chrome 148 的本机构建上 Target.getTargets 会在多次调用后卡死；
+  // /json/list 是同一浏览器的只读 HTTP 列表，可在此替代逐平台枚举。
+  const pages = await httpJSON(endpoint + '/json/list');
+  const candidates = (pages || [])
     .filter((target) => target.type === 'page' && platformForHost(new URL(target.url || 'https://invalid/').hostname) === platform)
     .sort((left, right) => {
       const detail = (value) => {
@@ -218,8 +220,8 @@ async function attachExistingPlatformPage(client, platform) {
     });
   const target = candidates[0];
   if (!target) return null;
-  const attached = await client.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
-  const page = { targetId: target.targetId, sessionId: attached.sessionId, existing: true };
+  const attached = await client.send('Target.attachToTarget', { targetId: target.id, flatten: true });
+  const page = { targetId: target.id, sessionId: attached.sessionId, existing: true };
   return page;
 }
 
