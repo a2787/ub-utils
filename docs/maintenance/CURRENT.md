@@ -21,6 +21,7 @@
 - `real-site verified`：2026-11-23 公开视频页 `bilibili.com/video/...`（未登录隔离 Chromium，0.64.0/sourceHash `d76c8a...`）读取 133 条语义记录（作品 1、评论 5、弹幕 127）；主/子评论快捷入口直提、toast 显示用户名、零占位隐藏、下一行补位、撤销恢复，根评论「屏蔽该楼回复」一次写入并撤销，exit 0。公开详情页 `weibo.com/...` 读取 28 条语义记录（帖子 1、评论 27）；回复行直提、独立隐藏、根评论保留、撤销恢复。专用 Chrome 登录态只读探针（扩展 0.64.0、sourceHash 一致，CDP 9222）：B站 `bilibili.com/page/...` content=8、微博 `weibo.com/page/...` content=6/users=6、抖音 `douyin.com/jingxuan/...` content=20，三平台 bridge=ready（1 尝试/0 拒绝）；未读取/导出 Cookie，未点击平台写入控件。
 - `blocked`/`failed`：微博顶层虚拟列表 spacer 在本次两个详情页均不存在；B站列表/关注流未取得带作者的可测列表目标；专用 Chrome 知乎入口无可探测条目；贴吧/X 在本机 Chrome `Target.attachToTarget`/`Target.createTarget` 超时；`gateway-smoke` 需 Docker，未运行。
 - 发布：`b9a7e3e` 已推送 master；附注 tag `v0.64.0` 指向该提交并已推送；GitHub Release [v0.64.0](https://github.com/a2787/ub-utils/releases/tag/v0.64.0) 已创建；tag 路径 raw 第 1 次核对返回 `@version 0.64.0` / `0.64.0-personal-oneclick`。发布前全量清单 37 项通过，degraded-storage 15/15；未执行平台写入。
+- 源码核对：tag raw 与 Git blob 的 UTF-8 LF SHA-256 均为 `45751d9a0e30777af6a0db484eefab7792c01035a0b1d83e7f460aaf602063b8`；工作区 CRLF 快照为 `d76c8a24c515cba52fa08fca0354e3fa01a240c4d05f6cc66aec55d37939ac6a`，规范化行尾后与 raw 一致。
 
 ## 2026-11-19 v0.63.4 三项可发现性改进（已公开发布）
 
