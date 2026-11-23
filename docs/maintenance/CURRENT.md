@@ -1,26 +1,26 @@
 # OmniBlock 当前维护状态
 
 更新时间：2026-11-23
-状态来源：v0.63.4（三项可发现性改进：齿轮常驻可见 / 规则分组填实 / 首次访问提示）为最近公开发布版本；v0.63.3（数据层空态覆盖拒绝，承接 v0.63.2 的 degraded 存储只读降级）为上一公开发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
+状态来源：v0.64.0（Personal 2.0 一键屏蔽与诊断收口）为最近公开发布版本；v0.63.4（三项可发现性改进）为上一公开发布版本；v0.60.0~v0.63.0 已于 2026-10-28 同轮公开发布。东京独立同步服务已部署并取得 HTTPS health 证据；平板线 2026-09-12 起封存待重启，维护重心回到电脑。历史见 [HISTORY_INDEX.md](HISTORY_INDEX.md)。
 
 ## 当前版本
 
-- 当前 userscript：`0.64.0`（本地候选，待发布；0.63.4 仍为当前公开版本）
+- 当前 userscript：`0.64.0`（已公开发布）
 - 构建：`0.64.0-personal-oneclick`
-- 当前公开版本：`0.63.4`（最近公开发布），公开功能提交 `9ffbd0dfb3c82084b5f3613155f9885b9b1a7bda`
-- 最近验证的源码快照：`607d04faf68c6077429081f0dec17f83968ef11e`（0.63.4 功能提交，发布提交 9ffbd0d 的父提交）
+- 当前公开版本：`0.64.0`（最近公开发布），tag 提交 `b9a7e3ed61bf3726c52c6ce164c5b3b89b18354a`
+- 最近验证的源码快照：`b9a7e3ed61bf3726c52c6ce164c5b3b89b18354a`（`v0.64.0` tag 提交；userscript 与功能提交 `e93ef9a` 相同）
 - 当前候选源码 SHA-256：`d76c8a24c515cba52fa08fca0354e3fa01a240c4d05f6cc66aec55d37939ac6a`（当前工作区 userscript 快照，2026-11-23 核对一致）
-- 2026-11-23 Personal 2.0 Phase 1-5 本地候选（未发布）：快捷/作者入口直提、QB-NC-1/2/3、`bili:dmhash` 确认守护、Health 诊断卡、日志 7 天/5 千条/2 MiB、坏备份不覆盖、撤销上一次、设置 IA、更新终态可见、README/docs 拆分、CI/code-health、通用 release 脚本、删除旧抖音管理器 open 死代码；见 PLAN.md OB-UI-004/OB-MAINT-005。真实站点复核已完成：B站主/子评论与整楼直提隐藏撤销、微博回复行直提隐藏撤销、专用 Chrome B站/微博/抖音入口读取与 bridge ready；知乎无可测条目、贴吧/X CDP attach/create 超时、微博顶层 spacer 当页缺失，按 `blocked`/`failed` 记录；`gateway-smoke` 因 Docker 未运行记 `blocked`。
-- 发布状态：0.63.4 仍为当前公开版本（tag/Release/raw 已核验）；0.64.0 尚未 tag/Release/push。未执行平台写入。
-- 当前公开 tag/Release：[v0.63.4](https://github.com/a2787/ub-utils/releases/tag/v0.63.4)。
+- 2026-11-23 Personal 2.0 Phase 1-5 已发布：快捷/作者入口直提、QB-NC-1/2/3、`bili:dmhash` 确认守护、Health 诊断卡、日志 7 天/5 千条/2 MiB、坏备份不覆盖、撤销上一次、设置 IA、更新终态可见、README/docs 拆分、CI/code-health、通用 release 脚本、删除旧抖音管理器 open 死代码；见 PLAN.md OB-UI-004/OB-MAINT-005。真实站点复核：B站主/子评论与整楼直提隐藏撤销、微博回复行直提隐藏撤销、专用 Chrome B站/微博/抖音入口读取与 bridge ready；知乎无可测条目、贴吧/X CDP attach/create 超时、微博顶层 spacer 当页缺失，按 `blocked`/`failed` 记录；`gateway-smoke` 因 Docker 未运行记 `blocked`。
+- 发布状态：0.64.0 已 tag/Release/push，tag 路径 raw 已核验（第 1 次）；0.63.4 为上一公开版本。未执行平台写入。
+- 当前公开 tag/Release：[v0.64.0](https://github.com/a2787/ub-utils/releases/tag/v0.64.0)。
 
-## 2026-11-23 v0.64.0 Personal 2.0 一键屏蔽与诊断收口（本地候选，待发布）
+## 2026-11-23 v0.64.0 Personal 2.0 一键屏蔽与诊断收口（已公开发布）
 
 - 改动：快捷/作者入口无确认直提并共用 `commitBlock`，批量/弹幕/UID 保留确认，`bili:dmhash` 从共享 `.ob-quick` 进入仍按 `danmaku` 确认；撤销 toast 默认 10 秒并可配，新增「撤销上一次」与最近操作；Health 卡聚合存储/备份/日志失败；日志 7 天/5 千条/2 MiB，坏备份读取不覆盖；设置 IA、更新终态、README/docs 拆分、CI/code-health、通用 release 脚本。
 - `structure regression`：quickblock 44/44、run 22/22、adapters 28/28、state 9/9、ui-settings 16/16、dark-mode 18/18、rule-manager 5/5、rule-samples 10/10、danmaku-auto 8/8、weibo-replay 13/13、degraded-storage 15/15、ai-screening 25/25、7 个 headless AI 套件 exit 0、code-health 114/22702/116407、docs-check PASS。最终全量维护矩阵本地全绿；隔离真站探针仍按下方标签记录。
 - `real-site verified`：2026-11-23 公开视频页 `bilibili.com/video/...`（未登录隔离 Chromium，0.64.0/sourceHash `d76c8a...`）读取 133 条语义记录（作品 1、评论 5、弹幕 127）；主/子评论快捷入口直提、toast 显示用户名、零占位隐藏、下一行补位、撤销恢复，根评论「屏蔽该楼回复」一次写入并撤销，exit 0。公开详情页 `weibo.com/...` 读取 28 条语义记录（帖子 1、评论 27）；回复行直提、独立隐藏、根评论保留、撤销恢复。专用 Chrome 登录态只读探针（扩展 0.64.0、sourceHash 一致，CDP 9222）：B站 `bilibili.com/page/...` content=8、微博 `weibo.com/page/...` content=6/users=6、抖音 `douyin.com/jingxuan/...` content=20，三平台 bridge=ready（1 尝试/0 拒绝）；未读取/导出 Cookie，未点击平台写入控件。
 - `blocked`/`failed`：微博顶层虚拟列表 spacer 在本次两个详情页均不存在；B站列表/关注流未取得带作者的可测列表目标；专用 Chrome 知乎入口无可探测条目；贴吧/X 在本机 Chrome `Target.attachToTarget`/`Target.createTarget` 超时；`gateway-smoke` 需 Docker，未运行。
-- 发布状态：0.64.0 尚未 tag/Release/push；0.63.4 仍为当前公开版本。
+- 发布：`b9a7e3e` 已推送 master；附注 tag `v0.64.0` 指向该提交并已推送；GitHub Release [v0.64.0](https://github.com/a2787/ub-utils/releases/tag/v0.64.0) 已创建；tag 路径 raw 第 1 次核对返回 `@version 0.64.0` / `0.64.0-personal-oneclick`。发布前全量清单 37 项通过，degraded-storage 15/15；未执行平台写入。
 
 ## 2026-11-19 v0.63.4 三项可发现性改进（已公开发布）
 
@@ -95,7 +95,7 @@
 
 ## 下一项最有价值的验证
 
-v0.63.2 已公开发布且发布后专项复测通过（见 2026-10-30 条目）。下一项最有价值的验证：后续只读会话核对
-孤儿分片真实收敛（`EventLog.status().orphanSweeps/orphanShardsDeleted` 与白名单总字符应从 ≈9.1M 回落）；
-tieba/x `Target.getTargets` 超时与 zhihu 无可探测条目仍为既有另案边界；匿名链路的知乎登录墙/抖音验证码/
-X 登录墙、贴吧右键证据仍为 `blocked`。
+v0.64.0 已公开发布（见本页 2026-11-23 条目）。下一项最有价值的验证：本机日常 Chrome 的 Tampermonkey 安装态——
+当前仍是 `0.63.3`，更新页已打开但尚未点“更新”；点击后在真实平台页面确认齿轮显示 `0.64.0` /
+`0.64.0-personal-oneclick`。B站列表/关注流、微博顶层虚拟 spacer、知乎无可探测条目、贴吧/X
+`Target.attachToTarget`/`Target.createTarget` 超时与 `gateway-smoke` 的 Docker 依赖仍按 `blocked`/`failed` 保留。

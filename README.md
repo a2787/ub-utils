@@ -81,8 +81,8 @@ Edge 安装 Tampermonkey 后导入同一份脚本或打开更新地址即可。�
 > 当前版本、历史变更和验证边界以 [版本索引](docs/changelog/INDEX.md) 与
 > [当前维护状态](docs/maintenance/CURRENT.md) 为准。仓库为公开
 > `https://github.com/a2787/ub-utils`，脚本头 `@updateURL`/`@downloadURL` 指向 GitHub raw 直连；
-> 仓库名/脚本名刻意低调，Pynseq 出处署名仍保留。当前公开版本为 v0.63.4；v0.64.0 候选已完成结构回归与真站复核，
-> 发布后更新地址将返回 `0.64.0`；平板实机验证已封存待重启（见维护文档）。历史版本（v0.52.0 ~ v0.60.0 等）
+> 仓库名/脚本名刻意低调，Pynseq 出处署名仍保留。当前公开版本为 v0.64.0，
+> 公开更新地址已返回 `0.64.0`；平板实机验证已封存待重启（见维护文档）。历史版本（v0.52.0 ~ v0.60.0 等）
 > 的逐版本变更、验证证据与当前限制见 [版本索引](docs/changelog/INDEX.md)，README 不再重复旧候选的
 > push、tag、Release 或部署状态。
 
