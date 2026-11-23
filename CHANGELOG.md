@@ -2,6 +2,10 @@
 
 本文件只保留当前版本摘要和稳定入口；完整版本条目见 [docs/changelog/INDEX.md](docs/changelog/INDEX.md)。
 
+## v0.64.0 - Personal 2.0 一键屏蔽与诊断收口 - 2026-11-23（本地候选；发布状态待回写）
+
+把作者/快捷入口的本地屏蔽压缩为一次点击，保留批量/弹幕/UID 确认与 `bili:dmhash` 确认守护；新增 10 秒可配撤销与“撤销上一次”，Health 诊断卡与一次存储异常提示，日志 7 天/5 千条/2 MiB，坏备份不覆盖；设置增加工作台/AI/撤销入口，移除重复规则按钮，更新检查覆盖设置面板/GM 菜单/关面板终态；README 拆分为 9 KiB 快速开始，CI 补 4 个核心测试、7 个 headless AI 套件与 code-health，并删除旧抖音管理器死代码。`structure regression` 全套通过；`real-site verified` 已覆盖 B站主/子评论与整楼直提、微博回复行直提和专用 Chrome 三平台入口；B站列表/关注流、微博顶层 spacer、知乎/贴吧/X 等受限项按 `blocked` 保留；tag/Release/raw 在发布轮回写。详细记录：[v0.64.0 完整条目](docs/changelog/v0.64.0.md)。
+
 ## v0.63.4 - 三项可发现性改进 - 2026-11-19（已公开发布；结构回归，未做真实站点验证）
 
 GitHub Release：[https://github.com/a2787/ub-utils/releases/tag/v0.63.4](https://github.com/a2787/ub-utils/releases/tag/v0.63.4)。tag `v0.63.4` 指向提交 `9ffbd0d`，公开 raw 已核验返回 `0.63.4` / `0.63.4-discovery-fixes`。

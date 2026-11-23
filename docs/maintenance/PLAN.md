@@ -96,9 +96,9 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
 - acceptance: required
   - [x] 快捷/作者入口无确认直提、名单写入、撤销恢复；批量/弹幕/UID 保留确认；`bili:dmhash` 仍弹确认（QB-NC-1/2）。
   - [x] 直提提示最多 3 次、打开设置后停止（QB-NC-3）；撤销上一次与设置 IA 可用；更新检查终态（含 GM 菜单）可见（run E6/I2、quickblock UNDO-LAST）。
-  - [ ] B站/微博真站门禁与列表/关注流命中记录；未授权时记 `blocked`/`structure regression`，不得发布为已验证。
-- evidence: `structure regression`：quickblock 44/44（含 QB-NC-1/2/3、HEALTH-1/2、UNDO-LAST）、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18；dry-run worktree `b2141c1` 未合并；2026-11-23 本地候选。
-- next: Phase 4 CI/code-health；Phase 5 真站与发布；列表/关注流按 Task 1.4 预探测。
+  - [x] B站/微博真站门禁与列表/关注流命中记录：2026-11-23 B站公开视频页主/子评论直提、整楼隐藏撤销、楼作者批量通过（隔离探针 exit 0）；微博公开详情页回复行直提隐藏撤销通过；B站列表/关注流未取得带作者目标、微博顶层 spacer 当页缺失，均按 `blocked` 保留；专用 Chrome B站/微博/抖音入口与 bridge ready，知乎无条目、贴吧/X CDP 超时。
+- evidence: `structure regression`：quickblock 44/44（含 QB-NC-1/2/3、HEALTH-1/2、UNDO-LAST）、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18、degraded-storage 15/15；`real-site verified`：B站主/子评论与整楼、微博回复行、专用 Chrome 三平台入口；dry-run worktree `b2141c1` 未合并；2026-11-23 本地候选。
+- next: 发布 v0.64.0 tag/Release/raw 并回写 CURRENT；列表/关注流与微博虚拟 spacer 留待有可测真实结构时补验。
 - updated: 2026-11-23
 - supersedes: none
 
@@ -114,9 +114,9 @@ OB-MAINT-003 移出活动正文，原文见 [2026-11-18 计划收尾归档](plan
   - [x] CI 保留现有 22 项并补 4 个核心测试 + 7 个本地 headless AI 套件 + code-health；`gateway-smoke` 需 Docker，记 `blocked`。
   - [x] README 9.2 KiB（≤20）、docs-check 通过、usage 拆分与知识树/工作流路由完成；release dry-run 已验证。
   - [x] code-health 基线锁定空 catch 114 / 总行数 23500 / CSS 120000 字符；AI-20 计时阈值改为 600ms。
-  - [ ] 发布前真站证据按标签记录。
-- evidence: `structure regression`：quickblock 44/44、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18、rule-samples 10/10、ai-screening 25/25、ai-auto-gate/ai-batch/ai-bridge/ai-context/ai-eval/ai-fact-integration/ai-retrieval 均 exit 0；code-health 114/22702/116407；README 9,186 B；release dry-run 分支符合预期。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
-- next: Phase 5 真站/发布；`gateway-smoke` 启动 Docker 后补跑。
+  - [x] 发布前真站证据按标签记录：`real-site verified`（B站主/子评论与整楼、微博回复行、专用 Chrome B站/微博/抖音入口）；`blocked`（B站列表/关注流、微博顶层 spacer、知乎入口、贴吧/X CDP 超时、gateway-smoke Docker）。
+- evidence: `structure regression`：quickblock 44/44、adapters 28/28、run 22/22、state 9/9、rule-manager 5/5、ui-settings 16/16、dark-mode 18/18、rule-samples 10/10、ai-screening 25/25、ai-auto-gate/ai-batch/ai-bridge/ai-context/ai-eval/ai-fact-integration/ai-retrieval 均 exit 0、weibo-replay 13/13、degraded-storage 15/15；`real-site verified`：2026-11-23 B站/微博隔离探针与专用 Chrome 三平台入口读取；code-health 114/22702/116407；README 9,186 B；release dry-run 分支符合预期。计划与复核台账见 `plans/2026-11-23-personal-2.0-program-plan.md`。
+- next: 发布 v0.64.0 tag/Release/raw 并回写 CURRENT；`gateway-smoke` 启动 Docker 后补跑。
 - updated: 2026-11-23
 - supersedes: none
 

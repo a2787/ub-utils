@@ -139,7 +139,9 @@ function resetDiagnostics(page) {
         const day = now.getFullYear() + '-'
           + String(now.getMonth() + 1).padStart(2, '0') + '-'
           + String(now.getDate()).padStart(2, '0');
-        for (let index = 0; index < 50005; index++) {
+        const cap = window.OB.logs.status().maxEventsPerDay || 5000;
+        const total = cap + 5;
+        for (let index = 0; index < total; index++) {
           window.OB.logs.record('test.performance.log-cap', { safeCount: index }, {
             force: true, deferFlush: true, at: Date.now(),
           });
@@ -152,10 +154,12 @@ function resetDiagnostics(page) {
           maxEventsPerDay: status.maxEventsPerDay,
           firstCount: events[0] && events[0].data && events[0].data.safeCount,
           lastCount: events[events.length - 1] && events[events.length - 1].data && events[events.length - 1].data.safeCount,
+          expectedFirst: total - cap,
+          expectedLast: total - 1,
         };
       });
       if (logCap && logCap.events === logCap.maxEventsPerDay
-        && logCap.firstCount === 5 && logCap.lastCount === 50004) {
+        && logCap.firstCount === logCap.expectedFirst && logCap.lastCount === logCap.expectedLast) {
         report.pass.push('日志分片超限时一次裁剪并保留最近事件，数量和顺序边界稳定');
       } else {
         report.fail.push('日志分片裁剪边界错误：' + JSON.stringify(logCap));

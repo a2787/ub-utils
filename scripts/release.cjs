@@ -265,8 +265,9 @@ const AUTO_TESTS = [
   'content-coverage', 'ai-autoload', 'ai-watchdog', 'probe-hygiene',
   // 差集 headless 项（Task 4.2）与 Phase 2/4 门禁
   'ui-settings', 'dark-mode', 'rule-manager', 'rule-samples', 'ai-auto-gate', 'ai-batch',
-  'ai-bridge', 'ai-context', 'ai-eval', 'ai-fact-integration', 'ai-retrieval', 'gateway-smoke',
-  'runtime', 'health', 'code-health',
+  'ai-bridge', 'ai-context', 'ai-eval', 'ai-fact-integration', 'ai-retrieval', 'code-health',
+  // gateway-smoke 需要 Docker Linux 引擎，按计划记 blocked，不阻塞当前 userscript 发布；
+  // test/runtime.cjs 是共享夹具库，不是独立测试；Health 覆盖在 quickblock HEALTH-1/2。
 ];
 console.log('--- 发布前全量清单（自动部分） ---');
 for (const t of AUTO_TESTS) {

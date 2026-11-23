@@ -172,6 +172,10 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
         panel: !!panel,
         settingsRulePanels: panel ? panel.querySelectorAll('.ob-auto-platform').length : -1,
         migrationNote: panel ? /关键词.*内容屏蔽/.test(panel.textContent || '') : false,
+        settingsEntryBili: !!(panel && panel.querySelector('#ob-rules-bili')),
+        settingsEntryDouyin: !!(panel && panel.querySelector('#ob-rules-douyin')),
+        settingsWorkbench: !!(panel && panel.querySelector('#ob-open-workbench')),
+        settingsAi: !!(panel && panel.querySelector('#ob-open-ai-settings')),
       };
       // 规则和例外的主入口现在位于平台内容弹窗；旧设置页只保留迁移说明。
       if (panel) window.OB.openOptions();
@@ -193,10 +197,11 @@ const DOUYIN_FIXTURE = `<!doctype html><html><body>
       return result;
     });
     if (settingsUi.panel && settingsUi.settingsRulePanels === 0 && settingsUi.migrationNote
+      && settingsUi.settingsEntryBili && settingsUi.settingsEntryDouyin && settingsUi.settingsWorkbench && settingsUi.settingsAi
       && settingsUi.contentTabs === 4 && settingsUi.platforms.includes('关键词屏蔽')
       && settingsUi.biliKinds === 2 && settingsUi.douyinKinds === 2 && settingsUi.ruleRows === 2
       && settingsUi.exemptionRows === 1 && settingsUi.exemptionRemove && settingsUi.exemptionRemoved && settingsUi.pakkuNote)
-      report.pass.push('AUTO-UI 设置页仅保留迁移说明，B站内容弹窗承载关键词/正则和例外入口');
+      report.pass.push('AUTO-UI 设置页规则入口/工作台/AI 可用，内容弹窗承载关键词/正则和例外入口');
     else report.fail.push('AUTO-UI 规则面板分平台/兼容说明失败：' + JSON.stringify(settingsUi));
     const regexSafety = await bili.evaluate(() => {
       // 明显高风险形态：嵌套可变重复、分支首字符重叠。保存入口必须拒绝并说明原因。

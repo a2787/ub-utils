@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          本地内容过滤增强
 // @namespace     https://github.com/a2787/ub-utils
-// @version       0.63.4
+// @version       0.64.0
 // @description   一个浏览器本地内容过滤用户脚本，可按用户隐藏其内容，并可通过用户配置的 API 直接进行 AI 建议筛选和受控事实核查。
 // @match         *://*.bilibili.com/*
 // @match         *://*.weibo.com/*
@@ -62,7 +62,7 @@
   // 从而各自创建 observer、定时器和 UI。starting 与 active 共用同一把锁，
   // 只有第一份实例允许继续等待初始化。
   const RUNTIME_GUARD_KEY = '__OB_RUNTIME_GUARD__';
-  const RUNTIME_BUILD = '0.63.4-discovery-fixes';
+  const RUNTIME_BUILD = '0.64.0-personal-oneclick';
   const RUNTIME_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
     ? String(GM_info.script.version) : 'unknown';
   const activeRuntime = window[RUNTIME_GUARD_KEY];
@@ -21912,7 +21912,7 @@
 
         <section class="ob-group" id="ob-group-rules">
           <h3>规则</h3>
-          <p class="ob-settings-ai-note">在这里分别管理 B站 和抖音的关键词屏蔽、正则屏蔽规则，按平台分开维护；命中规则的内容会被自动隐藏，只保存在本机。点下面的按钮即可打开管理界面，支持编辑、备注、命中计数和导入导出。AI 智能屏蔽的 provider 与提示词也在同一内容弹窗的 AI 标签中配置。</p>
+          <p class="ob-settings-ai-note">在这里分别管理 B站 和抖音的关键词屏蔽、正则屏蔽规则，按平台分开维护；命中规则的内容会被自动隐藏，只保存在本机。点下面的按钮即可打开管理界面，支持编辑、备注、命中计数和导入导出。关键词/正则规则也可在「内容屏蔽」弹窗继续管理；AI 智能屏蔽的 provider 与提示词在同一弹窗的 AI 标签中配置。</p>
           <div class="ob-keyword-entry"><button id="ob-rules-bili" type="button">B站规则管理</button><button id="ob-rules-douyin" type="button">抖音规则管理</button></div>
           <div class="ob-keyword-entry" style="margin-top:8px"><button id="ob-open-ai-settings" type="button">打开 AI 设置</button></div>
         </section>
